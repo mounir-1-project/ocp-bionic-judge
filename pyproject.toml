@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "ocp-bionic-judge"
+version = "1.0.0"
+description = "OCP Bionic Judge — Industrial AI anomaly detection for phosphate equipment"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    {name = "Mounir Sanbouli", email = "mounir.sanbouli.43@edu.uiz.ac.ma"}
+]
+license = {text = "MIT"}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*", "api*", "data*", "dashboard*"]
+exclude = ["tests*", "venv*", "mlruns*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.env.example", "*.md"]
+
+# Run `pip install -e .` once — all `from src.X import Y` imports work without sys.path hacks.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# --import-mode=importlib avoids the legacy "prepend" sys.path behaviour that can
+# import modules twice (a known source of "metaclass conflict" errors under pytest,
+# especially on Python 3.12). See https://docs.pytest.org/en/stable/explanation/goodpractices.html
+addopts = "-v --tb=short --import-mode=importlib"
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+select = ["E", "F", "I", "UP", "S", "B"]
+ignore = ["S101", "S603", "S607"]  # allow assert in tests, subprocess calls
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+warn_return_any = false

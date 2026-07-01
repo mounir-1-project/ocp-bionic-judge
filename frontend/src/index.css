@@ -1,0 +1,172 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── CSS Custom Properties ──────────────────────────────────────────────────── */
+:root {
+  --bg-base:      #0C0E14;
+  --bg-surface:   #12141f;
+  --bg-card:      rgba(20,22,34,.97);
+  --bg-card-alt:  rgba(14,16,26,.7);
+  --border:       rgba(37,40,64,.8);
+  --border-dim:   rgba(37,40,64,.5);
+
+  --accent-green:  #00D37F;
+  --accent-amber:  #FFB020;
+  --accent-red:    #F04438;
+  --accent-blue:   #4F7CF6;
+  --accent-teal:   #06B6D4;
+  --accent-purple: #A78BFA;
+
+  --rgb-green:  0,211,127;
+  --rgb-amber:  255,176,32;
+  --rgb-red:    240,68,56;
+  --rgb-blue:   79,124,246;
+
+  --text-primary:   #E8ECF1;
+  --text-secondary: #8B92A9;
+  --text-muted:     #525870;
+  --text-dim:       #3D4260;
+
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  --radius-sm: 6px;
+  --radius:    10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+
+  --shadow-card:  0 4px 24px rgba(0,0,0,.3);
+  --shadow-float: 0 12px 48px rgba(0,0,0,.4);
+}
+
+/* ── Reset ──────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Dot-grid background ────────────────────────────────────────────────────── */
+body {
+  background-color: var(--bg-base);
+  background-image: radial-gradient(circle, rgba(30,34,64,.85) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+/* ── Scrollbar ──────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar          { width: 5px; height: 5px; }
+::-webkit-scrollbar-track    { background: transparent; }
+::-webkit-scrollbar-thumb    { background: rgba(37,40,64,.9); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(53,58,82,.9); }
+
+/* ── Focus ring ─────────────────────────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid rgba(0,211,127,.45);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ── Recharts tooltip ───────────────────────────────────────────────────────── */
+.recharts-tooltip-wrapper .recharts-default-tooltip {
+  background: rgba(24,27,42,.98) !important;
+  border: 1px solid rgba(53,58,82,.9) !important;
+  border-radius: 10px !important;
+  font-family: var(--font-sans) !important;
+  font-size: 12px !important;
+  color: var(--text-primary) !important;
+  box-shadow: 0 8px 32px rgba(0,0,0,.4) !important;
+}
+
+/* ── Skeleton shimmer ───────────────────────────────────────────────────────── */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    rgba(30,34,64,.6) 25%,
+    rgba(42,46,72,.7) 50%,
+    rgba(30,34,64,.6) 75%
+  );
+  background-size: 400px 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: 5px;
+}
+
+/* ── Keyframes ──────────────────────────────────────────────────────────────── */
+@keyframes shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position:  400px 0; }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(0,211,127,.2); }
+  50%       { box-shadow: 0 0 0 6px rgba(0,211,127,.04); }
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(7px) scale(.99); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(.94) translateY(8px); }
+  to   { opacity: 1; transform: scale(1)   translateY(0); }
+}
+
+@keyframes slide-in-left {
+  from { opacity: 0; transform: translateX(-10px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(20px) scale(.96); }
+  to   { opacity: 1; transform: translateX(0)    scale(1); }
+}
+
+@keyframes scan-line {
+  0%   { top: -2px;  opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { top: 100vh; opacity: 0; }
+}
+
+@keyframes glow-green {
+  0%, 100% { box-shadow: 0 0 12px rgba(0,211,127,.15); }
+  50%       { box-shadow: 0 0 24px rgba(0,211,127,.3); }
+}
+
+/* ── Utility classes ────────────────────────────────────────────────────────── */
+.animate-fade-up   { animation: fade-up   0.38s cubic-bezier(.22,1,.36,1) forwards; }
+.animate-card-in   { animation: card-in   0.32s cubic-bezier(.22,1,.36,1) forwards; }
+.animate-scale-in  { animation: scale-in  0.4s  cubic-bezier(.34,1.56,.64,1) forwards; }
+.animate-slide-in  { animation: slide-in-left 0.3s cubic-bezier(.22,1,.36,1) forwards; }
+
+/* Glass morphism */
+.glass {
+  background: rgba(14,16,26,.75);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--border);
+}
+
+/* Status dot */
+.dot-green {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent-green);
+  animation: pulse-dot 2.5s ease-in-out infinite;
+}

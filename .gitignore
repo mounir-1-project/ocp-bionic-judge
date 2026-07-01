@@ -1,0 +1,75 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+
+# Virtual environments — NEVER commit these
+# If venv/ is already tracked: git rm -r --cached venv/
+venv*/
+.venv*/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Environment
+.env
+*.env.local
+
+# Data
+data/raw/*.csv
+data/raw/*.db
+data/processed/*.csv
+data/*.db
+*.sqlite
+*.sqlite3
+
+# MLflow
+mlruns/
+mlartifacts/
+
+# Models
+models/
+*.pkl
+*.joblib
+*.h5
+
+# Notebooks
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Tests
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Reports
+reports/*.pdf
+reports/*.html
+!reports/governance_template.md
+
+# Logs
+logs/
+*.log
+
+# SHAP plots
+*.png
+*.svg
+!docs/
+
+# Streamlit
+.streamlit/

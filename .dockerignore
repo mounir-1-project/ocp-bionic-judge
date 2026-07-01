@@ -1,0 +1,42 @@
+.env
+.git
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+*.egg-info/
+
+# Data (générée au runtime, pas dans l'image)
+data/*.db
+data/raw/
+data/processed/
+
+# MLflow (monté comme volume)
+mlruns/
+mlartifacts/
+
+# Modèles (générés au runtime)
+models/
+*.joblib
+*.pkl
+
+# Reports (générés au runtime)
+reports/shap/
+reports/*.pdf
+
+# Notebooks outputs (trop lourds pour l'image)
+notebooks/.ipynb_checkpoints/
+
+# Tests et CI (pas nécessaires en prod)
+tests/
+.github/
+htmlcov/
+.coverage
+coverage.xml
+
+# Docs (pas nécessaires dans le conteneur)
+docs/
