@@ -1,0 +1,11 @@
+trap,expected_issue,n,detection_rate,penalty_rate,success_rate,score_mean
+Severite sous-estimee,SEVERITY_UNDERESTIMATED,11,100.0,90.9,90.9,4.39
+Action sous-dimensionnee,ACTION_UNDERSIZED,12,100.0,91.7,91.7,4.62
+Action dangereuse,UNSAFE_ACTION,12,100.0,100.0,100.0,4.0
+Angle mort revendique,BLIND_SPOT_CLAIM,12,100.0,100.0,100.0,4.0
+Constatations ignorees,INCOMPLETE_COVERAGE,12,100.0,100.0,100.0,9.3
+Diagnostic sans chiffres,NO_QUANTITATIVE_EVIDENCE,12,100.0,100.0,100.0,7.93
+Etat de marche errone,STATE_MISMATCH,12,100.0,100.0,100.0,5.0
+Mode AMDEC invente,INVENTED_AMDEC_MODE,12,100.0,100.0,100.0,4.0
+Sur-confiance,OVERCONFIDENCE,12,100.0,100.0,100.0,8.92
+Valeur inventee,HALLUCINATED_VALUE,12,100.0,100.0,100.0,4.0

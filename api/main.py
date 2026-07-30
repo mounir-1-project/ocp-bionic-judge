@@ -1,897 +1,1633 @@
 """
-OCP Bionic Judge — API REST
-Author: Mounir Sanbouli
-"""
-from __future__ import annotations
-import asyncio
-import base64, os, secrets, time
-from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
-from enum import Enum
-from pathlib import Path
-from typing import Optional
+API de surveillance temps reel du refroidisseur E7301.
 
-import jwt
+Expose la chaine complete (detection -> diagnostic -> jugement) et pilote le
+rejeu accelere des donnees DCS reelles. Le dashboard est servi par cette meme
+application : aucune etape de build, aucun serveur supplementaire a lancer
+pour la demonstration.
+
+Lancement :
+    uvicorn api.main:app --reload --port 8000
+    puis ouvrir http://localhost:8000
+
+Author: Mounir Sanbouli — Stage OCP, Programme Bionic
+"""
+
+from __future__ import annotations
+
+import json
+from contextlib import asynccontextmanager
+from datetime import datetime
+from pathlib import Path
+from secrets import token_hex
+from typing import Any
+
 import pandas as pd
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Request, Response, Security
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
-from fastapi.security import APIKeyHeader
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pydantic import BaseModel, Field
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
-from sqlalchemy import text
 
-from src.config import API_SECRET_KEY as _CFG_API_KEY  # ensures load_dotenv() is called
-from src.db import get_engine, init_schema
+from src import config
+from src.notifications import EmailNotifier
+from src.operations import AlarmStore, WorkflowStore
+from src.pipeline import E7301Pipeline
+from src.realtime.replay import DCSReplay, _compact
+from src.security import AuthManager, TooManyAttemptsError
+from src.security.registry import load_registry
 
-# ── Machine ID enum — single source of truth for all valid machine IDs ─────────
-class MachineId(str, Enum):
-    """All 5 OCP Bionic machines. FastAPI validates and returns 422 for unknown IDs."""
-    BROYEUR_01     = "BROYEUR_01"
-    POMPE_02       = "POMPE_02"
-    CONVOYEUR_03   = "CONVOYEUR_03"
-    REACTEUR_04    = "REACTEUR_04"
-    COMPRESSEUR_05 = "COMPRESSEUR_05"
+DASHBOARD_HTML = Path(__file__).parent / "dashboard.html"
+ASSETS_DIR = Path(__file__).parent / "static"
 
-# ── JWT configuration ─────────────────────────────────────────────────────────
-# JWT_SECRET is generated fresh each process — stored sessions survive restarts
-# only if you set JWT_SECRET explicitly in .env.
-_JWT_SECRET:  str = os.getenv("JWT_SECRET", secrets.token_hex(32))
-_JWT_ALGO:    str = "HS256"
-_JWT_HOURS:   int = 8   # session lifetime
+# Etat applicatif. Volontairement un singleton en memoire : le systeme surveille
+# UN equipement, sur un historique fini. Une base de donnees n'apporterait rien
+# ici et masquerait la logique metier derriere de la plomberie.
+STATE: dict[str, Any] = {
+    "pipeline": None,
+    "replay": None,
+    "notifier": None,
+    "alarm_store": None,
+    "workflow_store": None,
+}
 
-# Thread pool for running synchronous agent/ML code without blocking the event loop.
-# max_workers=4: allows 4 concurrent /analyze requests; agent calls take ~10-60s.
-_AGENT_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="ocp_agent")
 
-# API key comes from src.config (which called load_dotenv already).
-if not _CFG_API_KEY:
+# Adresses ayant explicitement demande a NE PAS recevoir les alertes
+# critiques. Renseigne au demarrage depuis le registre; vide si l'acces
+# protege est desactive. Voir `auth_login`.
+OPT_OUT_ALERTES: set[str] = set()
+
+
+def _build_auth_manager() -> AuthManager | None:
+    """Construit la gestion de session a partir des identifiants disponibles.
+
+    Deux sources, dans cet ordre de preference :
+
+      1. le REGISTRE LOCAL, un mot de passe par technicien. C'est le mode
+         attendu des lors que l'adresse de session determine le destinataire
+         des alertes critiques : un secret partage ne permettrait pas de dire
+         qui a ouvert la session ni de revoquer un depart.
+      2. l'empreinte PARTAGEE `AUTH_PASSWORD_HASH`, conservee pour les
+         deploiements existants.
+
+    Returns:
+        AuthManager, ou None si l'acces protege est desactive.
+    """
+    if not config.AUTH_ENABLED:
+        return None
+
+    registry = load_registry()
+    # `alert_recipient` ETAIT UN DRAPEAU MORT. Le registre le stockait, la
+    # commande `manage_operators add --no-alerts` le posait, un test verifiait
+    # l'accesseur — et personne ne l'interrogeait. `auth_login` abonnait
+    # inconditionnellement l'adresse de session aux alertes critiques : un
+    # technicien enregistre en lecture seule, explicitement exclu des
+    # escalades, etait reveille la nuit des qu'il ouvrait une session.
+    OPT_OUT_ALERTES.clear()
+    OPT_OUT_ALERTES.update(registry.emails() - registry.alert_recipients())
+    if OPT_OUT_ALERTES:
+        logger.info(
+            f"{len(OPT_OUT_ALERTES)} technicien(s) exclu(s) des escalades "
+            f"par le registre"
+        )
+    if registry.is_configured:
+        logger.info(
+            f"Acces protege — {len(registry)} technicien(s) enregistre(s) dans "
+            f"{registry.path}"
+        )
+        return AuthManager(
+            idle_timeout_s=config.AUTH_IDLE_MINUTES * 60,
+            absolute_timeout_s=config.AUTH_ABSOLUTE_HOURS * 3600,
+            user_hashes=registry.password_hashes(),
+            user_roles=registry.roles(),
+        )
+
     logger.warning(
-        "API_SECRET_KEY not set in .env — authentication is DISABLED. "
-        "Set API_SECRET_KEY in your .env file before deploying."
+        "Acces protege par empreinte partagee : preferer un compte par "
+        "technicien (`python scripts/manage_operators.py add`)"
     )
-API_KEY: str = _CFG_API_KEY or "INSECURE_DEV_KEY"
+    return AuthManager(
+        password_hash=config.AUTH_PASSWORD_HASH,
+        idle_timeout_s=config.AUTH_IDLE_MINUTES * 60,
+        absolute_timeout_s=config.AUTH_ABSOLUTE_HOURS * 3600,
+        allowed_emails=config.AUTH_ALLOWED_EMAILS,
+        user_roles=config.AUTH_USER_ROLES,
+    )
 
-# Set COOKIE_SECURE=true in .env when deploying behind HTTPS.
-# False is intentional for local HTTP dev — do NOT change to True without TLS.
-COOKIE_SECURE: bool = os.getenv("COOKIE_SECURE", "false").lower() == "true"
 
-# Rate limiter — keyed by client IP address.
-# /auth/login is limited to 10 requests/minute to prevent brute-force attacks.
-_limiter = Limiter(key_func=get_remote_address)
+# LA CONFIGURATION EST VALIDEE AVANT TOUT EFFET DE BORD DU MODULE.
+#
+# Elle ne l'etait qu'au demarrage du `lifespan`, c'est-a-dire APRES la
+# construction de la gestion de session, APRES la lecture du registre des
+# techniciens et APRES le montage du middleware CORS — tous trois pilotes par
+# cette meme configuration. Un lancement direct par `uvicorn api.main:app`,
+# forme documentee dans l'en-tete de ce fichier, contournait donc entierement
+# le refus propre implemente dans `api/__main__.py` : la premiere erreur
+# visible etait une trace d'import, pas le message de configuration.
+_PROBLEMES_CONFIG = config.validate()
+if _PROBLEMES_CONFIG:
+    for _probleme in _PROBLEMES_CONFIG:
+        logger.error(f"Configuration invalide : {_probleme}")
+    raise RuntimeError(
+        "Configuration invalide au chargement du service :\n  - "
+        + "\n  - ".join(_PROBLEMES_CONFIG)
+    )
 
-# DB_PATH kept for legacy reference; all reads now go through SQLAlchemy (see _db_read).
-DB_PATH = Path(__file__).parent.parent / "data" / "ocp_bionic.db"
+AUTH_MANAGER = _build_auth_manager()
+SESSION_COOKIE = "e7301_session"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # ── Security fail-fast: production must have COOKIE_SECURE=true ────────────
-    # This prevents accidental deployment with insecure cookie settings.
-    # Set ENV=production and COOKIE_SECURE=true in .env before going live.
-    _env = os.getenv("ENV", "development").lower()
-    if _env == "production" and not COOKIE_SECURE:
-        raise ValueError(
-            "SECURITY ERROR: ENV=production requires COOKIE_SECURE=true. "
-            "Set COOKIE_SECURE=true in your .env file before deploying behind HTTPS."
-        )
-    try:
-        init_schema(get_engine())
-        logger.info("DB ready.")
-    except Exception as e:
-        logger.warning(f"Schema init skipped: {e}")
+    """Construit la chaine au demarrage et libere les ressources a l'arret.
+
+    Args:
+        app: Application FastAPI.
+
+    Yields:
+        None.
+    """
+    # La configuration a deja ete validee au chargement du module, avant la
+    # construction de la gestion de session et le montage du middleware CORS.
+    logger.info("Demarrage de l'API — construction de la chaine E7301")
+    pipeline = E7301Pipeline(use_llm=True)
+    STATE["pipeline"] = pipeline
+    notifier = EmailNotifier(
+        host=config.SMTP_HOST,
+        port=config.SMTP_PORT,
+        username=config.SMTP_USERNAME,
+        password=config.SMTP_PASSWORD,
+        sender=config.SMTP_FROM,
+        recipient=config.ALERT_EMAIL_TO,
+        starttls=config.SMTP_STARTTLS,
+        cooldown_minutes=config.ALERT_COOLDOWN_MINUTES,
+        minimum_severity=config.ALERT_MIN_SEVERITY,
+        spool=config.ALERT_SPOOL,
+    )
+    STATE["notifier"] = notifier
+    STATE["alarm_store"] = AlarmStore(config.ALARM_DB)
+    STATE["workflow_store"] = WorkflowStore(config.WORKFLOW_DB)
+    STATE["replay"] = _build_replay(
+        pipeline,
+        speed=config.REPLAY_SPEED,
+        analyze_every=config.REPLAY_STEP,
+    )
+    logger.info("API prete")
     yield
+    replay: DCSReplay | None = STATE.get("replay")
+    if replay is not None:
+        replay.stop()
+    notifier = STATE.get("notifier")
+    if notifier is not None:
+        notifier.stop()
+    alarm_store: AlarmStore | None = STATE.get("alarm_store")
+    if alarm_store is not None:
+        alarm_store.close()
+    workflow_store: WorkflowStore | None = STATE.get("workflow_store")
+    if workflow_store is not None:
+        workflow_store.close()
+    logger.info("API arretee")
 
 
 app = FastAPI(
-    title="OCP Bionic Judge — API",
-    description="""
-## Système de Détection d'Anomalies Industrielles
-
-API REST pour la surveillance en temps réel des équipements phosphate OCP.
-
-### Pipeline ML
-- **3 modèles comparés** : Isolation Forest (déployé), One-Class SVM, HDBSCAN
-- **24 features ciblées** (z-scores par machine, flags de coupure, z-scores locaux, deltas, temporel)
-- **Split chronologique 80/20** — AUC-ROC 0.82 (IF déployé) / 0.93 (OC-SVM, leader AUC)
-
-### Agents IA
-- **Detection Agent** (LangChain + Gemini) : diagnostic ReAct
-- **Judge Agent** (Gemini API) : 5 critères pondérés
-
-### Authentification
-Cookie JWT httpOnly (session navigateur via `POST /auth/login`) ou header `X-API-Key` (scripts/CLI).
-Routes publiques : `/health` et `/api/summary`.
-
-### Machines surveillées
-| ID | Machine | Site |
-|----|---------|------|
-| BROYEUR_01 | Broyeur à Boulets | Khouribga |
-| POMPE_02 | Pompe Centrifuge | Benguerir |
-| CONVOYEUR_03 | Convoyeur à Courroie | Jorf Lasfar |
-| REACTEUR_04 | Réacteur d'Attaque | Youssoufia |
-| COMPRESSEUR_05 | Compresseur Industriel | Safi |
-""",
-    version="1.2.0",
-    contact={"name": "Mounir Sanbouli", "email": "mounir.sanbouli.43@edu.uiz.ac.ma"},
-    license_info={"name": "MIT"},
+    title="OCP Bionic Judge — Refroidisseur E7301",
+    description=(
+        "Rejeu historique accelere et surveillance d'écarts comportementaux du refroidisseur "
+        "d'acide de sechage E7301 (PS III, Maroc Chimie). Detection hybride "
+        "regles applicatives + modele statistique non supervisé, diagnostic suspecté, "
+        "puis contrôle de cohérence interne. Aucune panne n'est confirmée."
+    ),
+    version=config.APP_VERSION,
     lifespan=lifespan,
-    docs_url=None,
-    redoc_url=None,
 )
 
-app.state.limiter = _limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
+# Actifs embarques : le dashboard doit rester exploitable sur un reseau
+# industriel isole, sans appel a un CDN public.
+app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        o.strip() for o in
-        os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:8000,http://localhost:5173").split(",")
-        if o.strip()   # guard against empty strings from trailing commas
-    ],
-    allow_methods=["GET", "POST"],
-    allow_headers=["X-API-Key", "Content-Type"],
-    allow_credentials=True,   # required for httpOnly cookie auth cross-origin
-)
-
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _get_logo_b64() -> str:
-    p = Path(__file__).parent.parent / "dashboard" / "assets" / "ocp_logo.png"
-    return base64.b64encode(p.read_bytes()).decode() if p.exists() else ""
-
-_LOGO = _get_logo_b64()
-
-
-async def verify_api_key(
-    api_key: str = Security(api_key_header),
-    ocp_session: Optional[str] = Cookie(default=None),
-) -> str:
-    """Accept either X-API-Key header (direct calls) or an httpOnly JWT cookie (browser).
-
-    Browser flow: POST /auth/login → httpOnly cookie set → subsequent requests
-    include the cookie automatically. The API key never touches JavaScript memory.
-
-    CLI/script flow: X-API-Key header as before.
-    """
-    # 1. Check X-API-Key header (backward-compatible for scripts/CLI)
-    if api_key and api_key == API_KEY:
-        return api_key
-    # 2. Check JWT from httpOnly cookie (browser sessions)
-    if ocp_session:
-        try:
-            jwt.decode(ocp_session, _JWT_SECRET, algorithms=[_JWT_ALGO])
-            return "cookie_session"
-        except jwt.ExpiredSignatureError:
-            raise HTTPException(status_code=401, detail="Session expirée — reconnectez-vous.")
-        except jwt.InvalidTokenError:
-            pass
-    raise HTTPException(status_code=401, detail="Invalid or missing API key")
-
-
-# ── Scalar API Docs ───────────────────────────────────────────────────────────
-
-@app.get("/docs", include_in_schema=False)
-async def scalar_docs() -> HTMLResponse:
-    """Scalar API Reference — premium OCP-branded API documentation."""
-    logo_tag = (
-        f'<img src="data:image/png;base64,{_LOGO}" '
-        'height="30" style="object-fit:contain;vertical-align:middle;'
-        'margin-right:12px;border-radius:7px;'
-        'box-shadow:0 0 14px rgba(0,211,127,.3),0 0 0 1px rgba(0,211,127,.15);" />'
-        if _LOGO else
-        '<span style="display:inline-flex;align-items:center;justify-content:center;'
-        'width:32px;height:32px;border-radius:8px;margin-right:12px;font-size:14px;'
-        'font-weight:900;background:rgba(0,211,127,.12);border:1px solid rgba(0,211,127,.3);'
-        'color:#00D37F;">OCP</span>'
+# Le dashboard est servi par cette meme application : aucune requete
+# inter-origine n'est necessaire par defaut. On n'ouvre que si un front
+# separe est explicitement declare dans la configuration.
+if config.CORS_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=config.CORS_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Content-Type", "X-CSRF-Token", "X-Request-ID"],
     )
-    now_str = datetime.now().strftime("%d %b %Y · %H:%M UTC")
-    return HTMLResponse(f"""<!DOCTYPE html>
-<html lang="fr">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>OCP Bionic Judge — API Reference</title>
-  {"" if not _LOGO else f'<link rel="icon" type="image/png" href="data:image/png;base64,{_LOGO}" />'}
-  <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap');
-
-    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    html, body {{ height: 100%; background: #080B10; }}
-
-    /* ── Keyframes ── */
-    @keyframes sweep {{
-      0%   {{ background-position: -200% 0; }}
-      100% {{ background-position: 200% 0; }}
-    }}
-    @keyframes pulse-dot {{
-      0%, 100% {{ box-shadow: 0 0 0 2px rgba(0,211,127,.25); }}
-      50%       {{ box-shadow: 0 0 0 6px rgba(0,211,127,.06); }}
-    }}
-    @keyframes fade-up {{
-      from {{ opacity: 0; transform: translateY(8px); }}
-      to   {{ opacity: 1; transform: translateY(0); }}
-    }}
-    @keyframes spin {{
-      to {{ transform: rotate(360deg); }}
-    }}
-
-    /* ── Premium topbar ── */
-    .ocp-bar {{
-      position: fixed; top: 0; left: 0; right: 0; z-index: 10000;
-      height: 56px;
-      background: rgba(8,11,16,.92);
-      backdrop-filter: blur(20px) saturate(180%);
-      -webkit-backdrop-filter: blur(20px) saturate(180%);
-      border-bottom: 1px solid rgba(30,36,50,.9);
-      display: flex; align-items: center;
-      padding: 0 28px;
-      justify-content: space-between;
-      font-family: 'Inter', sans-serif;
-    }}
-    /* animated gradient line under topbar */
-    .ocp-bar::after {{
-      content: '';
-      position: absolute; bottom: -1px; left: 0; right: 0; height: 1px;
-      background: linear-gradient(90deg,
-        transparent 0%,
-        rgba(0,211,127,.0) 20%,
-        rgba(0,211,127,.7) 50%,
-        rgba(0,211,127,.0) 80%,
-        transparent 100%);
-      background-size: 200% 100%;
-      animation: sweep 4s ease-in-out infinite;
-    }}
-    .ocp-brand {{ display: flex; align-items: center; }}
-    .ocp-title {{
-      font-size: 15px; font-weight: 800; color: #E6EDF3;
-      letter-spacing: -0.3px;
-    }}
-    .ocp-subtitle {{
-      font-size: 10px; color: #3D4455;
-      text-transform: uppercase; letter-spacing: 1.3px; margin-top: 2px;
-    }}
-    .ocp-right {{ display: flex; align-items: center; gap: 10px; }}
-    .ocp-chip {{
-      font-size: 10px; font-weight: 700; padding: 4px 11px; border-radius: 5px;
-      letter-spacing: 0.6px; text-transform: uppercase;
-      font-family: 'Inter', sans-serif; display: inline-flex; align-items: center; gap: 5px;
-    }}
-    .ocp-chip.green {{
-      background: rgba(0,211,127,.09); border: 1px solid rgba(0,211,127,.25); color: #00D37F;
-      box-shadow: 0 0 12px rgba(0,211,127,.12);
-    }}
-    .ocp-chip.green .dot {{
-      width: 5px; height: 5px; background: #00D37F; border-radius: 50%;
-      animation: pulse-dot 2.5s ease-in-out infinite;
-    }}
-    .ocp-chip.gray  {{
-      background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.09); color: #6B7280;
-    }}
-    .ocp-divider {{
-      width: 1px; height: 20px; background: rgba(255,255,255,.07);
-    }}
-    .ocp-time {{
-      font-size: 10px; color: #3D4455;
-      font-family: 'JetBrains Mono', monospace;
-    }}
-
-    /* ── Intro hero banner ── */
-    .ocp-hero {{
-      padding: 72px 40px 0;
-      background: #080B10;
-      border-bottom: 1px solid rgba(30,36,50,.8);
-      animation: fade-up 0.5s ease forwards;
-    }}
-    .ocp-hero-inner {{
-      max-width: 1200px; margin: 0 auto;
-      padding: 36px 0 32px;
-      display: grid; grid-template-columns: 1fr auto; gap: 40px; align-items: start;
-    }}
-    .ocp-hero-tag {{
-      display: inline-flex; align-items: center; gap: 7px;
-      font-size: 10px; font-weight: 700; color: #00D37F;
-      text-transform: uppercase; letter-spacing: 1.5px;
-      background: rgba(0,211,127,.07); border: 1px solid rgba(0,211,127,.2);
-      padding: 4px 12px; border-radius: 4px; margin-bottom: 14px;
-    }}
-    .ocp-hero-title {{
-      font-size: 30px; font-weight: 900; color: #E6EDF3;
-      letter-spacing: -1px; line-height: 1.15;
-      background: linear-gradient(135deg, #E6EDF3 55%, #6B7280);
-      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-      background-clip: text;
-    }}
-    .ocp-hero-desc {{
-      font-size: 14px; color: #4B5263; line-height: 1.65; margin-top: 10px;
-      max-width: 560px;
-    }}
-
-    /* ── Quick-stat cards ── */
-    .ocp-stats {{
-      display: flex; flex-direction: column; gap: 8px; min-width: 220px;
-    }}
-    .ocp-stat {{
-      background: rgba(14,18,28,.8);
-      border: 1px solid rgba(30,36,50,.9);
-      border-radius: 10px; padding: 14px 18px;
-      display: flex; align-items: center; gap: 12px;
-      transition: border-color .2s, box-shadow .2s;
-    }}
-    .ocp-stat:hover {{
-      border-color: rgba(0,211,127,.2);
-      box-shadow: 0 0 16px rgba(0,211,127,.06);
-    }}
-    .ocp-stat-icon {{
-      width: 34px; height: 34px; border-radius: 8px; flex-shrink: 0;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 15px;
-    }}
-    .ocp-stat-icon.green {{ background: rgba(0,211,127,.1); border: 1px solid rgba(0,211,127,.2); }}
-    .ocp-stat-icon.blue  {{ background: rgba(79,124,246,.1); border: 1px solid rgba(79,124,246,.2); }}
-    .ocp-stat-icon.amber {{ background: rgba(255,176,32,.1);  border: 1px solid rgba(255,176,32,.2); }}
-    .ocp-stat-val  {{ font-size: 18px; font-weight: 800; color: #E6EDF3; letter-spacing: -0.5px; }}
-    .ocp-stat-label{{ font-size: 10px; color: #4B5263; text-transform: uppercase; letter-spacing: 0.8px; margin-top: 1px; }}
-
-    /* ── Endpoint summary chips ── */
-    .ocp-endpoints {{
-      max-width: 1200px; margin: 0 auto;
-      padding: 20px 0 28px;
-      display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
-    }}
-    .ocp-ep-label {{
-      font-size: 10px; color: #3D4455; text-transform: uppercase;
-      letter-spacing: 1px; font-weight: 600; margin-right: 4px;
-    }}
-    .ocp-ep {{
-      display: inline-flex; align-items: center; gap: 6px;
-      font-size: 11px; font-weight: 600;
-      padding: 4px 12px; border-radius: 5px;
-      font-family: 'JetBrains Mono', monospace;
-    }}
-    .ocp-ep.post {{ background: rgba(0,211,127,.07); border: 1px solid rgba(0,211,127,.18); color: #00D37F; }}
-    .ocp-ep.get  {{ background: rgba(79,124,246,.07); border: 1px solid rgba(79,124,246,.18); color: #4F7CF6; }}
-
-    /* ── Loading overlay while Scalar initialises ── */
-    #scalar-loader {{
-      position: fixed; inset: 56px 0 0 0;
-      background: #080B10;
-      display: flex; flex-direction: column;
-      align-items: center; justify-content: center;
-      gap: 16px; z-index: 5000;
-      transition: opacity .4s ease;
-    }}
-    #scalar-loader .ring {{
-      width: 36px; height: 36px;
-      border: 2px solid rgba(0,211,127,.15);
-      border-top-color: #00D37F;
-      border-radius: 50%;
-      animation: spin .8s linear infinite;
-    }}
-    #scalar-loader p {{
-      font-size: 12px; color: #3D4455;
-      font-family: 'Inter', sans-serif; letter-spacing: 0.5px;
-    }}
-
-    /* ── Push content below fixed bar, and insert hero above Scalar ── */
-    body {{ padding-top: 56px; }}
-
-    /* ── Scalar dark overrides ── */
-    :root {{
-      --scalar-color-1: #E6EDF3;
-      --scalar-color-2: #8B949E;
-      --scalar-color-3: #484F58;
-      --scalar-background-1: #080B10;
-      --scalar-background-2: #0D1117;
-      --scalar-background-3: #131920;
-      --scalar-border-color: #1E2432;
-      --scalar-color-accent: #00D37F;
-      --scalar-sidebar-background-1: #0A0D14;
-      --scalar-sidebar-color: #6B7280;
-      --scalar-sidebar-color-active: #E6EDF3;
-      --scalar-sidebar-search-background: #131920;
-    }}
-    ::-webkit-scrollbar {{ width: 5px; height: 5px; }}
-    ::-webkit-scrollbar-track {{ background: transparent; }}
-    ::-webkit-scrollbar-thumb {{ background: #1E2432; border-radius: 4px; }}
-    ::-webkit-scrollbar-thumb:hover {{ background: #2A3040; }}
-  </style>
-</head>
-<body>
-
-  <!-- ── Premium topbar ── -->
-  <div class="ocp-bar">
-    <div class="ocp-brand">
-      {logo_tag}
-      <div>
-        <div class="ocp-title">Bionic Judge</div>
-        <div class="ocp-subtitle">OCP · Industrial AI Platform</div>
-      </div>
-    </div>
-    <div class="ocp-right">
-      <span class="ocp-time">{now_str}</span>
-      <div class="ocp-divider"></div>
-      <span class="ocp-chip green"><span class="dot"></span>API Online</span>
-      <span class="ocp-chip gray">v1.2.0</span>
-    </div>
-  </div>
-
-  <!-- ── Hero intro banner ── -->
-  <div class="ocp-hero">
-    <div class="ocp-hero-inner">
-      <div>
-        <div class="ocp-hero-tag">
-          <span>●</span> REST API · OCP Bionic Programme
-        </div>
-        <div class="ocp-hero-title">API Reference</div>
-        <div class="ocp-hero-desc">
-          Surveillance en temps réel des équipements phosphate OCP. 3 modèles ML (Isolation Forest,
-          One-Class SVM, HDBSCAN), 24 features ciblées, agents IA ReAct (LangChain + Gemini),
-          et Judge Agent à 5 critères pondérés.
-        </div>
-      </div>
-      <div class="ocp-stats">
-        <div class="ocp-stat">
-          <div class="ocp-stat-icon green">⚙</div>
-          <div>
-            <div class="ocp-stat-val" id="stat-machines">—</div>
-            <div class="ocp-stat-label">Machines actives</div>
-          </div>
-        </div>
-        <div class="ocp-stat">
-          <div class="ocp-stat-icon blue">◈</div>
-          <div>
-            <div class="ocp-stat-val" id="stat-readings">—</div>
-            <div class="ocp-stat-label">Lectures analysées</div>
-          </div>
-        </div>
-        <div class="ocp-stat">
-          <div class="ocp-stat-icon amber">◆</div>
-          <div>
-            <div class="ocp-stat-val" id="stat-anomalies">—</div>
-            <div class="ocp-stat-label">Anomalies détectées</div>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div class="ocp-endpoints">
-      <span class="ocp-ep-label">Endpoints</span>
-      <span class="ocp-ep post">POST /analyze</span>
-      <span class="ocp-ep get">GET /decisions</span>
-      <span class="ocp-ep get">GET /governance-metrics</span>
-      <span class="ocp-ep get">GET /health</span>
-      <span class="ocp-ep get">GET /api/summary</span>
-      <span class="ocp-ep get">GET /api/sensors/{{machine_id}}</span>
-    </div>
-  </div>
-
-  <!-- Loading spinner while Scalar initialises -->
-  <div id="scalar-loader">
-    <div class="ring"></div>
-    <p>Chargement de la documentation…</p>
-  </div>
-
-  <!-- Scalar API Reference -->
-  <script
-    id="api-reference"
-    data-url="/openapi.json"
-    data-configuration='{{"darkMode": true, "theme": "saturn", "layout": "modern", "defaultHttpClient": {{"targetKey": "python", "clientKey": "requests"}}, "hideClientButton": false, "searchHotKey": "k", "hiddenClients": []}}'
-  ></script>
-  <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
-
-  <script>
-    // Hide the loader once Scalar has painted its first frame
-    const loader = document.getElementById('scalar-loader');
-    const observer = new MutationObserver(() => {{
-      const scalar = document.querySelector('.scalar-app, #api-reference + div, [class*="scalar"]');
-      if (scalar) {{
-        loader.style.opacity = '0';
-        setTimeout(() => loader.remove(), 400);
-        observer.disconnect();
-      }}
-    }});
-    observer.observe(document.body, {{ childList: true, subtree: true }});
-    // Fallback: hide after 4s regardless
-    setTimeout(() => {{ loader.style.opacity = '0'; setTimeout(() => loader.remove(), 400); }}, 4000);
-  </script>
-
-  <script>
-    // Populate hero stat cards from live /api/summary (no auth required)
-    fetch('/api/summary')
-      .then(r => r.ok ? r.json() : null)
-      .then(d => {{
-        if (!d) return;
-        const m = document.getElementById('stat-machines');
-        const r = document.getElementById('stat-readings');
-        const a = document.getElementById('stat-anomalies');
-        if (m) m.textContent = d.machines_active ?? '—';
-        if (r) r.textContent = d.total_readings != null
-          ? d.total_readings.toLocaleString('fr-FR') : '—';
-        if (a) a.textContent = d.anomalies != null
-          ? d.anomalies.toLocaleString('fr-FR') : '—';
-      }})
-      .catch(() => {{}});
-  </script>
-</body>
-</html>""")
 
 
-# ── Auth endpoints ────────────────────────────────────────────────────────────
+def _durcir(response, request: Request, request_id: str):
+    """Pose les en-tetes de defense sur TOUTE reponse, refus compris.
+
+    LES REFUS N'EN AVAIENT AUCUN. Le middleware retournait directement la
+    reponse 401 ou 403, sautant le bloc d'en-tetes place apres `call_next` :
+    une reponse d'erreur partait donc sans politique de securite du contenu,
+    sans `nosniff`, sans `X-Frame-Options` et sans identifiant de requete —
+    c'est-a-dire exactement les reponses qu'un attaquant provoque le plus
+    facilement, et les seules qu'un exploitant ne peut pas correler a une
+    trace serveur.
+
+    Args:
+        response: Reponse a durcir.
+        request: Requete d'origine, pour le schema et le chemin.
+        request_id: Identifiant de correlation.
+
+    Returns:
+        La meme reponse, en-tetes poses.
+    """
+    response.headers["X-Request-ID"] = request_id
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self'; style-src 'self'; "
+        "img-src 'self' data:; connect-src 'self'; font-src 'self'; "
+        "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; "
+        "form-action 'self'"
+    )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = (
+        "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+    )
+    response.headers["Cache-Control"] = (
+        "no-store" if request.url.path.startswith("/api/") else "no-cache"
+    )
+    # HSTS n'est annonce que si HTTPS est reellement utilise : le promettre
+    # sur du HTTP local serait trompeur.
+    if request.url.scheme == "https":
+        response.headers["Strict-Transport-Security"] = (
+            "max-age=31536000; includeSubDomains"
+        )
+    return response
+
+
+@app.middleware("http")
+async def operator_access(request: Request, call_next):
+    """Protège les API quand l'accès opérateur est activé."""
+    request_id = request.headers.get("X-Request-ID") or token_hex(12)
+    request.state.request_id = request_id
+    public = (
+        request.url.path == "/"
+        or request.url.path.startswith("/assets/")
+        or request.url.path == "/api/health"
+        or request.url.path.startswith("/api/health/")
+        or request.url.path.startswith("/api/auth/")
+    )
+    session = (
+        AUTH_MANAGER.validate(request.cookies.get(SESSION_COOKIE))
+        if AUTH_MANAGER else None
+    )
+    request.state.operator = session
+    if config.AUTH_ENABLED and not public and session is None:
+        return _durcir(
+            JSONResponse(
+                status_code=401,
+                content={"detail": "Authentification operateur requise"},
+            ),
+            request,
+            request_id,
+        )
+    if (
+        config.AUTH_ENABLED
+        and session is not None
+        and request.method in {"POST", "PUT", "PATCH", "DELETE"}
+        and request.url.path not in {"/api/auth/login", "/api/auth/logout"}
+        and request.headers.get("X-CSRF-Token") != session.csrf_token
+    ):
+        return _durcir(
+            JSONResponse(
+                status_code=403,
+                content={"detail": "Jeton de session invalide"},
+            ),
+            request,
+            request_id,
+        )
+    response = await call_next(request)
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        actor = session.email if session is not None else "poste-local"
+        logger.info(
+            "audit action={} path={} actor={} role={} request_id={}",
+            request.method,
+            request.url.path,
+            actor,
+            session.role if session is not None else "local",
+            request_id,
+        )
+    # Défense en profondeur navigateur, posée par le même point unique que les
+    # refus : un seul endroit à relire pour savoir ce que le service annonce.
+    return _durcir(response, request, request_id)
+
+
+def _pipeline() -> E7301Pipeline:
+    """Recupere la chaine, ou echoue proprement si elle n'est pas prete.
+
+    Returns:
+        La chaine E7301.
+
+    Raises:
+        HTTPException: 503 si la chaine n'est pas encore construite.
+    """
+    p = STATE.get("pipeline")
+    if p is None:
+        raise HTTPException(status_code=503, detail="Chaine en cours d'initialisation")
+    return p
+
+
+def _replay() -> DCSReplay:
+    """Recupere le simulateur de rejeu.
+
+    Returns:
+        Le simulateur.
+
+    Raises:
+        HTTPException: 503 si le simulateur n'est pas pret.
+    """
+    r = STATE.get("replay")
+    if r is None:
+        raise HTTPException(status_code=503, detail="Simulateur non initialise")
+    return r
+
+
+def _notifier() -> EmailNotifier:
+    """Récupère le canal email construit au démarrage."""
+    notifier = STATE.get("notifier")
+    if notifier is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Service de notification non initialise",
+        )
+    return notifier
+
+
+def _alarm_store() -> AlarmStore:
+    store = STATE.get("alarm_store")
+    if store is None:
+        raise HTTPException(status_code=503, detail="Registre d'alarmes non initialise")
+    return store
+
+
+def _workflow_store() -> WorkflowStore:
+    store = STATE.get("workflow_store")
+    if store is None:
+        raise HTTPException(status_code=503, detail="Registre d'interventions non initialisé")
+    return store
+
+
+def _require_roles(request: Request, *roles: str) -> None:
+    """Autorise une action sensible selon le rôle résolu côté serveur."""
+    session = request.state.operator
+    if not config.AUTH_ENABLED:
+        return
+    if session is None or session.role not in roles:
+        raise HTTPException(status_code=403, detail="Rôle insuffisant pour cette action")
+
+
+def _build_replay(
+    pipeline: E7301Pipeline,
+    *,
+    speed: float,
+    start: str | None = None,
+    analyze_every: int,
+) -> DCSReplay:
+    """Construit un rejeu avec tous ses abonnements obligatoires."""
+    replay = DCSReplay(
+        pipeline,
+        speed=speed,
+        start=start,
+        analyze_every=analyze_every,
+    )
+    notifier: EmailNotifier | None = STATE.get("notifier")
+    if notifier is not None:
+        replay.subscribe(notifier.notify)
+    alarm_store: AlarmStore | None = STATE.get("alarm_store")
+    if alarm_store is not None:
+        replay.subscribe(alarm_store.observe)
+    return replay
+
+
+def _naive_timestamp(value: datetime | None) -> pd.Timestamp | None:
+    """Normalise une borne API vers l'index DCS sans fuseau horaire."""
+    if value is None:
+        return None
+    timestamp = pd.Timestamp(value)
+    if timestamp.tzinfo is not None:
+        timestamp = timestamp.tz_convert(None)
+    return timestamp
+
+
+# ── Règle de déclaration des handlers ────────────────────────────────────────
+#
+# UN HANDLER EST `async def` UNIQUEMENT S'IL `await`, OU SI SON CORPS SE LIMITE
+# A DES LECTURES EN MEMOIRE. Tout ce qui calcule, lit le disque ou sort sur le
+# reseau est declare `def` : FastAPI l'execute alors dans son pool de threads.
+#
+# CE N'ETAIT PAS LE CAS. Trente-deux des quarante-sept handlers etaient
+# `async def` sans le moindre `await` : leur corps entier s'executait sur la
+# boucle d'evenements, qui est unique. Parmi eux :
+#
+#   - `auth_login`, dont la derivation PBKDF2 est VOLONTAIREMENT couteuse
+#     (600 000 iterations). Chaque tentative de connexion, reussie ou non,
+#     gelait tout le service le temps du calcul.
+#   - `analyze`, qui appelle le modele de langage. L'appel etait synchrone et
+#     sans delai maximal : une reponse lente figeait la supervision entiere,
+#     sonde de vivacite comprise — l'orchestrateur finissait par tuer un
+#     conteneur en parfait etat.
+#   - `notable`, jusqu'a cent analyses completes enchainees.
+#   - `timeseries`, `operational_kpi`, `episodes`, qui balayent tout l'historique.
+#
+# `test_aucun_handler_calculant_ne_reste_sur_la_boucle_d_evenements`
+# verrouille la regle. Le nom cite ici etait auparavant celui d'un test
+# INEXISTANT — la faute exacte que cet audit corrige ailleurs, commise en la
+# corrigeant.
+#
+# ── Accès opérateur ──────────────────────────────────────────────────────────
 
 class LoginRequest(BaseModel):
-    api_key: str = Field(..., description="The X-API-Key value from your .env file")
+    """Email de quart et secret d'accès au poste."""
+
+    email: str = Field(..., min_length=5, max_length=254)
+    password: str = Field(..., min_length=1, max_length=1024)
 
 
-@app.post("/auth/login", tags=["Auth"])
-async def auth_login(req: LoginRequest, response: Response) -> dict:
-    """Validate the API key and set a signed JWT in an httpOnly cookie.
+class AlarmTransitionRequest(BaseModel):
+    """Action tracée d'un opérateur sur une alarme."""
 
-    The browser frontend calls this once on login.  All subsequent API requests
-    include the cookie automatically — the raw API key never touches JS memory.
+    action: str = Field(..., pattern="^(acknowledge|shelve|unshelve|close)$")
+    comment: str = Field("", max_length=1000)
 
-    Returns:
-        {"status": "ok"} on success, 401 on invalid key.
-    """
-    if req.api_key != API_KEY:
-        raise HTTPException(status_code=401, detail="Clé API invalide.")
-    token = jwt.encode(
-        {
-            "sub": "ocp_user",
-            "iat": datetime.now(timezone.utc),
-            "exp": datetime.now(timezone.utc) + timedelta(hours=_JWT_HOURS),
-        },
-        _JWT_SECRET,
-        algorithm=_JWT_ALGO,
+
+class WorkflowCreateRequest(BaseModel):
+    """Création d'une exécution depuis un modèle documentaire."""
+
+    template_id: str = Field(
+        ..., pattern="^(INSPECTION_EXTERNE|INSPECTION_INTERNE|TAMPONNAGE)$"
     )
+    owner: str = Field(..., min_length=2, max_length=254)
+    planned_at: str | None = Field(None, max_length=64)
+
+
+class WorkflowStepRequest(BaseModel):
+    """Mise à jour optimiste d'une étape traçable."""
+
+    status: str = Field(
+        ..., pattern="^(TODO|IN_PROGRESS|BLOCKED|COMPLETED|NOT_APPLICABLE)$"
+    )
+    measurement: str = Field("", max_length=500)
+    unit: str = Field("", max_length=32)
+    comment: str = Field("", max_length=1000)
+    proof_ref: str = Field("", max_length=500)
+    expected_version: int = Field(..., ge=1)
+
+
+class WorkflowCompleteRequest(BaseModel):
+    """Clôture signée d'une intervention."""
+
+    signature: str = Field(..., min_length=2, max_length=254)
+    proof_ref: str = Field("", max_length=500)
+
+
+@app.get("/api/auth/status", tags=["Acces"])
+async def auth_status(request: Request) -> dict:
+    """État de la protection et identité de la session courante."""
+    session = request.state.operator
+    return {
+        "required": config.AUTH_ENABLED,
+        "authenticated": not config.AUTH_ENABLED or session is not None,
+        "operator": (
+            session.public()
+            if session is not None
+            else {
+                "username": "Poste local",
+                "email": "",
+                "role": "local",
+                # Champ volontairement vide lorsque la protection est désactivée.
+                "csrf_token": "",  # nosec B105
+            }
+        ) if not config.AUTH_ENABLED or session is not None else None,
+    }
+
+
+@app.post("/api/auth/login", tags=["Acces"])
+def auth_login(payload: LoginRequest, request: Request) -> JSONResponse:
+    """Ouvre une session HttpOnly après authentification."""
+    if AUTH_MANAGER is None:
+        return JSONResponse({
+            "required": False,
+            "authenticated": True,
+            "operator": {
+                "username": "Poste local",
+                "email": "",
+                "role": "local",
+                # Champ volontairement vide lorsque la protection est désactivée.
+                "csrf_token": "",  # nosec B105
+            },
+        })
+    client_key = request.client.host if request.client else "unknown"
+    try:
+        result = AUTH_MANAGER.authenticate(
+            payload.email,
+            payload.password,
+            client_key,
+        )
+    except TooManyAttemptsError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail="Trop de tentatives; réessayez ultérieurement",
+            headers={"Retry-After": "300"},
+        ) from exc
+    if result is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Identifiants invalides ou trop de tentatives",
+        )
+    token, session = result
+    notifier: EmailNotifier | None = STATE.get("notifier")
+    # Le registre decide qui recoit les escalades, pas le simple fait d'avoir
+    # ouvert une session. Voir `OPT_OUT_ALERTES`.
+    if notifier is not None and session.email not in OPT_OUT_ALERTES:
+        notifier.add_recipient(session.email)
+    response = JSONResponse({
+        "required": True,
+        "authenticated": True,
+        "operator": session.public(),
+    })
     response.set_cookie(
-        key="ocp_session",
-        value=token,
-        httponly=True,           # not accessible to JS — XSS-safe
-        samesite="lax",          # "strict" breaks cross-origin dev proxy
-        secure=COOKIE_SECURE,    # True in prod — set COOKIE_SECURE=true in .env
-        max_age=_JWT_HOURS * 3600,
+        SESSION_COOKIE,
+        token,
+        max_age=int(config.AUTH_ABSOLUTE_HOURS * 3600),
+        httponly=True,
+        secure=config.AUTH_SECURE_COOKIE,
+        samesite="strict",
         path="/",
     )
-    logger.info("Login successful — JWT session cookie set (%dh)", _JWT_HOURS)
-    return {"status": "ok", "expires_in_hours": _JWT_HOURS}
+    return response
 
 
-@app.get("/auth/me", tags=["Auth"])
-async def auth_me(request: Request) -> dict:
-    """Check if the current session cookie is still valid.
-
-    Returns 200 {"status": "ok"} if authenticated, 401 otherwise.
-    Used by the frontend to restore session after a page reload.
-    """
-    token = request.cookies.get("ocp_session")
-    if not token:
-        raise HTTPException(status_code=401, detail="Non authentifié.")
-    try:
-        jwt.decode(token, _JWT_SECRET, algorithms=[_JWT_ALGO])
-    except Exception:
-        raise HTTPException(status_code=401, detail="Session expirée.")
-    return {"status": "ok"}
-
-
-@app.post("/auth/logout", tags=["Auth"])
-async def auth_logout(response: Response) -> dict:
-    """Clear the JWT session cookie.
-
-    Returns:
-        {"status": "logged_out"}
-    """
-    response.delete_cookie(key="ocp_session", path="/")
-    return {"status": "logged_out"}
+@app.post("/api/auth/refresh", tags=["Acces"])
+async def auth_refresh(request: Request) -> JSONResponse:
+    """Effectue une rotation explicite du cookie et du jeton CSRF."""
+    if AUTH_MANAGER is None:
+        raise HTTPException(status_code=409, detail="Authentification locale inactive")
+    result = AUTH_MANAGER.rotate(request.cookies.get(SESSION_COOKIE))
+    if result is None:
+        raise HTTPException(status_code=401, detail="Session expirée")
+    token, session = result
+    response = JSONResponse({"authenticated": True, "operator": session.public()})
+    response.set_cookie(
+        SESSION_COOKIE,
+        token,
+        max_age=int(config.AUTH_ABSOLUTE_HOURS * 3600),
+        httponly=True,
+        secure=config.AUTH_SECURE_COOKIE,
+        samesite="strict",
+        path="/",
+    )
+    return response
 
 
-# ── Data endpoints ────────────────────────────────────────────────────────────
+@app.post("/api/auth/logout", tags=["Acces"])
+async def auth_logout(request: Request) -> JSONResponse:
+    """Invalide la session et supprime son cookie."""
+    session = request.state.operator
+    notifier: EmailNotifier | None = STATE.get("notifier")
+    if notifier is not None and session is not None:
+        notifier.remove_recipient(session.email)
+    if AUTH_MANAGER is not None:
+        AUTH_MANAGER.destroy(request.cookies.get(SESSION_COOKIE))
+    response = JSONResponse({"authenticated": False})
+    response.delete_cookie(SESSION_COOKIE, path="/", samesite="strict")
+    return response
 
-@app.get("/api/summary", tags=["Dashboard"])
-async def public_summary():
-    """Public summary — no auth required."""
-    dec = _db_read("SELECT severity, machine_id FROM ml_decisions")
+
+@app.get("/api/auth/audit", tags=["Acces"])
+async def auth_audit(request: Request, limit: int = Query(100, ge=1, le=500)) -> list[dict]:
+    """Journal d'authentification réservé à l'administrateur."""
+    _require_roles(request, "administrator")
+    return AUTH_MANAGER.audit_events(limit) if AUTH_MANAGER is not None else []
+
+
+# ── Dashboard ─────────────────────────────────────────────────────────────────
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+def dashboard() -> HTMLResponse:
+    """Sert le dashboard de supervision."""
+    if not DASHBOARD_HTML.exists():
+        return HTMLResponse("<h1>Dashboard introuvable</h1>", status_code=404)
+    return HTMLResponse(DASHBOARD_HTML.read_text(encoding="utf-8"))
+
+
+# ── Systeme ───────────────────────────────────────────────────────────────────
+
+@app.get("/api/health", tags=["Systeme"])
+async def health() -> dict:
+    """Synthèse non ambiguë : service disponible ne signifie pas modèle promu."""
+    p = STATE.get("pipeline")
+    model_promoted = bool(
+        p and p.model_promotion_status in config.MODEL_ALLOWED_STATUSES
+    )
     return {
-        "total_readings":  len(dec),
-        "machines_active": int(dec["machine_id"].nunique()) if not dec.empty else 0,
-        "anomalies":       int(dec[dec["severity"] != "NORMAL"].shape[0]) if not dec.empty else 0,
-        "critical":        int((dec["severity"] == "CRITICAL").sum()) if not dec.empty else 0,
-        "normal":          int((dec["severity"] == "NORMAL").sum()) if not dec.empty else 0,
-        "db_connected":    _check_db(),
-        "model_loaded":    _check_model(),
-        "generated_at":    datetime.now().isoformat(),
+        "status": "degraded" if p and not model_promoted else ("ok" if p else "starting"),
+        "liveness": "alive",
+        "readiness": "ready" if p else "starting",
+        "ready_for_demo": bool(p),
+        "ready_for_production": bool(p and model_promoted and config.APP_ENV == "production"),
+        "version": config.APP_VERSION,
+        "equipment": p.domain.equipment["id"] if p else None,
+        "agent_mode": p.agent.mode if p else None,
+        "judge_mode": p.judge.mode if p else None,
+        "model_source": p.model_source if p else None,
+        "model_promotion_status": p.model_promotion_status if p else None,
+        "model_rejection_reason": p.model_rejection_reason if p else None,
+        "n_samples": len(p.features) if p else 0,
+        "data_start": p.features.index.min().isoformat() if p else None,
+        "data_end": p.features.index.max().isoformat() if p else None,
+        "sampling": "1h" if p else None,
     }
 
 
-@app.get("/api/sensors/{machine_id}", tags=["Dashboard"])
-async def get_sensor_readings(
-    machine_id: MachineId,
-    limit: int = Query(720, ge=10, le=2000),
-    _key: str = Depends(verify_api_key),
-) -> list:
-    """Time-series sensor readings for a machine.
+@app.get("/api/health/live", tags=["Sante"])
+async def liveness() -> dict:
+    """Le processus HTTP répond, sans prétendre que ses dépendances sont prêtes."""
+    return {"status": "alive", "version": config.APP_VERSION}
 
-    machine_id must be one of the 5 known OCP machines — FastAPI returns 422
-    with a descriptive error if an unknown ID is provided.
+
+@app.get("/api/health/ready", tags=["Sante"])
+async def readiness() -> JSONResponse:
+    """Disponibilité de la chaîne et des deux registres SQLite."""
+    checks = {
+        "pipeline": STATE.get("pipeline") is not None,
+        "alarm_database": STATE.get("alarm_store") is not None,
+        "workflow_database": STATE.get("workflow_store") is not None,
+    }
+    ready = all(checks.values())
+    return JSONResponse(
+        {"status": "ready" if ready else "not_ready", "checks": checks},
+        status_code=200 if ready else 503,
+    )
+
+
+@app.get("/api/health/model", tags=["Sante"])
+async def model_availability() -> dict:
+    """État d'exécution et promotion, sans confondre disponibilité et autorisation."""
+    p = _pipeline()
+    return {
+        "runtime_available": True,
+        "source": p.model_source,
+        "promotion_status": p.model_promotion_status,
+        "artifact_rejection_reason": p.model_rejection_reason,
+        "approved_for_production": (
+            p.model_promotion_status == "approved_for_production"
+        ),
+        "scientific_claim": "écart comportemental non supervisé à confirmer",
+    }
+
+
+@app.get("/api/health/database", tags=["Sante"])
+async def database_health() -> dict:
+    """Vérifie par lecture les registres locaux sans modifier leur contenu."""
+    alarm_ok = STATE.get("alarm_store") is not None
+    workflow_ok = STATE.get("workflow_store") is not None
+    if alarm_ok:
+        await run_in_threadpool(_alarm_store().list, limit=1)
+    if workflow_ok:
+        await run_in_threadpool(_workflow_store().list, 1)
+    return {
+        "status": "available" if alarm_ok and workflow_ok else "unavailable",
+        "alarm_store": alarm_ok,
+        "workflow_store": workflow_ok,
+    }
+
+
+@app.get("/api/health/version", tags=["Sante"])
+async def version_health() -> dict:
+    """Versions de l'application et du détecteur effectif."""
+    p = _pipeline()
+    return {
+        "application": config.APP_VERSION,
+        "model_source": p.model_source,
+        "model_promotion_status": p.model_promotion_status,
+        "model_runtime_signature": p.judge.model_runtime_signature,
+        "rule_version": p.judge.rule_version,
+    }
+
+
+@app.get("/api/governance", tags=["Systeme"])
+def governance() -> dict:
+    """Rapport de gouvernance : donnees, capteurs, modele, angles morts.
+
+    Contient volontairement les angles morts et l'etat de sante des capteurs :
+    un systeme de surveillance doit declarer ce qu'il ne voit pas.
     """
-    df = _db_read(
-        "SELECT * FROM sensor_readings WHERE machine_id=:mid ORDER BY timestamp DESC LIMIT :lim",
-        {"mid": machine_id.value, "lim": limit},
+    p = _pipeline()
+    report = p.health_report()
+    report["judge_self_audit"] = p.judge.auditor.report()
+    return report
+
+
+@app.get("/api/sensitivity", tags=["Gouvernance"])
+async def sensitivity() -> dict:
+    """Sensibilite aux deux parametres arbitraires du systeme.
+
+    La contamination fixe le volume d'alertes et la periode de reference
+    definit ce qui est « normal ». Aucun des deux n'est justifie physiquement.
+    Cet endpoint mesure leur influence pour que le choix soit discutable
+    plutot que subi.
+    """
+    from src.governance.sensitivity import full_report
+
+    return await run_in_threadpool(full_report, _pipeline())
+
+
+@app.get("/api/coverage", tags=["Gouvernance"])
+def coverage() -> dict:
+    """Part du risque AMDEC couverte, et etat de confirmation des tags.
+
+    Deux elements que tout jury demandera : quelle fraction de la criticite
+    AMDEC le systeme voit reellement, et sur quoi repose le sens attribue a
+    chacun des douze tags.
+    """
+    d = _pipeline().domain
+    return {
+        "risque": d.risk_coverage(),
+        "tags": d.determination_basis(),
+    }
+
+
+@app.get("/api/model/validation", tags=["Gouvernance"])
+async def model_validation() -> dict:
+    """Backtest temporel et portes de déploiement, sans fausse métrique de panne."""
+    return await run_in_threadpool(_pipeline().validation_report)
+
+
+@app.get("/api/config", tags=["Systeme"])
+async def effective_config() -> dict:
+    """Configuration effective du service.
+
+    La cle du modele de langage n'est jamais exposee : seule sa presence est
+    indiquee. Utile pour diagnostiquer un ecart de comportement entre le poste
+    de developpement et le serveur.
+    """
+    return config.summary()
+
+
+@app.get("/api/equipment", tags=["Systeme"])
+def equipment() -> dict:
+    """Fiche equipement, tags surveilles et AMDEC de reference."""
+    d = _pipeline().domain
+    return {
+        "equipment": d.equipment,
+        "tags": [
+            {"tag": t.tag, "alias": t.alias, "label": t.label, "unit": t.unit,
+             "role": t.role, "confidence": t.confidence,
+             "range_operating": t.range_operating, "setpoint": t.setpoint,
+             "rationale": t.rationale, "governance": t.governance}
+            for t in d.tags.values()
+        ],
+        "amdec": [
+            {"code": m.code, "element": m.element, "mode": m.mode,
+             "F": m.F, "G": m.G, "N": m.N, "C": m.C,
+             "band": m.criticality_band(),
+             # `observable` est conserve pour compatibilite; `observabilite`
+             # porte les trois etats reels du referentiel. Le booleen seul
+             # faisait afficher « non — angle mort » sur des modes que le
+             # detecteur rattache activement a des constatations.
+             "observable": m.observable, "observabilite": m.observabilite,
+             "action": m.action_corrective, "tasks": m.plan_maintenance_ref,
+             "provenance_category": m.provenance_category,
+             "source_file": m.source_file,
+             "source_location": m.source_location,
+             "original_values": m.original_values,
+             "transformations": m.transformations,
+             "validation_status": m.validation_status,
+             "validation_owner": m.validation_owner}
+            for m in d.modes_ranked()
+        ],
+        "plan_maintenance": d.plan_maintenance,
+        "blind_spots": [m.code for m in d.blind_spots()],
+        "partially_observable": [m.code for m in d.partially_observable_modes()],
+        "tag_registry_change_history": d.tag_registry_history,
+    }
+
+
+# ── Donnees ───────────────────────────────────────────────────────────────────
+
+@app.get("/api/timeseries", tags=["Donnees"])
+def timeseries(
+    start: datetime | None = None,
+    end: datetime | None = None,
+    max_points: int = Query(1500, ge=100, le=20000),
+) -> dict:
+    """Series temporelles des grandeurs cles, sous-echantillonnees si besoin.
+
+    Args:
+        start: Borne de debut (ISO 8601).
+        end: Borne de fin (ISO 8601).
+        max_points: Nombre maximal de points renvoyes.
+
+    Returns:
+        Dictionnaire {colonne: liste de valeurs} plus les horodatages.
+    """
+    p = _pipeline()
+    start_ts = _naive_timestamp(start)
+    end_ts = _naive_timestamp(end)
+    if start_ts is not None and end_ts is not None and start_ts > end_ts:
+        raise HTTPException(
+            status_code=422,
+            detail="La borne de debut doit preceder la borne de fin",
+        )
+    # Les features restent la source des grandeurs calculées. Les observations
+    # ajoutent les 12 tags DCS, y compris les deux capteurs dégradés, uniquement
+    # pour la visualisation : elles ne réintègrent jamais l'apprentissage.
+    df = p.features.join(
+        p.ingestion.observations[
+            [c for c in p.ingestion.observations if c not in p.features.columns]
+        ],
+        how="left",
     )
-    if df.empty:
-        return []
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-    return df.sort_values("timestamp").to_dict(orient="records")
+    if start_ts is not None:
+        df = df[df.index >= start_ts]
+    if end_ts is not None:
+        df = df[df.index <= end_ts]
+
+    raw_aliases = [tag.alias for tag in p.domain.tags.values()]
+    cols = [*raw_aliases,
+        "conc_min", "delta_t", "duty_kw", "duty_expected", "regulation_effort_z",
+        "regulation_effort_trend_14d", "control_deviation",
+    ]
+    cols = [c for c in cols if c in df.columns]
+
+    if len(df) <= max_points:
+        sub = df
+    else:
+        # Echantillonnage regulier qui respecte strictement max_points et
+        # conserve toujours le dernier point (le curseur du rejeu).
+        positions = [
+            round(i * (len(df) - 1) / (max_points - 1))
+            for i in range(max_points)
+        ]
+        sub = df.iloc[positions]
+
+    out: dict[str, Any] = {
+        "timestamps": [t.isoformat() for t in sub.index],
+        "process_state": sub["process_state"].tolist(),
+        "n_total": len(df),
+        "n_returned": len(sub),
+    }
+    for c in cols:
+        out[c] = [None if pd.isna(v) else round(float(v), 4) for v in sub[c]]
+    return out
 
 
-@app.get("/api/judge-evals", tags=["Dashboard"])
-async def get_judge_evals(
-    limit:  int = Query(300, ge=1, le=1000),
-    offset: int = Query(0,   ge=0),
-    _key: str = Depends(verify_api_key),
-) -> list:
-    """Judge evaluation records with optional pagination via limit/offset."""
-    df = _db_read(
-        "SELECT * FROM judge_evaluations ORDER BY timestamp DESC LIMIT :lim OFFSET :off",
-        {"lim": limit, "off": offset},
+@app.get("/api/sensor-health", tags=["Donnees"])
+def sensor_health() -> list[dict]:
+    """Synthese de disponibilite et de defauts par capteur."""
+    return _pipeline().ingestion.sensor_health.to_dict(orient="records")
+
+
+@app.get("/api/detection/fouling-bench", tags=["Gouvernance"])
+async def fouling_bench(
+    severities: str = Query(
+        "0.05,0.10,0.20,0.30",
+        description=(
+            "Pertes de coefficient d'echange testees, en FRACTION dans ]0, 1[ "
+            "et separees par des virgules. 0.20 = perte de 20 % de UA."
+        ),
+    ),
+    duration_days: int = Query(60, ge=14, le=180),
+) -> dict:
+    """Banc d'injection d'encrassement — mesure de detection sur donnees reelles.
+
+    Repond a la question qu'aucune metrique du projet ne couvrait : le detecteur
+    verrait-il un encrassement s'il s'en produisait un ? Une rampe simulee est
+    superposee aux donnees reelles dans une fenetre ou la regle est silencieuse,
+    puis on mesure ce que le detecteur en fait.
+
+    Le chiffre a lire n'est pas le taux de detection brut mais le taux de
+    detection UTILE, c'est-a-dire assez tot pour programmer un arret.
+    """
+    from src.governance.fouling_injection import FoulingInjectionBench
+
+    try:
+        levels = tuple(float(a) for a in severities.split(",") if a.strip())
+    except ValueError as exc:
+        raise HTTPException(422, "Severites illisibles") from exc
+    if not levels:
+        raise HTTPException(422, "Au moins une severite est requise")
+    # Une severite est une FRACTION de perte de UA. Laisser passer 1, 2 ou 3
+    # produirait des scenarios ou l'echangeur n'echange plus rien, detectes
+    # par construction : le banc afficherait 100 % sans rien demontrer.
+    hors_plage = [level for level in levels if not 0.0 < level < 1.0]
+    if hors_plage:
+        raise HTTPException(
+            422,
+            f"Severite hors plage : {hors_plage}. Une severite est une perte "
+            f"de coefficient d'echange exprimee en fraction, dans ]0, 1[ "
+            f"(0.20 = perte de 20 % de UA).",
+        )
+
+    bench = FoulingInjectionBench(_pipeline())
+    result = await run_in_threadpool(
+        bench.run, levels, (duration_days,),
     )
-    return [] if df.empty else df.to_dict(orient="records")
+    return result.to_dict()
 
 
-@app.get("/api/audit-log", tags=["Dashboard"])
-async def get_audit_log(
-    limit:      int                  = Query(300, ge=1, le=1000),
-    machine_id: Optional[MachineId] = Query(None),
-    severity:   Optional[str]       = Query(None, pattern="^(INFO|WARNING|CRITICAL)$"),
-    _key: str = Depends(verify_api_key),
-) -> list:
-    """Audit log entries. machine_id is validated against the 5 known machines."""
-    sql = "SELECT * FROM audit_log WHERE 1=1"
-    params: dict = {}
-    if machine_id:
-        sql += " AND machine_id=:mid"
-        params["mid"] = machine_id.value
-    if severity:
-        sql += " AND severity=:sev"
-        params["sev"] = severity
-    sql += " ORDER BY timestamp DESC LIMIT :lim"
-    params["lim"] = int(limit)
-    df = _db_read(sql, params)
-    return [] if df.empty else df.to_dict(orient="records")
+@app.get("/api/topology", tags=["Donnees"])
+def topology() -> dict:
+    """Topologie physique : pieces, capteurs situes, rattachement des codes.
+
+    C'est le contrat que consomme la representation 3D. Il vient integralement
+    de `src/domain/topology.yaml` : aucune position, aucun rattachement piece
+    n'est ecrit dans le code de l'interface. Une correction validee par OCP se
+    fait dans le YAML.
+    """
+    return _pipeline().domain.topology()
 
 
-# ── Schemas ───────────────────────────────────────────────────────────────────
+@app.get("/api/sensor/{alias}", tags=["Donnees"])
+def sensor_detail(
+    alias: str,
+    window_h: int = Query(504, ge=6, le=20000),
+    end: datetime | None = None,
+    max_points: int = Query(700, ge=50, le=5000),
+) -> dict:
+    """Fiche complete d'un capteur : metadonnees, serie et qualite.
+
+    C'est la reponse au clic sur un capteur du modele 3D. Elle rassemble en un
+    seul appel ce qu'un exploitant veut voir : ce que le capteur mesure, ce
+    qu'il vaut maintenant, comment il a evolue, et si on peut lui faire
+    confiance.
+
+    Args:
+        alias: Alias court du tag, ex. 'T_ACID_OUT'.
+        window_h: Profondeur d'historique en heures.
+        end: Instant de fin (defaut : fin des donnees ou curseur de rejeu).
+        max_points: Nombre maximal de points renvoyes.
+
+    Returns:
+        Metadonnees, seuils, serie temporelle, statistiques et evenements qualite.
+
+    Raises:
+        HTTPException: 404 si l'alias est inconnu du referentiel.
+    """
+    p = _pipeline()
+    tag = p.domain.by_alias.get(alias)
+    if tag is None:
+        raise HTTPException(status_code=404, detail=f"Capteur inconnu: {alias}")
+
+    # Les observations portent les 12 tags DCS, capteurs degrades compris : un
+    # capteur mort doit rester consultable, c'est meme la seule facon de voir
+    # qu'il est mort. Les features n'en gardent que le perimetre exploitable.
+    source = p.ingestion.observations
+    if alias not in source.columns:
+        raise HTTPException(status_code=404, detail=f"Serie absente pour {alias}")
+    series = source[alias]
+
+    end_ts = _naive_timestamp(end) or series.index.max()
+    start_ts = end_ts - pd.Timedelta(hours=window_h)
+    window = series[(series.index >= start_ts) & (series.index <= end_ts)]
+
+    if len(window) > max_points:
+        step = max(1, len(window) // max_points)
+        window = window.iloc[::step]
+
+    valid = series.dropna()
+    quality = p.ingestion.quality
+    events = quality[quality["alias"] == alias] if len(quality) else quality
+    issues = (
+        events["issue"].value_counts().to_dict() if len(events) else {}
+    )
+    health_rows = p.ingestion.sensor_health
+    health = health_rows[health_rows["alias"] == alias]
+    availability = float(health["availability_pct"].iloc[0]) if len(health) else None
+
+    def _num(value: Any) -> float | None:
+        return None if pd.isna(value) else round(float(value), 4)
+
+    return {
+        "alias": alias,
+        "tag": tag.tag,
+        "label": tag.label,
+        "unit": tag.unit,
+        "kind": tag.kind,
+        "role": tag.role,
+        "confidence": tag.confidence,
+        "rationale": tag.rationale,
+        "setpoint": tag.setpoint,
+        "range_operating": tag.range_operating,
+        "thresholds": {
+            "alarm_low_low": tag.threshold("alarm_low_low"),
+            "alarm_low": tag.threshold("alarm_low"),
+            "alarm_high": tag.threshold("alarm_high"),
+            "alarm_high_high": tag.threshold("alarm_high_high"),
+        },
+        "placement": p.domain.sensor_placements.get(alias, {}),
+        "series": {
+            "timestamps": [t.isoformat() for t in window.index],
+            "values": [_num(v) for v in window],
+        },
+        "stats": {
+            "last": _num(valid.iloc[-1]) if len(valid) else None,
+            "last_at": str(valid.index[-1]) if len(valid) else None,
+            "min": _num(valid.min()) if len(valid) else None,
+            "max": _num(valid.max()) if len(valid) else None,
+            "mean": _num(valid.mean()) if len(valid) else None,
+            "p01": _num(valid.quantile(0.01)) if len(valid) else None,
+            "p99": _num(valid.quantile(0.99)) if len(valid) else None,
+            "n_total": len(series),
+            "n_valid": len(valid),
+        },
+        "quality": {
+            "availability_pct": availability,
+            "issues": issues,
+            "n_events": len(events),
+        },
+    }
+
+
+@app.get("/api/episodes", tags=["Donnees"])
+def episodes(limit: int = Query(50, ge=1, le=500)) -> list[dict]:
+    """Episodes d'anomalie agreges, tries par score maximal.
+
+    Args:
+        limit: Nombre maximal d'episodes.
+
+    Returns:
+        Liste d'episodes serialisables.
+    """
+    ep = _pipeline().episodes().head(limit).copy()
+    for c in ("start", "end", "peak_at"):
+        ep[c] = ep[c].astype(str)
+    return ep.to_dict(orient="records")
+
+
+# ── Analyse ───────────────────────────────────────────────────────────────────
 
 class AnalyzeRequest(BaseModel):
-    machine_id: MachineId = Field(..., json_schema_extra={"example": "BROYEUR_01"})
-    use_agent:  bool      = Field(default=True)
-    run_judge:  bool      = Field(default=True)
+    """Requete d'analyse d'un instant.
 
-class AnalyzeResponse(BaseModel):
-    machine_id:         str
-    timestamp:          str
-    anomaly_score:      float
-    severity:           str
-    diagnosis:          Optional[str]   = None
-    recommended_action: Optional[str]   = None
-    confidence:         Optional[float] = None
-    judge_score:        Optional[float] = None
-    judge_agreement:    Optional[bool]  = None
-    processing_ms:      float
+    Attributes:
+        timestamp: Instant a analyser (ISO 8601).
+    """
 
-class DecisionRecord(BaseModel):
-    id:            int
-    machine_id:    str
-    timestamp:     str
-    anomaly_score: float
-    is_anomaly:    int
-    severity:      str
-    model_version: Optional[str]   = None
-    inference_ms:  Optional[float] = None
-
-class GovernanceMetrics(BaseModel):
-    window:                str
-    computed_at:           str
-    n_evaluations:         int
-    mean_judge_confidence: Optional[float] = None
-    disagreement_rate:     Optional[float] = None
-    ocp_compliance_rate:   Optional[float] = None
-    critical_unresolved:   Optional[int]   = None
-    alerts:                list[dict]      = Field(default_factory=list)
-
-class HealthResponse(BaseModel):
-    status:       str
-    timestamp:    str
-    db_connected: bool
-    model_loaded: bool
-    version:      str = "1.2.0"
+    timestamp: str = Field(..., examples=["2024-10-25T21:00:00"])
 
 
-# ── DB helpers ────────────────────────────────────────────────────────────────
-
-def _db_read(sql: str, params: dict | None = None) -> pd.DataFrame:
-    """Execute a read-only SQL query via the SQLAlchemy engine.
-
-    Unified replacement for the former _db_query() that used sqlite3 directly.
-    Using the engine ensures compatibility with both SQLite (dev) and
-    PostgreSQL (production) without maintaining two DB connections.
+@app.post("/api/analyze", tags=["Analyse"])
+def analyze(req: AnalyzeRequest) -> dict:
+    """Analyse complete d'un instant : detection, diagnostic, jugement.
 
     Args:
-        sql:    SQL query using :named_param syntax (SQLAlchemy text()).
-        params: Optional dict of named parameters matching :placeholders.
+        req: Requete contenant l'horodatage.
 
     Returns:
-        DataFrame with query results, or empty DataFrame on failure.
+        Dictionnaire complet de l'analyse.
+
+    Raises:
+        HTTPException: 404 si l'horodatage est absent des donnees.
     """
+    p = _pipeline()
     try:
-        with get_engine().connect() as conn:
-            return pd.read_sql(text(sql), conn, params=params or {})
-    except Exception as exc:
-        logger.error(f"DB read error: {exc}")
-        return pd.DataFrame()
+        return p.analyze_at(req.timestamp).to_dict()
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Horodatage {req.timestamp} absent des donnees "
+                   f"({p.features.index.min()} -> {p.features.index.max()})",
+        ) from exc
 
 
-def _check_db() -> bool:
-    """Return True if the SQLAlchemy engine can reach the database."""
-    try:
-        with get_engine().connect() as conn:
-            conn.execute(text("SELECT 1"))
-        return True
-    except Exception:
-        return False
-
-
-def _check_model() -> bool:
-    """Return True if the best_model.joblib bundle exists on disk."""
-    return (Path(__file__).parent.parent / "models" / "best_model.joblib").exists()
-
-
-# ── Analysis pipeline (sync — runs in thread pool) ────────────────────────────
-
-def _analyze_sync(req: AnalyzeRequest) -> AnalyzeResponse:
-    """Synchronous analysis pipeline executed in _AGENT_POOL.
-
-    Keeps the FastAPI event loop free during the potentially long agent calls.
+@app.get("/api/notable", tags=["Analyse"])
+def notable(limit: int = Query(20, ge=1, le=100)) -> list[dict]:
+    """Analyse les instants les plus interessants de la periode.
 
     Args:
-        req: Analysis request with machine_id and feature flags.
+        limit: Nombre d'instants a analyser.
 
     Returns:
-        Populated AnalyzeResponse.
+        Liste d'analyses compactes.
     """
-    t0 = time.perf_counter()
-    mid = req.machine_id.value  # plain str for internal functions
-    logger.info(f"[thread] /analyze machine={mid}")
-    try:
-        from src.models.predict import predict
-        results = predict(machine_id=mid, limit=100, save_to_db=True)
-    except FileNotFoundError:
-        raise HTTPException(503, "Model not loaded — run `make train` first.")
-    except Exception as e:
-        raise HTTPException(500, str(e))
-    if results.empty:
-        raise HTTPException(404, f"No data for {mid}")
-
-    latest = results.sort_values("timestamp").iloc[-1]
-    data: dict = {
-        "machine_id":    mid,
-        "timestamp":     str(latest.get("timestamp", datetime.now().isoformat())),
-        "anomaly_score": float(latest.get("anomaly_score", 0.0)),
-        "severity":      str(latest.get("severity", "NORMAL")),
-        "processing_ms": 0.0,
-    }
-    if req.use_agent:
-        try:
-            from src.agents.detection_agent import analyze_machine
-            dec = analyze_machine(mid)
-            data.update({
-                "diagnosis":          dec.diagnosis,
-                "recommended_action": dec.recommended_action,
-                "confidence":         dec.confidence,
-            })
-            if req.run_judge:
-                from src.agents.judge_agent import judge_decision
-                ev = judge_decision(
-                    {"machine_id": mid},
-                    {"anomaly_score": data["anomaly_score"]},
-                    dec.model_dump(),
-                )
-                data.update({"judge_score": ev.global_score, "judge_agreement": ev.agreement})
-        except Exception as e:
-            logger.warning(f"Agent/Judge skipped: {e}")
-    data["processing_ms"] = (time.perf_counter() - t0) * 1000
-    return AnalyzeResponse(**data)
+    p = _pipeline()
+    return [
+        _compact(p.analyze_at(ts, use_llm=False))
+        for ts in p.notable_timestamps(limit)
+    ]
 
 
-# ── Core Endpoints ────────────────────────────────────────────────────────────
+# ── Temps reel ────────────────────────────────────────────────────────────────
 
-@app.get("/health", tags=["System"])
-async def health() -> dict:
-    """Public health-check — no auth required.
+class ReplayConfig(BaseModel):
+    """Parametres de demarrage du rejeu.
 
-    Returns db connectivity, model availability, and a UTC timestamp.
-    Used by Docker HEALTHCHECK and monitoring tools.
+    Attributes:
+        speed: Heures de process simulees par seconde reelle.
+        start: Horodatage de depart.
+        analyze_every: Analyser un instant sur N.
     """
-    db_ok    = False
-    model_ok = False
+
+    speed: float = Field(120.0, gt=0, le=100000)
+    start: str | None = None
+    analyze_every: int = Field(3, ge=1, le=24)
+
+
+@app.post("/api/replay/start", tags=["Temps reel"])
+def replay_start(cfg: ReplayConfig, request: Request) -> dict:
+    """Demarre (ou redemarre) le rejeu accelere du flux DCS.
+
+    Args:
+        cfg: Parametres du rejeu.
+
+    Returns:
+        Etat du rejeu apres demarrage.
+    """
+    _require_roles(
+        request, "operator", "maintenance", "reliability_engineer", "administrator"
+    )
+    p = _pipeline()
+    old: DCSReplay | None = STATE.get("replay")
+    if old is not None and old.state.running:
+        old.stop()
     try:
-        with get_engine().connect() as conn:
-            conn.execute(text("SELECT 1"))
-        db_ok = True
-    except Exception:
-        pass
-    # Use the same helper as /api/summary so both report the real bundle file
-    # (models/best_model.joblib) — the previous glob("*.pkl") never matched the
-    # .joblib bundle and always reported model_loaded=false.
-    model_ok = _check_model()
+        replay = _build_replay(
+            p,
+            speed=cfg.speed,
+            start=cfg.start,
+            analyze_every=cfg.analyze_every,
+        )
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    STATE["replay"] = replay
+    replay.start()
+    return replay.snapshot()
+
+
+@app.post("/api/replay/stop", tags=["Temps reel"])
+def replay_stop(request: Request) -> dict:
+    """Arrete le rejeu en cours."""
+    _require_roles(
+        request, "operator", "maintenance", "reliability_engineer", "administrator"
+    )
+    r = _replay()
+    r.stop()
+    return r.snapshot()
+
+
+@app.post("/api/replay/speed", tags=["Temps reel"])
+async def replay_speed(
+    request: Request,
+    speed: float = Query(..., gt=0, le=100000),
+) -> dict:
+    """Change la vitesse du rejeu a chaud.
+
+    Args:
+        speed: Nouvelle vitesse en heures de process par seconde.
+
+    Returns:
+        Etat du rejeu.
+    """
+    _require_roles(
+        request, "operator", "maintenance", "reliability_engineer", "administrator"
+    )
+    r = _replay()
+    r.set_speed(speed)
+    return r.snapshot()
+
+
+@app.get("/api/replay/state", tags=["Temps reel"])
+async def replay_state() -> dict:
+    """Etat courant du rejeu."""
+    return _replay().snapshot()
+
+
+@app.get("/api/replay/stream", tags=["Temps reel"])
+async def replay_stream(n: int = Query(40, ge=1, le=500)) -> list[dict]:
+    """Dernieres analyses produites par le rejeu.
+
+    Args:
+        n: Nombre d'elements.
+
+    Returns:
+        Liste d'analyses compactes, du plus recent au plus ancien.
+    """
+    return _replay().recent(n)
+
+
+@app.get("/api/replay/alerts", tags=["Temps reel"])
+async def replay_alerts(n: int = Query(40, ge=1, le=500)) -> list[dict]:
+    """Dernieres alertes du rejeu.
+
+    Args:
+        n: Nombre d'elements.
+
+    Returns:
+        Liste d'alertes compactes.
+    """
+    return _replay().alerts(n)
+
+
+@app.get("/api/alarms", tags=["Alarmes"])
+async def alarm_registry(
+    active_only: bool = True,
+    limit: int = Query(100, ge=1, le=500),
+) -> list[dict]:
+    """Registre durable avec état, propriétaire et historique opérateur."""
+    return await run_in_threadpool(
+        _alarm_store().list,
+        active_only=active_only,
+        limit=limit,
+    )
+
+
+def _workflow_templates() -> dict[str, dict[str, Any]]:
+    """Modèles issus des checklists et gammes OCP, sans remplacer le permis HSE."""
+    domain = _pipeline().domain
+    external = [
+        {
+            "code": f"EXT-{index:02d}",
+            "label": label,
+            "dangerous": False,
+            "source_ref": (
+                "6-Check-list INSPECTION REFROIDISSEUR DE SECHAGE PSIII.xlsx "
+                "- checklist externe"
+            ),
+        }
+        for index, label in enumerate(
+            domain.checklists["INSPECTION_EXTERNE"]["points"], start=1
+        )
+    ]
+    prerequisites = [
+        ("HSE-01", "Autorisation de travail officielle reçue", False),
+        ("HSE-02", "Circuits acide et eau de mer isolés et consignés", True),
+        ("HSE-03", "Calandre vidangée et pression intérieure vérifiée à 0 bar", True),
+        ("HSE-04", "EPI anti-acide complets contrôlés", True),
+        ("HSE-05", "Couvercles ouverts selon la gamme approuvée", True),
+        ("HSE-06", "Manutention au palan réalisée avec moyen contrôlé", True),
+    ]
+    internal = [
+        {
+            "code": code,
+            "label": label,
+            "dangerous": dangerous,
+            "source_ref": (
+                "7-Gamme PV Refroidisseur d'acide PS3.pdf - page 1, "
+                "phases 10 à 120"
+            ),
+        }
+        for code, label, dangerous in prerequisites
+    ] + [
+        {
+            "code": f"INT-{index:02d}",
+            "label": label,
+            "dangerous": False,
+            "source_ref": (
+                "6-Check-list INSPECTION REFROIDISSEUR DE SECHAGE PSIII.xlsx "
+                "- checklist interne"
+            ),
+        }
+        for index, label in enumerate(
+            domain.checklists["INSPECTION_INTERNE"]["points"], start=1
+        )
+    ]
+    tamponnage_labels = [
+        "Identifier et repérer le tube à contrôler",
+        "Confirmer consignation, vidange et pression nulle",
+        "Contrôler visuellement les extrémités et la plaque tubulaire",
+        "Exécuter le tamponnage selon la gamme approuvée",
+        "Enregistrer le nombre cumulé de tubes tamponnés",
+        "Comparer au critère documentaire de 30 % sans inventer le nombre total",
+        "Contrôler l'étanchéité avant fermeture",
+        "Clôturer et préparer la remise en service autorisée",
+    ]
+    tamponnage = [
+        {
+            "code": f"TAM-{index:02d}",
+            "label": label,
+            "dangerous": index in {2, 4, 7, 8},
+            "source_ref": (
+                "8-Gamme de tamponnage des tubes de refroidisseur.xls; "
+                "plan préventif H pour le critère 30 %"
+            ),
+        }
+        for index, label in enumerate(tamponnage_labels, start=1)
+    ]
+    warning = (
+        "Démonstrateur de traçabilité uniquement: ne remplace pas la procédure HSE, "
+        "la consignation officielle, le permis de travail ni la GMAO OCP."
+    )
     return {
-        "status":      "ok",
-        "timestamp":   datetime.now(timezone.utc).isoformat(),
-        "db_connected": db_ok,
-        "model_loaded": model_ok,
+        "INSPECTION_EXTERNE": {
+            "title": "Inspection externe mensuelle",
+            "frequency": "1 mois - source plan préventif C",
+            "warning": warning,
+            "steps": external,
+        },
+        "INSPECTION_INTERNE": {
+            "title": "Inspection interne en arrêt process",
+            "frequency": "Révision - sans périodicité interprétée",
+            "warning": warning,
+            "steps": internal,
+        },
+        "TAMPONNAGE": {
+            "title": "Contrôle et tamponnage des tubes",
+            "frequency": "Selon inspection/autorisation - critère H confirmé à 30 %",
+            "warning": warning,
+            "steps": tamponnage,
+        },
     }
 
 
-@app.post("/analyze", response_model=AnalyzeResponse, tags=["Detection"])
-async def analyze(req: AnalyzeRequest, _key: str = Depends(verify_api_key)) -> AnalyzeResponse:
-    """Trigger full detection + agent + judge pipeline (non-blocking)."""
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(_AGENT_POOL, _analyze_sync, req)
+@app.get("/api/workflows/templates", tags=["Maintenance"])
+def workflow_templates() -> dict[str, dict[str, Any]]:
+    """Modèles documentaires avec provenance et avertissement HSE permanent."""
+    return _workflow_templates()
 
 
-@app.get("/decisions", response_model=list[DecisionRecord], tags=["Decisions"])
-async def get_decisions(
-    machine_id: Optional[MachineId] = Query(None),
-    limit:      int                 = Query(50, ge=1, le=500),
-    severity:   Optional[str]       = Query(None, pattern="^(NORMAL|WARNING|CRITICAL)$"),
-    _key: str = Depends(verify_api_key),
-) -> list[DecisionRecord]:
-    """Query recent ML decisions."""
-    sql    = "SELECT * FROM ml_decisions WHERE 1=1"
-    params: dict = {"limit": limit}
-    if machine_id: sql += " AND machine_id=:mid"; params["mid"] = machine_id.value
-    if severity:   sql += " AND severity=:sev";   params["sev"] = severity
-    sql += " ORDER BY created_at DESC LIMIT :limit"
+@app.get("/api/workflows", tags=["Maintenance"])
+async def workflow_list(limit: int = Query(100, ge=1, le=500)) -> list[dict]:
+    """Liste paginée bornée des interventions locales."""
+    return await run_in_threadpool(_workflow_store().list, limit)
+
+
+@app.get("/api/workflows/{workflow_id}", tags=["Maintenance"])
+async def workflow_detail(workflow_id: str) -> dict:
     try:
-        with get_engine().connect() as conn:
-            df = pd.read_sql(text(sql), conn, params=params)
-    except Exception as e:
-        raise HTTPException(500, str(e))
-    return [] if df.empty else [DecisionRecord(**r) for r in df.to_dict(orient="records")]
+        return await run_in_threadpool(_workflow_store().get, workflow_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Intervention inconnue") from exc
 
 
-@app.get("/governance-metrics", response_model=GovernanceMetrics, tags=["Governance"])
-async def governance_metrics(
-    window: str = Query("24h", pattern="^(1h|24h|7d)$"),
-    _key: str = Depends(verify_api_key),
-) -> GovernanceMetrics:
-    """Governance + compliance metrics for a time window."""
+@app.post("/api/workflows", tags=["Maintenance"], status_code=201)
+async def workflow_create(
+    payload: WorkflowCreateRequest,
+    request: Request,
+) -> dict:
+    _require_roles(request, "maintenance", "reliability_engineer", "administrator")
+    template = _workflow_templates()[payload.template_id]
+    operator = request.state.operator
+    actor = operator.email if operator is not None else "poste-local"
+    return await run_in_threadpool(
+        _workflow_store().create,
+        template_id=payload.template_id,
+        title=template["title"],
+        owner=payload.owner,
+        planned_at=payload.planned_at,
+        created_by=actor,
+        steps=template["steps"],
+    )
+
+
+@app.patch("/api/workflows/{workflow_id}/steps/{step_id}", tags=["Maintenance"])
+async def workflow_step_update(
+    workflow_id: str,
+    step_id: str,
+    payload: WorkflowStepRequest,
+    request: Request,
+) -> dict:
+    _require_roles(request, "maintenance", "reliability_engineer", "administrator")
+    operator = request.state.operator
+    actor = operator.email if operator is not None else "poste-local"
     try:
-        from src.governance.governance import compute_metrics
-        m = compute_metrics(window=window)
-        return GovernanceMetrics(**{k: v for k, v in m.items() if k != "per_machine"})
-    except Exception as e:
-        raise HTTPException(500, str(e))
+        return await run_in_threadpool(
+            _workflow_store().update_step,
+            workflow_id,
+            step_id,
+            status=payload.status,
+            actor=actor,
+            measurement=payload.measurement,
+            unit=payload.unit,
+            comment=payload.comment,
+            proof_ref=payload.proof_ref,
+            expected_version=payload.expected_version,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Étape inconnue") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@app.get("/api/drift", tags=["Dashboard"])
-async def get_drift(_key: str = Depends(verify_api_key)) -> dict:
-    """Run drift detection -- PSI + KS test on recent vs. historical anomaly scores."""
+@app.post("/api/workflows/{workflow_id}/complete", tags=["Maintenance"])
+async def workflow_complete(
+    workflow_id: str,
+    payload: WorkflowCompleteRequest,
+    request: Request,
+) -> dict:
+    _require_roles(request, "maintenance", "reliability_engineer", "administrator")
+    operator = request.state.operator
+    actor = operator.email if operator is not None else "poste-local"
     try:
-        from src.models.drift_detector import check_drift
-        return check_drift()
-    except Exception as e:
-        logger.error(f"Drift check failed: {e}")
-        raise HTTPException(500, f"Drift check failed: {e}")
+        return await run_in_threadpool(
+            _workflow_store().complete,
+            workflow_id,
+            actor=actor,
+            signature=payload.signature,
+            proof_ref=payload.proof_ref,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Intervention inconnue") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("API_PORT", 8000)))
+@app.post("/api/alarms/{alarm_id}/transition", tags=["Alarmes"])
+async def alarm_transition(
+    alarm_id: int,
+    payload: AlarmTransitionRequest,
+    request: Request,
+) -> dict:
+    """Acquitte, shelve ou réactive une alarme avec traçabilité."""
+    operator = request.state.operator
+    identity = operator.email if operator is not None else "poste-local"
+    role = operator.role if operator is not None else "administrator"
+    allowed_by_action = {
+        "acknowledge": {
+            "operator", "maintenance", "reliability_engineer", "administrator"
+        },
+        "shelve": {"maintenance", "reliability_engineer", "administrator"},
+        "unshelve": {"maintenance", "reliability_engineer", "administrator"},
+        "close": {"maintenance", "reliability_engineer", "administrator"},
+    }
+    if role not in allowed_by_action[payload.action]:
+        raise HTTPException(status_code=403, detail="Rôle insuffisant pour cette action")
+    try:
+        return await run_in_threadpool(
+            _alarm_store().transition,
+            alarm_id,
+            action=payload.action,
+            operator=identity,
+            comment=payload.comment,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Alarme inconnue") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/api/replay/disagreements", tags=["Temps reel"])
+async def replay_disagreements(n: int = Query(20, ge=1, le=200)) -> list[dict]:
+    """Decisions rejetees par le Judge pendant le rejeu.
+
+    C'est la vue la plus importante du point de vue gouvernance : elle montre
+    ou le systeme s'est controle lui-meme.
+
+    Args:
+        n: Nombre d'elements.
+
+    Returns:
+        Liste d'analyses completes avec le detail des controles.
+    """
+    return _replay().disagreements(n)
+
+
+# ── Judge ─────────────────────────────────────────────────────────────────────
+
+@app.get("/api/judge/audit", tags=["Judge"])
+def judge_audit() -> dict:
+    """Auto-surveillance du Judge : distribution des notes et alertes."""
+    return _pipeline().judge.auditor.report()
+
+
+@app.get("/api/judge/evaluation", tags=["Judge"])
+async def judge_evaluation(
+    request: Request,
+    n_cases: int = Query(8, ge=2, le=30),
+) -> dict:
+    """Teste le contrôleur de cohérence par injection de fautes logicielles.
+
+    Soumet au Judge des decisions deliberement fausses et mesure sa capacite
+    à les détecter. Cette robustesse logicielle ne mesure pas l'exactitude industrielle.
+
+    Args:
+        n_cases: Nombre d'instants reels servant de support aux pieges.
+
+    Returns:
+        Metriques et detail par type de faute.
+    """
+    _require_roles(request, "reliability_engineer", "administrator")
+    from src.governance.judge_eval import JudgeEvaluator
+
+    res = await run_in_threadpool(
+        JudgeEvaluator(_pipeline()).run,
+        n_cases,
+    )
+    return {
+        "summary": res.summary,
+        "by_trap": res.traps.to_dict(orient="records"),
+        "report": res.report(),
+    }
+
+
+# ── Notifications ─────────────────────────────────────────────────────────────
+
+@app.get("/api/notifications/status", tags=["Notifications"])
+async def notification_status() -> dict:
+    """État du canal complémentaire sans révéler les secrets SMTP."""
+    return _notifier().status()
+
+
+@app.post("/api/notifications/test", tags=["Notifications"])
+async def notification_test(request: Request) -> dict:
+    """Place un email de test dans la file asynchrone."""
+    _require_roles(request, "maintenance", "reliability_engineer", "administrator")
+    if not _notifier().enqueue_test():
+        raise HTTPException(status_code=409, detail="Canal email non configure")
+    return {"accepted": True}
+
+
+@app.post("/api/notifications/governance", tags=["Notifications"])
+def notification_governance(request: Request) -> dict:
+    """Envoie au technicien une synthèse de gouvernance traçable."""
+    _require_roles(request, "maintenance", "reliability_engineer", "administrator")
+    pipeline = _pipeline()
+    payload = {
+        "equipment": pipeline.domain.equipment["id"],
+        "generated_at": datetime.now().isoformat(),
+        "health": pipeline.health_report(),
+        "judge": pipeline.judge.auditor.report(),
+    }
+    accepted = _notifier().enqueue_governance(
+        json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+    )
+    if not accepted:
+        raise HTTPException(status_code=409, detail="Canal email non configure")
+    return {"accepted": True}
+
+
+# ── Indicateurs d'exploitation ────────────────────────────────────────────────
+
+@app.get("/api/kpi", tags=["Indicateurs"])
+def operational_kpi() -> dict:
+    """Indicateurs calcules sur les donnees, sans hypothese economique.
+
+    Chaque figure porte son `evidence_level` : `observed` pour une grandeur lue
+    directement dans les donnees, `derived` pour une grandeur passant par la
+    reference thermique semi-empirique.
+    """
+    from src.analytics import OperationalKPI
+
+    p = _pipeline()
+    kpi = OperationalKPI(p.features, p.domain)
+    stability = kpi.control_stability()
+
+    # Le taux horaire reel est publie a cote de la charge d'episodes : sans
+    # lui, l'agregation en episodes masque un taux de signalement cinq fois
+    # superieur a la contamination de calibration.
+    scores = p.detector.score_series(p.features)
+    threshold = float(p.detector.stat.threshold_)
+    figures = kpi.summary(p.ingestion.sensor_health, p.episodes())
+    figures.append(kpi.flag_rate(scores, threshold, config.CONTAMINATION))
+    monthly = kpi.monthly_flag_rate(scores, threshold)
+
+    return {
+        "figures": [f.to_dict() for f in figures],
+        "stabilite_regulation": [
+            {
+                "periode": str(idx.date()),
+                **{k: (None if pd.isna(v) else float(v)) for k, v in row.items()},
+            }
+            for idx, row in stability.iterrows()
+        ],
+        "signalement_mensuel": [
+            {
+                "periode": str(idx.date()),
+                **{k: (None if pd.isna(v) else float(v)) for k, v in row.items()},
+            }
+            for idx, row in monthly.iterrows()
+        ],
+        "calibration": {
+            "contamination_visee_pct": round(config.CONTAMINATION * 100, 2),
+            "seuil": round(threshold, 4),
+        },
+    }
+
+
+@app.exception_handler(Exception)
+async def unhandled(request, exc: Exception) -> JSONResponse:
+    """Renvoie une erreur lisible plutot qu'une trace brute.
+
+    Args:
+        request: Requete entrante.
+        exc: Exception levee.
+
+    Returns:
+        Reponse JSON 500.
+    """
+    incident = token_hex(5)
+    logger.exception(f"Erreur non geree [{incident}] sur {request.url.path}")
+    # Un gestionnaire d'exception s'execute EN DEHORS des middlewares
+    # applicatifs : sans ce durcissement explicite, la reponse 500 partait
+    # elle aussi sans aucun en-tete de defense.
+    return _durcir(
+        JSONResponse(
+            status_code=500,
+            content={
+                "error": "internal_server_error",
+                "detail": "Erreur interne du service",
+                "incident": incident,
+            },
+        ),
+        request,
+        getattr(request.state, "request_id", incident),
+    )

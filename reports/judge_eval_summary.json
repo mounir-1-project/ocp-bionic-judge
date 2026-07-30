@@ -1,0 +1,12 @@
+{
+  "n_clean": 12,
+  "clean_score_mean": 9.8,
+  "clean_agreement_rate": 1.0,
+  "false_positive_rate": 0.0,
+  "n_traps": 119,
+  "trap_score_mean": 5.63,
+  "trap_detection_rate": 0.983,
+  "trap_missed": 2,
+  "separation": 4.18,
+  "verdict_warnings": []
+}

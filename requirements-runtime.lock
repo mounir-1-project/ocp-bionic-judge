@@ -1,0 +1,26 @@
+# Environnement runtime validé le 2026-07-25.
+# Ce verrou fixe les dépendances directes influençant l'inférence. Le manifeste
+# de modèle enregistre en plus les versions réellement chargées à la release.
+#
+# CIBLE : PYTHON 3.11 — l'image `python:3.11-slim` du Dockerfile, et elle seule.
+# scikit-learn 1.9.0 et scipy 1.17.1 exigent `Requires-Python >= 3.11` : ce
+# verrou n'est PAS installable sur le plancher 3.10 déclaré par
+# `pyproject.toml`, qui ne concerne que l'environnement de développement et la
+# matrice de tests. Ne jamais l'installer hors du conteneur.
+#
+# REGÉNÉRATION — obligatoirement dans l'image d'exécution, sans quoi le
+# manifeste du modèle et ce verrou divergent et l'artefact devient
+# inchargeable (`validate_model_manifest` exige l'égalité exacte des versions) :
+#     make lock-runtime
+numpy==1.26.4
+pandas==2.2.2
+scikit-learn==1.9.0
+scipy==1.17.1
+joblib==1.5.3
+openpyxl==3.1.5
+PyYAML==6.0.3
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+pydantic==2.13.4
+loguru==0.7.2
+python-dotenv==1.0.1

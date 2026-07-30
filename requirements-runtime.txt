@@ -1,0 +1,18 @@
+# Dépendances strictement nécessaires au service de production E7301.
+# Les notebooks, tests, linters et lecteurs des documents d'audit restent
+# dans requirements.txt et ne sont pas embarqués dans l'image.
+
+numpy>=1.26,<3
+pandas>=2.2
+scikit-learn>=1.4
+scipy>=1.11
+joblib>=1.4
+openpyxl>=3.1
+PyYAML>=6.0
+
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.7
+
+loguru>=0.7
+python-dotenv>=1.0

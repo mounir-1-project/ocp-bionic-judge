@@ -1,0 +1,671 @@
+{
+  "created_at_utc": "2026-07-28T15:18:05.020698+00:00",
+  "data": {
+    "path": "data/raw/DATA.xlsx",
+    "sha256": "93487c581f4cd684e8783251e91f15274d8ca4e3a0ae1eb332370039a5520239",
+    "size_bytes": 1454774
+  },
+  "known_limitations": [
+    "Aucune vérité terrain panne/intervention GMAO n'est disponible.",
+    "La période saine ne peut pas être ancrée sur une révision confirmée.",
+    "Les mesures eau de mer, vibration, pression différentielle et corrosion manquent.",
+    "Le modèle thermique reconstruit un proxy calculé; son R² n'est pas une preuve d'état.",
+    "Le rejeu historique n'est pas une connexion DCS/PI temps réel."
+  ],
+  "model": {
+    "metadata": {
+      "detector": {
+        "contamination": 0.02,
+        "features": [
+          "ua_residual_z",
+          "regulation_effort_z",
+          "t_in_residual_z",
+          "conc_min",
+          "conc_bias_drift_z",
+          "conc_drop_24h",
+          "flow_per_load",
+          "d_t_out",
+          "d_conc",
+          "t_out_local_z",
+          "t_in_local_z"
+        ],
+        "n_train": 3393,
+        "period": [
+          "2024-01-02 07:00:00",
+          "2024-07-14 19:00:00"
+        ],
+        "threshold": 0.9641781702155621
+      },
+      "references": {
+        "conductance": {
+          "coef": [
+            1.0515495131786121,
+            0.29008315589497713,
+            0.8173694282081175,
+            -46.54211779264282
+          ],
+          "feature_names": [
+            "F_ACID^0.8",
+            "T_acide_moyenne",
+            "T_eau_de_mer",
+            "const"
+          ],
+          "label": "Reference de coefficient d'echange global",
+          "n_train": 3502,
+          "r2": 0.9243,
+          "residual_std": 0.6262,
+          "seawater_source": "Climatologie mensuelle de Safi, cote atlantique marocaine (17,0 degC en fevrier a 22,0 degC en septembre)",
+          "target": "ua_kw_per_k",
+          "train_period": [
+            "2024-01-01 07:00:00",
+            "2024-07-13 14:00:00"
+          ],
+          "ua_reference": 17.763,
+          "unit": "kW/K"
+        },
+        "hierarchy": "L'encrassement se diagnostique sur le coefficient d'echange global. L'effort de regulation mesure la conduite, pas l'etat de la surface d'echange.",
+        "inlet": {
+          "coef": [
+            0.3959603188529988,
+            -0.21696651273614587,
+            0.016463694855440775,
+            80.74415779805246
+          ],
+          "feature_names": [
+            "LOAD_SULFUR",
+            "F_ACID",
+            "LOAD_SULFUR*F_ACID",
+            "const"
+          ],
+          "label": "Reference de temperature d'entree",
+          "learned_gain": null,
+          "n_train": 3532,
+          "naive_r2": null,
+          "r2": 0.4790872677911977,
+          "residual_std": 1.5320929083698698,
+          "target": "T_ACID_IN",
+          "train_period": [
+            "2024-01-01 07:00:00",
+            "2024-07-13 17:00:00"
+          ],
+          "unit": "degC"
+        },
+        "regulation_effort": {
+          "coef": [
+            17.85913329170446,
+            -62.373649951742024,
+            -14.18760616152787,
+            25.282966642259193,
+            0.8621519369624906,
+            -1425.2526509800423
+          ],
+          "feature_names": [
+            "LOAD_SULFUR",
+            "F_ACID",
+            "T_ACID_IN",
+            "conc_min",
+            "F_ACID*T_ACID_IN",
+            "const"
+          ],
+          "label": "Reference d'effort de regulation",
+          "learned_gain": 0.0059,
+          "n_train": 3502,
+          "naive_r2": 0.9622648410002661,
+          "r2": 0.9682016592916014,
+          "residual_std": 24.39411853046639,
+          "target": "duty_kw",
+          "train_period": [
+            "2024-01-01 07:00:00",
+            "2024-07-13 14:00:00"
+          ],
+          "unit": "kW"
+        }
+      },
+      "validation": {
+        "deployment_gates": [
+          {
+            "evidence": "aucun décalage négatif ni fenêtre centrée dans l'ingestion et les features ; chaîne reconstruite et vérifiée sur trois troncatures du corpus (40, 60, 80 %)",
+            "gate": "causalite_temporelle",
+            "passed": true
+          },
+          {
+            "evidence": "0 paire(s) redondante(s) entre grandeurs du modèle, 2 avec une variable régulée hors modèle (la plus forte : regulation_effort_z contre control_deviation, r = -0,938) ; conditionnement 3,09",
+            "gate": "redondance_features",
+            "passed": false
+          },
+          {
+            "evidence": "alertes moyennes 7,8 % · PSI max 3,745 · dispersion du seuil 0,001",
+            "gate": "stabilite_hors_periode",
+            "passed": false
+          },
+          {
+            "evidence": "aucune date de panne ou d'intervention dans le corpus disponible",
+            "gate": "labels_gmao",
+            "passed": false
+          },
+          {
+            "evidence": "aucune annotation indépendante — limite définitive du corpus",
+            "gate": "validation_externe",
+            "passed": false
+          }
+        ],
+        "feature_audit": {
+          "condition_number": 3.09,
+          "control_variables_tested": [
+            "control_deviation",
+            "delta_t",
+            "duty_kw",
+            "T_ACID_OUT"
+          ],
+          "independence": {
+            "regulation_effort_z": {
+              "corr_control_deviation": -0.9377,
+              "independent": false,
+              "reading": "Réécriture de l'écart de consigne pondérée par le débit. Ne constitue jamais une preuve d'encrassement.",
+              "role": "conduite",
+              "shared_variance_pct": 87.9
+            },
+            "t_in_residual_z": {
+              "corr_control_deviation": 0.0332,
+              "independent": true,
+              "reading": "Niveau thermique du circuit amont à charge donnée. Indépendant de la variable régulée, mais confondu côté procédé : une dérive peut venir du refroidisseur comme de la tour de séchage.",
+              "role": "contexte",
+              "shared_variance_pct": 0.1
+            },
+            "ua_residual_z": {
+              "corr_control_deviation": -0.5365,
+              "independent": false,
+              "reading": "Indicateur d'encrassement. Partiellement confondu : la vanne d'eau de mer n'est pas instrumentée et agit sur le même UA apparent. Le banc d'injection chiffre le retard qui en résulte.",
+              "role": "diagnostic",
+              "shared_variance_pct": 28.8
+            },
+            "verdict": "Le diagnostic d'encrassement est porté par le résidu de coefficient d'échange, seul indicateur construit sur la grandeur que l'encrassement dégrade. Sa confusion résiduelle avec l'écart de consigne est mesurée et publiée plutôt que niée. L'effort de régulation n'est jamais utilisé comme preuve : il gradue une alerte déjà établie."
+          },
+          "n_features": 11,
+          "n_observations": 8484,
+          "redundant_pairs_abs_r_ge_0_90": [],
+          "shadow_redundancy_abs_r_ge_0_80": [
+            {
+              "control_variable": "control_deviation",
+              "correlation": -0.9377,
+              "feature": "regulation_effort_z",
+              "reading": "cette grandeur est une réécriture de la variable régulée : elle ne constitue pas une preuve indépendante"
+            },
+            {
+              "control_variable": "T_ACID_OUT",
+              "correlation": -0.9377,
+              "feature": "regulation_effort_z",
+              "reading": "cette grandeur est une réécriture de la variable régulée : elle ne constitue pas une preuve indépendante"
+            }
+          ]
+        },
+        "generated_from": {
+          "features": [
+            "ua_residual_z",
+            "regulation_effort_z",
+            "t_in_residual_z",
+            "conc_min",
+            "conc_bias_drift_z",
+            "conc_drop_24h",
+            "flow_per_load",
+            "d_t_out",
+            "d_conc",
+            "t_out_local_z",
+            "t_in_local_z"
+          ],
+          "gap_calendar_hours": 24,
+          "method": "expanding-window causal sur calendrier horaire",
+          "n_calendar_hours": 10181,
+          "n_splits": 4,
+          "period": [
+            "2024-01-01 07:00:00",
+            "2025-02-28 11:00:00"
+          ],
+          "pipeline_refit_per_fold": [
+            "thermal_reference",
+            "causal_features",
+            "scaler",
+            "isolation_forest",
+            "threshold"
+          ]
+        },
+        "limitations": [
+          "Aucune vérité terrain panne/intervention GMAO n'est disponible.",
+          "La période saine ne peut pas être ancrée sur une révision confirmée.",
+          "Les mesures eau de mer, vibration, pression différentielle et corrosion manquent.",
+          "Le modèle thermique reconstruit un proxy calculé; son R² n'est pas une preuve d'état.",
+          "Le rejeu historique n'est pas une connexion DCS/PI temps réel."
+        ],
+        "predictive_claim": "non démontrable avec le corpus disponible; aucune AUC, précision, rappel ou réduction de panne revendiquée",
+        "scientific_status": "surveillance comportementale non supervisée, backtestée causalement",
+        "temporal_backtest": {
+          "folds": [
+            {
+              "causal_pipeline_refit": true,
+              "fold": 1,
+              "gap_calendar_hours": 24,
+              "n_test": 1786,
+              "n_train": 1055,
+              "reference_train_period": [
+                "2024-01-01 07:00:00",
+                "2024-03-25 03:00:00"
+              ],
+              "score_p95": 0.9812,
+              "score_psi": 1.9885,
+              "test_alert_rate": 0.1607,
+              "test_period": [
+                "2024-03-26 04:00:00",
+                "2024-06-18 23:00:00"
+              ],
+              "threshold": 0.9661,
+              "train_period": [
+                "2024-01-02 07:00:00",
+                "2024-03-25 03:00:00"
+              ]
+            },
+            {
+              "causal_pipeline_refit": true,
+              "fold": 2,
+              "gap_calendar_hours": 24,
+              "n_test": 1837,
+              "n_train": 2841,
+              "reference_train_period": [
+                "2024-01-01 07:00:00",
+                "2024-06-17 23:00:00"
+              ],
+              "score_p95": 0.9591,
+              "score_psi": 3.7446,
+              "test_alert_rate": 0.0441,
+              "test_period": [
+                "2024-06-19 00:00:00",
+                "2024-09-10 07:00:00"
+              ],
+              "threshold": 0.9656,
+              "train_period": [
+                "2024-01-02 07:00:00",
+                "2024-06-17 23:00:00"
+              ]
+            },
+            {
+              "causal_pipeline_refit": true,
+              "fold": 3,
+              "gap_calendar_hours": 24,
+              "n_test": 1873,
+              "n_train": 4702,
+              "reference_train_period": [
+                "2024-01-01 07:00:00",
+                "2024-09-10 07:00:00"
+              ],
+              "score_p95": 0.9772,
+              "score_psi": 0.5808,
+              "test_alert_rate": 0.0715,
+              "test_period": [
+                "2024-09-11 22:00:00",
+                "2024-12-05 15:00:00"
+              ],
+              "threshold": 0.9648,
+              "train_period": [
+                "2024-01-02 07:00:00",
+                "2024-09-10 07:00:00"
+              ]
+            },
+            {
+              "causal_pipeline_refit": true,
+              "fold": 4,
+              "gap_calendar_hours": 24,
+              "n_test": 1908,
+              "n_train": 6551,
+              "reference_train_period": [
+                "2024-01-01 07:00:00",
+                "2024-12-04 15:00:00"
+              ],
+              "score_p95": 0.9441,
+              "score_psi": 0.0672,
+              "test_alert_rate": 0.0341,
+              "test_period": [
+                "2024-12-05 16:00:00",
+                "2025-02-28 11:00:00"
+              ],
+              "threshold": 0.966,
+              "train_period": [
+                "2024-01-02 07:00:00",
+                "2024-12-04 15:00:00"
+              ]
+            }
+          ],
+          "interpretation": "Les taux, le PSI et les régimes mesurent stabilité et charge d'alerte, jamais une performance de détection de panne.",
+          "max_score_psi": 3.7446,
+          "mean_test_alert_rate": 0.0776,
+          "regime_diagnostics": [
+            {
+              "alert_rate": 0.0787,
+              "n": 1513,
+              "regime": "chaud_charge_basse",
+              "score_median": 0.7336
+            },
+            {
+              "alert_rate": 0.0402,
+              "n": 2189,
+              "regime": "chaud_charge_haute",
+              "score_median": 0.7766
+            },
+            {
+              "alert_rate": 0.1343,
+              "n": 2189,
+              "regime": "froid_charge_basse",
+              "score_median": 0.7771
+            },
+            {
+              "alert_rate": 0.0436,
+              "n": 1513,
+              "regime": "froid_charge_haute",
+              "score_median": 0.5917
+            }
+          ],
+          "std_test_alert_rate": 0.0499,
+          "threshold_spread": 0.0013
+        }
+      }
+    },
+    "path": "models/e7301_detector.joblib",
+    "sha256": "53109119a2a5264f2401f484e5a49d398f484ceb1cbfd9ab1e7d7154adece16f",
+    "size_bytes": 6496211
+  },
+  "model_identity": {
+    "id": "e7301-behavioral-iforest",
+    "version": "2026-07-28T151805.020698+0000"
+  },
+  "promotion": {
+    "process": "manual_governed_promotion",
+    "promoted_at_utc": null,
+    "promoted_by": null,
+    "status": "candidate"
+  },
+  "runtime": {
+    "packages": {
+      "fastapi": "0.140.0",
+      "joblib": "1.5.3",
+      "numpy": "2.2.6",
+      "pandas": "2.3.3",
+      "pydantic": "2.13.4",
+      "scikit-learn": "1.7.2"
+    },
+    "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.35",
+    "python": "3.10.12"
+  },
+  "schema_version": "2.0",
+  "training": {
+    "data_period": [
+      "2024-01-02 07:00:00",
+      "2024-07-14 19:00:00"
+    ],
+    "decision_threshold": 0.9641781702155621,
+    "ordered_features": [
+      "ua_residual_z",
+      "regulation_effort_z",
+      "t_in_residual_z",
+      "conc_min",
+      "conc_bias_drift_z",
+      "conc_drop_24h",
+      "flow_per_load",
+      "d_t_out",
+      "d_conc",
+      "t_out_local_z",
+      "t_in_local_z"
+    ],
+    "trained_at_utc": "2026-07-28T15:18:05.020698+00:00"
+  },
+  "validation": {
+    "failed_mandatory_gates": [
+      "labels_gmao",
+      "redondance_features",
+      "stabilite_hors_periode",
+      "validation_externe"
+    ],
+    "results": {
+      "deployment_gates": [
+        {
+          "evidence": "aucun décalage négatif ni fenêtre centrée dans l'ingestion et les features ; chaîne reconstruite et vérifiée sur trois troncatures du corpus (40, 60, 80 %)",
+          "gate": "causalite_temporelle",
+          "passed": true
+        },
+        {
+          "evidence": "0 paire(s) redondante(s) entre grandeurs du modèle, 2 avec une variable régulée hors modèle (la plus forte : regulation_effort_z contre control_deviation, r = -0,938) ; conditionnement 3,09",
+          "gate": "redondance_features",
+          "passed": false
+        },
+        {
+          "evidence": "alertes moyennes 7,8 % · PSI max 3,745 · dispersion du seuil 0,001",
+          "gate": "stabilite_hors_periode",
+          "passed": false
+        },
+        {
+          "evidence": "aucune date de panne ou d'intervention dans le corpus disponible",
+          "gate": "labels_gmao",
+          "passed": false
+        },
+        {
+          "evidence": "aucune annotation indépendante — limite définitive du corpus",
+          "gate": "validation_externe",
+          "passed": false
+        }
+      ],
+      "feature_audit": {
+        "condition_number": 3.09,
+        "control_variables_tested": [
+          "control_deviation",
+          "delta_t",
+          "duty_kw",
+          "T_ACID_OUT"
+        ],
+        "independence": {
+          "regulation_effort_z": {
+            "corr_control_deviation": -0.9377,
+            "independent": false,
+            "reading": "Réécriture de l'écart de consigne pondérée par le débit. Ne constitue jamais une preuve d'encrassement.",
+            "role": "conduite",
+            "shared_variance_pct": 87.9
+          },
+          "t_in_residual_z": {
+            "corr_control_deviation": 0.0332,
+            "independent": true,
+            "reading": "Niveau thermique du circuit amont à charge donnée. Indépendant de la variable régulée, mais confondu côté procédé : une dérive peut venir du refroidisseur comme de la tour de séchage.",
+            "role": "contexte",
+            "shared_variance_pct": 0.1
+          },
+          "ua_residual_z": {
+            "corr_control_deviation": -0.5365,
+            "independent": false,
+            "reading": "Indicateur d'encrassement. Partiellement confondu : la vanne d'eau de mer n'est pas instrumentée et agit sur le même UA apparent. Le banc d'injection chiffre le retard qui en résulte.",
+            "role": "diagnostic",
+            "shared_variance_pct": 28.8
+          },
+          "verdict": "Le diagnostic d'encrassement est porté par le résidu de coefficient d'échange, seul indicateur construit sur la grandeur que l'encrassement dégrade. Sa confusion résiduelle avec l'écart de consigne est mesurée et publiée plutôt que niée. L'effort de régulation n'est jamais utilisé comme preuve : il gradue une alerte déjà établie."
+        },
+        "n_features": 11,
+        "n_observations": 8484,
+        "redundant_pairs_abs_r_ge_0_90": [],
+        "shadow_redundancy_abs_r_ge_0_80": [
+          {
+            "control_variable": "control_deviation",
+            "correlation": -0.9377,
+            "feature": "regulation_effort_z",
+            "reading": "cette grandeur est une réécriture de la variable régulée : elle ne constitue pas une preuve indépendante"
+          },
+          {
+            "control_variable": "T_ACID_OUT",
+            "correlation": -0.9377,
+            "feature": "regulation_effort_z",
+            "reading": "cette grandeur est une réécriture de la variable régulée : elle ne constitue pas une preuve indépendante"
+          }
+        ]
+      },
+      "generated_from": {
+        "features": [
+          "ua_residual_z",
+          "regulation_effort_z",
+          "t_in_residual_z",
+          "conc_min",
+          "conc_bias_drift_z",
+          "conc_drop_24h",
+          "flow_per_load",
+          "d_t_out",
+          "d_conc",
+          "t_out_local_z",
+          "t_in_local_z"
+        ],
+        "gap_calendar_hours": 24,
+        "method": "expanding-window causal sur calendrier horaire",
+        "n_calendar_hours": 10181,
+        "n_splits": 4,
+        "period": [
+          "2024-01-01 07:00:00",
+          "2025-02-28 11:00:00"
+        ],
+        "pipeline_refit_per_fold": [
+          "thermal_reference",
+          "causal_features",
+          "scaler",
+          "isolation_forest",
+          "threshold"
+        ]
+      },
+      "limitations": [
+        "Aucune vérité terrain panne/intervention GMAO n'est disponible.",
+        "La période saine ne peut pas être ancrée sur une révision confirmée.",
+        "Les mesures eau de mer, vibration, pression différentielle et corrosion manquent.",
+        "Le modèle thermique reconstruit un proxy calculé; son R² n'est pas une preuve d'état.",
+        "Le rejeu historique n'est pas une connexion DCS/PI temps réel."
+      ],
+      "predictive_claim": "non démontrable avec le corpus disponible; aucune AUC, précision, rappel ou réduction de panne revendiquée",
+      "scientific_status": "surveillance comportementale non supervisée, backtestée causalement",
+      "temporal_backtest": {
+        "folds": [
+          {
+            "causal_pipeline_refit": true,
+            "fold": 1,
+            "gap_calendar_hours": 24,
+            "n_test": 1786,
+            "n_train": 1055,
+            "reference_train_period": [
+              "2024-01-01 07:00:00",
+              "2024-03-25 03:00:00"
+            ],
+            "score_p95": 0.9812,
+            "score_psi": 1.9885,
+            "test_alert_rate": 0.1607,
+            "test_period": [
+              "2024-03-26 04:00:00",
+              "2024-06-18 23:00:00"
+            ],
+            "threshold": 0.9661,
+            "train_period": [
+              "2024-01-02 07:00:00",
+              "2024-03-25 03:00:00"
+            ]
+          },
+          {
+            "causal_pipeline_refit": true,
+            "fold": 2,
+            "gap_calendar_hours": 24,
+            "n_test": 1837,
+            "n_train": 2841,
+            "reference_train_period": [
+              "2024-01-01 07:00:00",
+              "2024-06-17 23:00:00"
+            ],
+            "score_p95": 0.9591,
+            "score_psi": 3.7446,
+            "test_alert_rate": 0.0441,
+            "test_period": [
+              "2024-06-19 00:00:00",
+              "2024-09-10 07:00:00"
+            ],
+            "threshold": 0.9656,
+            "train_period": [
+              "2024-01-02 07:00:00",
+              "2024-06-17 23:00:00"
+            ]
+          },
+          {
+            "causal_pipeline_refit": true,
+            "fold": 3,
+            "gap_calendar_hours": 24,
+            "n_test": 1873,
+            "n_train": 4702,
+            "reference_train_period": [
+              "2024-01-01 07:00:00",
+              "2024-09-10 07:00:00"
+            ],
+            "score_p95": 0.9772,
+            "score_psi": 0.5808,
+            "test_alert_rate": 0.0715,
+            "test_period": [
+              "2024-09-11 22:00:00",
+              "2024-12-05 15:00:00"
+            ],
+            "threshold": 0.9648,
+            "train_period": [
+              "2024-01-02 07:00:00",
+              "2024-09-10 07:00:00"
+            ]
+          },
+          {
+            "causal_pipeline_refit": true,
+            "fold": 4,
+            "gap_calendar_hours": 24,
+            "n_test": 1908,
+            "n_train": 6551,
+            "reference_train_period": [
+              "2024-01-01 07:00:00",
+              "2024-12-04 15:00:00"
+            ],
+            "score_p95": 0.9441,
+            "score_psi": 0.0672,
+            "test_alert_rate": 0.0341,
+            "test_period": [
+              "2024-12-05 16:00:00",
+              "2025-02-28 11:00:00"
+            ],
+            "threshold": 0.966,
+            "train_period": [
+              "2024-01-02 07:00:00",
+              "2024-12-04 15:00:00"
+            ]
+          }
+        ],
+        "interpretation": "Les taux, le PSI et les régimes mesurent stabilité et charge d'alerte, jamais une performance de détection de panne.",
+        "max_score_psi": 3.7446,
+        "mean_test_alert_rate": 0.0776,
+        "regime_diagnostics": [
+          {
+            "alert_rate": 0.0787,
+            "n": 1513,
+            "regime": "chaud_charge_basse",
+            "score_median": 0.7336
+          },
+          {
+            "alert_rate": 0.0402,
+            "n": 2189,
+            "regime": "chaud_charge_haute",
+            "score_median": 0.7766
+          },
+          {
+            "alert_rate": 0.1343,
+            "n": 2189,
+            "regime": "froid_charge_basse",
+            "score_median": 0.7771
+          },
+          {
+            "alert_rate": 0.0436,
+            "n": 1513,
+            "regime": "froid_charge_haute",
+            "score_median": 0.5917
+          }
+        ],
+        "std_test_alert_rate": 0.0499,
+        "threshold_spread": 0.0013
+      }
+    }
+  }
+}

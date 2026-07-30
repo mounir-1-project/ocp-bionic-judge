@@ -1,187 +1,219 @@
-# Runbook Opérationnel — OCP Bionic Judge
+# Runbook opérationnel — E7301
 
-> **C'est quoi un runbook ?**  
-> C'est le manuel de l'opérateur. Dans un vrai projet, quand quelque chose casse à 3h du matin,
-> le technicien de garde ouvre ce fichier et suit les étapes. Pas besoin de comprendre le code.
+**Version active : 3.0 — 25 juillet 2026**
 
----
+Ce runbook concerne le service FastAPI local de la version 2. Le contenu de
+`legacy/` décrit une ancienne architecture et ne doit pas être utilisé pour
+l'exploitation.
 
-## 1. Démarrage du système (ordre obligatoire)
+## 1. Précontrôles
 
-```bash
-# Étape 1 : Vérifier que PostgreSQL tourne
-pg_isready -h localhost -p 5432
-# ✓ Si OK → passe à l'étape 2
-# ✗ Si FAIL → voir section "PostgreSQL ne démarre pas" ci-dessous
+Depuis la racine du dépôt :
 
-# Étape 2 : Activer l'environnement Python
-cd ocp-bionic-judge
-venv\Scripts\activate          # Windows
-source venv/bin/activate       # Linux/Mac
-
-# Étape 3 : Vérifier les variables d'environnement
-python -c "from dotenv import load_dotenv; load_dotenv(); import os; print(os.getenv('DATABASE_URL'))"
-# ✓ Doit afficher l'URL de ta BDD
-
-# Étape 4 : Lancer l'API
-uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
-# ✓ Vérifier : http://localhost:8000/health → {"status": "ok"}
-
-# Étape 5 : Lancer le frontend React (nouveau terminal)
-cd frontend && npm install && npm run dev
-# ✓ Vérifier : http://localhost:5173 → page de connexion OCP Bionic Judge
-# Clé par défaut : ocp-bionic-dev-key (définie dans .env → OCP_API_KEY)
+```powershell
+Test-Path data\raw\DATA.xlsx
+Copy-Item .env.example .env   # uniquement si une configuration locale est nécessaire
+.\.venv\Scripts\python.exe -c "from src.config import validate; print(validate())"
 ```
 
----
+Le dernier résultat doit être `[]`. La clé Gemini n'est pas requise. Sans clé,
+le diagnostic et le Judge utilisent les règles déterministes.
 
-## 2. Procédures de maintenance courantes
+## 2. Démarrage local
 
-### Générer de nouvelles données (dev/test)
-```bash
-python data/data_generator.py
-# Durée : ~5 minutes pour 6 mois de données
-# Résultat : data/ocp_bionic.db (SQLite) ou tables PostgreSQL remplies
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m uvicorn api.main:app --host 0.0.0.0 --port 8000
 ```
 
-### Réentraîner les modèles
-```bash
-python src/models/train.py
-# Durée : 5-15 minutes selon CPU
-# Résultat : models/best_model.joblib + reports/model_comparison.json
-# Vérifier : F1-score > 0.85 sinon investiguer (voir ADR-003)
+Contrôles :
+
+```powershell
+Invoke-RestMethod http://localhost:8000/api/health
+Invoke-RestMethod http://localhost:8000/api/config
 ```
 
-### Vérifier la dérive du modèle
-```bash
-python src/models/drift_detector.py
-# Résultat : {"psi": X, "drift_detected": true/false}
-# Seuil d'alerte : PSI > 0.2 ou ks_pvalue < 0.05
-# Si drift → réentraîner le modèle (voir "Réentraîner les modèles")
+Le dashboard est disponible sur `http://localhost:8000`. L'API est prête
+seulement lorsque `/api/health` retourne `status: ok`.
+
+Le registre d'alarmes est conservé dans `data/runtime/alarms.db`. Il trace
+apparition, dernière occurrence, acquittement, shelving, propriétaire,
+commentaire et retour à la normale. Le sauvegarder avec les journaux de quart ;
+ne pas le confondre avec une historisation DCS ou GMAO.
+
+### Identification technicien
+
+Le dépôt ne contient aucun mot de passe ni hash partagé par défaut. Pour une
+démonstration locale, générer une empreinte hors du dépôt, puis configurer une
+allowlist stricte et un rôle serveur :
+
+```powershell
+.\.venv\Scripts\python.exe -c "from src.security import hash_password; print(hash_password('une phrase secrete longue'))"
 ```
 
----
+Copier l'empreinte produite dans `.env`, puis définir :
 
-## 3. Résolution des problèmes courants
-
-### Problème : "Model not found at models/best_model.joblib"
-```
-Cause   : Le modèle n'a jamais été entraîné, ou le fichier a été supprimé
-Solution: python src/models/train.py
-```
-
-### Problème : "database is locked" (SQLite uniquement)
-```
-Cause   : Plusieurs processus écrivent en même temps dans SQLite
-Solution: Migrer vers PostgreSQL (voir ADR-002)
-         Ou : tuer les processus Python qui tiennent la connexion
-         ps aux | grep python  →  kill PID
+```dotenv
+AUTH_ENABLED=true
+AUTH_PASSWORD_HASH=pbkdf2_sha256$600000$...
+AUTH_ALLOWED_EMAILS=maintenance@exemple.test
+AUTH_USER_ROLES_JSON={"maintenance@exemple.test":"maintenance"}
+AUTH_SECURE_COOKIE=true
 ```
 
-### Problème : "GEMINI_API_KEY not found"
-```
-Cause   : Le fichier .env n'existe pas ou la clé est manquante
-Solution: cp .env.example .env  →  éditer .env  →  ajouter la clé Google AI Studio
-          https://aistudio.google.com/app/apikey
-```
+`AUTH_SECURE_COOKIE=true` exige un accès HTTPS. Les sessions expirent côté
+serveur après 30 minutes d'inactivité et 8 heures au maximum par défaut.
 
-### Problème : API répond 503 sur /analyze
-```
-Cause   : Le modèle n'est pas chargé
-Solution: python src/models/train.py  →  relancer l'API
-```
+### Activer les notifications
 
-### Problème : Dashboard vide (pas de graphiques)
-```
-Cause 1 : Pas de données en BDD
-Solution: python data/data_generator.py
+Configurer `SMTP_HOST` et `SMTP_FROM`, puis vérifier
+`/api/notifications/status`. `ALERT_EMAIL_TO` reste un destinataire de repli
+facultatif ; dès la connexion, l'e-mail de la session le remplace. Le bouton
+**Tester le canal** n'est actif que si le relais et un destinataire sont prêts.
 
-Cause 2 : Pas de prédictions ML en BDD
-Solution: python src/models/predict.py
+Les emails CRITICAL sont envoyés hors du thread de rejeu, dédupliqués
+par mode et sévérité, avec un délai de 60 minutes par défaut. Ils complètent
+l'alarme visible dans l'HMI ; ils ne doivent jamais être utilisés comme unique
+moyen d'alerte.
 
-Cause 3 : Mauvaise DATABASE_URL dans .env
-Solution: vérifier .env → relancer l'API (uvicorn) + le frontend (npm run dev)
+## 3. Démarrage conteneurisé
 
-Cause 4 : L'API n'est pas démarrée
-Solution: vérifier http://localhost:8000/health → lancer uvicorn si absent
+```powershell
+docker compose up -d --build
+docker compose ps
+docker compose logs --tail 100 e7301
 ```
 
-### Problème : F1-score < 0.80 après réentraînement
-```
-Cause possible 1 : Les données ont changé de distribution (drift)
-Solution         : Vérifier avec drift_detector.py
+Le fichier `data/raw/DATA.xlsx` est monté en lecture seule. Ne jamais écrire
+dans ce fichier depuis le service.
 
-Cause possible 2 : Trop peu de données d'entraînement
-Solution         : Augmenter la période de simulation dans data_generator.py
+Arrêt normal :
 
-Cause possible 3 : Mauvais hyperparamètres
-Solution         : Élargir le ParameterGrid dans train.py
+```powershell
+docker compose down
 ```
 
----
+## 4. Rejeu et analyse
 
-## 4. Surveillance (monitoring)
+Dans le dashboard, sélectionner la vitesse puis **Démarrer le rejeu**.
+Le rejeu est toujours déterministe et n'appelle pas le LLM, afin de garantir
+une latence bornée.
 
-### Métriques à surveiller quotidiennement
+Commandes API utiles :
 
-| Métrique | Seuil d'alerte | Comment vérifier |
-|----------|---------------|-----------------|
-| F1-score du modèle | < 0.85 | `reports/model_comparison.json` |
-| PSI (dérive) | > 0.20 | `python src/models/drift_detector.py` |
-| Score Judge moyen | < 7.0/10 | `GET /governance-metrics?window=24h` |
-| Taux désaccord | > 30% | `GET /governance-metrics?window=24h` |
-| Temps inférence ML | > 10ms | Table `ml_decisions`, colonne `inference_ms` |
+```powershell
+Invoke-RestMethod -Method Post -ContentType application/json `
+  -Body '{"speed":120,"analyze_every":3}' `
+  http://localhost:8000/api/replay/start
 
-### Requête de monitoring rapide
-```python
-# Coller dans un terminal Python pour voir l'état global
-from src.governance.governance import compute_metrics
-m = compute_metrics(window="24h")
-print(f"Confidence: {m.get('mean_judge_confidence', 0)*100:.1f}%")
-print(f"Disagreement: {m.get('disagreement_rate', 0)*100:.1f}%")
-print(f"Alerts: {len(m.get('alerts', []))}")
+Invoke-RestMethod http://localhost:8000/api/replay/state
+Invoke-RestMethod http://localhost:8000/api/replay/alerts?n=20
+Invoke-RestMethod -Method Post http://localhost:8000/api/replay/stop
 ```
 
----
+Analyse d'un instant précis :
 
-## 5. Sauvegarde des données
-
-### PostgreSQL (production)
-```bash
-# Backup quotidien recommandé
-pg_dump -U ocp_user -h localhost ocp_bionic > backup_$(date +%Y%m%d).sql
-
-# Restore
-psql -U ocp_user -h localhost ocp_bionic < backup_20240215.sql
+```powershell
+$body = '{"timestamp":"2024-10-15T12:00:00"}'
+Invoke-RestMethod -Method Post -ContentType application/json `
+  -Body $body http://localhost:8000/api/analyze
 ```
 
-### SQLite (développement)
-```bash
-# Simplement copier le fichier
-cp data/ocp_bionic.db backups/ocp_bionic_$(date +%Y%m%d).db
+## 5. Contrôles quotidiens
+
+| Contrôle | Endpoint | Condition attendue |
+|---|---|---|
+| Disponibilité | `/api/health/ready` | HTTP 200 (`status = ready`) |
+| Configuration | `/api/config` | chemin DCS correct, secret non exposé |
+| Capteurs | `/api/sensor-health` | dérives/gels connus expliqués |
+| Alertes | `/api/replay/alerts` | volume compatible avec l'exploitation |
+| Judge | `/api/judge/audit` | pas d'avertissement d'auto-surveillance |
+| Indicateurs d'exploitation | `/api/kpi` | cinq figures, chacune avec son `evidence_level` |
+
+Une note Judge élevée n'est pas une preuve de performance de détection. La
+validation du Judge se lit dans `/api/judge/evaluation` et dans le banc
+d'injection de fautes.
+
+## 6. Incidents
+
+### L'API refuse de démarrer
+
+Lire la première erreur de configuration dans les logs. Causes habituelles :
+
+- `DCS_EXPORT` absent ou mal monté ;
+- `CONTAMINATION` hors de l'intervalle `]0, 0.5[` ;
+- vitesse de rejeu non positive ;
+- niveau de log inconnu.
+- authentification activée sans empreinte PBKDF2 ;
+- sévérité ou délai de notification invalide.
+
+Corriger `.env` ou le montage, puis redémarrer.
+
+### Le dashboard s'affiche mais les graphiques restent vides
+
+1. Vérifier `/api/health`.
+2. Vérifier `/api/timeseries?max_points=100`.
+3. Ouvrir la console du navigateur et relever l'erreur.
+4. Vérifier que l'actif JavaScript local de graphiques est servi par l'image.
+
+Ne pas réintroduire de dépendance CDN sur un réseau industriel isolé.
+
+### Un capteur affiche une disponibilité faible
+
+Consulter `/api/sensor-health`. Un gel ou une saturation est volontairement
+transformé en donnée indisponible. Ne pas corriger par interpolation globale.
+Comparer avec les codes qualité du DCS puis ouvrir une intervention
+instrumentation si le défaut est confirmé.
+
+### La clé LLM est absente ou rejetée
+
+Ce n'est pas un incident bloquant. Le service continue en mode règles. Sur une
+analyse à la demande, le premier échec désactive le client LLM pour le reste du
+processus et journalise le repli. Le rejeu n'utilise jamais ce client.
+
+### Trop d'épisodes
+
+Ne pas augmenter arbitrairement le seuil. Vérifier d'abord :
+
+- l'état de marche et les arrêts ;
+- la qualité des tags ;
+- l'ancrage de `REFERENCE_END` ;
+- un changement réel de régime opératoire.
+
+Tout changement de seuil doit être tracé, évalué sur l'historique complet et
+approuvé avec le métier.
+
+### Suspicion de diagnostic dangereux
+
+Arrêter le rejeu si nécessaire, conserver le timestamp et la réponse JSON,
+puis exécuter :
+
+```powershell
+.\.venv\Scripts\python.exe -m src.governance.judge_eval
+.\.venv\Scripts\python.exe -m pytest tests\test_agents_judge.py -q
 ```
 
----
+Le système reste une aide à la décision. Les consignations, démontages,
+tamponnages et remises en service restent soumis aux gammes et autorisations
+OCP.
 
-## 6. Installation PostgreSQL (première fois)
+## 7. Validation avant livraison
 
-### Windows
-```bash
-# Option recommandée : Docker
-docker run --name ocp-postgres \
-  -e POSTGRES_USER=ocp_user \
-  -e POSTGRES_PASSWORD=ocp_password \
-  -e POSTGRES_DB=ocp_bionic \
-  -p 5432:5432 \
-  -d postgres:15
+```powershell
+.\.venv\Scripts\python.exe -m ruff check src api tests scripts
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m src.governance.judge_eval
+docker compose config --quiet
 ```
 
-### Puis dans .env
-```
-DATABASE_URL=postgresql://ocp_user:ocp_password@localhost:5432/ocp_bionic
-```
+Les résultats Judge de référence sont archivés dans `reports/`. Les métriques
+supervisées de détection (AUC, F1, rappel) sont interdites tant qu'un historique
+de pannes étiquetées n'est pas disponible.
 
-### Créer le schéma automatiquement
-```bash
-python -c "from src.db import get_engine, init_schema; init_schema(get_engine())"
-```
+## 8. Sauvegarde et audit
+
+Le fichier DCS source est un intrant immuable à sauvegarder selon la politique
+OCP. Les volumes `e7301_models` et `e7301_reports` peuvent être sauvegardés,
+mais le modèle est reproductible depuis les données, le code et la
+configuration. Pour une production connectée, prévoir un journal d'audit
+externe, horodaté et non modifiable.

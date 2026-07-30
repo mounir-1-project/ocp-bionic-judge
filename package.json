@@ -1,0 +1,20 @@
+{
+  "name": "e7301-bancs-frontend",
+  "version": "3.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Bancs de vérification du poste de surveillance E7301 et de son jumeau 3D. Les dépendances déclarées ici ne sont utilisées qu'en vérification : le poste servi par l'API n'en charge aucune et reste exploitable hors ligne.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "check": "node --check api/static/app.js && node --check api/static/twin.js",
+    "fixtures": "python scripts/dump_fixtures.py",
+    "test:front": "node scripts/frontend_smoke.mjs && node scripts/twin_smoke.mjs && node scripts/boot_smoke.mjs",
+    "test": "npm run fixtures && npm run test:front"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.1"
+  }
+}

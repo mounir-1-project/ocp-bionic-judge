@@ -1,0 +1,113 @@
+{
+  "api": {
+    "route_count": 45,
+    "routes": [
+      "/api/alarms",
+      "/api/alarms/{alarm_id}/transition",
+      "/api/analyze",
+      "/api/auth/audit",
+      "/api/auth/login",
+      "/api/auth/logout",
+      "/api/auth/refresh",
+      "/api/auth/status",
+      "/api/config",
+      "/api/coverage",
+      "/api/detection/fouling-bench",
+      "/api/episodes",
+      "/api/equipment",
+      "/api/governance",
+      "/api/health",
+      "/api/health/database",
+      "/api/health/live",
+      "/api/health/model",
+      "/api/health/ready",
+      "/api/health/version",
+      "/api/judge/audit",
+      "/api/judge/evaluation",
+      "/api/kpi",
+      "/api/model/validation",
+      "/api/notable",
+      "/api/notifications/governance",
+      "/api/notifications/status",
+      "/api/notifications/test",
+      "/api/replay/alerts",
+      "/api/replay/disagreements",
+      "/api/replay/speed",
+      "/api/replay/start",
+      "/api/replay/state",
+      "/api/replay/stop",
+      "/api/replay/stream",
+      "/api/sensitivity",
+      "/api/sensor-health",
+      "/api/sensor/{alias}",
+      "/api/timeseries",
+      "/api/topology",
+      "/api/workflows",
+      "/api/workflows/templates",
+      "/api/workflows/{workflow_id}",
+      "/api/workflows/{workflow_id}/complete",
+      "/api/workflows/{workflow_id}/steps/{step_id}"
+    ]
+  },
+  "application_version": "3.0.0",
+  "coverage": {
+    "covered_lines": 3053,
+    "percent": 87.4,
+    "statements": 3493,
+    "status": "measured"
+  },
+  "data": {
+    "dcs_tags": 12,
+    "duplicates_merged_with_audit": 2,
+    "period": [
+      "2024-01-01 07:00:00",
+      "2025-02-28 11:00:00"
+    ],
+    "raw_rows": 10182,
+    "sha256": "93487c581f4cd684e8783251e91f15274d8ca4e3a0ae1eb332370039a5520239",
+    "source": "data/raw/DATA.xlsx",
+    "usable_timestamps": 10180
+  },
+  "generated_at_utc": "2026-07-28T15:18:15.876281+00:00",
+  "industrial_validation": {
+    "production_go": false,
+    "software_tests_prove_industrial_validity": false
+  },
+  "model": {
+    "alert_hours_historical": 511,
+    "artifact_failed_gates": [
+      "labels_gmao",
+      "redondance_features",
+      "stabilite_hors_periode",
+      "validation_externe"
+    ],
+    "artifact_promotion_status": "candidate",
+    "claim": "surveillance comportementale non supervisée, non validée terrain",
+    "episodes": 56,
+    "n_features": 11,
+    "ordered_features": [
+      "ua_residual_z",
+      "regulation_effort_z",
+      "t_in_residual_z",
+      "conc_min",
+      "conc_bias_drift_z",
+      "conc_drop_24h",
+      "flow_per_load",
+      "d_t_out",
+      "d_conc",
+      "t_out_local_z",
+      "t_in_local_z"
+    ],
+    "runtime_source": "runtime_trained_unpromoted",
+    "threshold": 0.9641781702155621
+  },
+  "schema_version": "1.0",
+  "tests": {
+    "duration_s": 31.213,
+    "errors": 0,
+    "failures": 0,
+    "skipped": 0,
+    "status": "measured",
+    "tests": 153
+  }
+}

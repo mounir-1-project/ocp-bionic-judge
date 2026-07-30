@@ -1,77 +1,245 @@
-name: OCP Bionic Judge — CI
+name: Surveillance E7301 — CI
 
 on:
   push:
     branches: [main, develop]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
+
+  qualite:
+    name: Qualite du code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Installer les outils qualite
+        run: pip install ruff bandit
+
+      - name: Analyse statique
+        run: |
+          ruff check src api tests scripts
+          bandit -q -r src api -x tests
+          node --check api/static/app.js
+          node --check api/static/twin.js
+
+      - name: Verifier la coherence du referentiel metier
+        # Le referentiel YAML est la source de verite du systeme. Une erreur de
+        # saisie (criticite qui ne vaut pas F x G x N, seuils desordonnes, tache
+        # preventive inexistante) doit bloquer la fusion, pas etre decouverte
+        # en exploitation.
+        run: |
+          pip install pyyaml
+          python - <<'PY'
+          import sys, yaml, pathlib
+          amdec = yaml.safe_load(pathlib.Path("src/domain/amdec.yaml").read_text(encoding="utf-8"))
+          tags  = yaml.safe_load(pathlib.Path("src/domain/tags.yaml").read_text(encoding="utf-8"))
+          topo  = yaml.safe_load(pathlib.Path("src/domain/topology.yaml").read_text(encoding="utf-8"))
+          erreurs = []
+          for code, m in amdec["modes"].items():
+              if m["C"] != m["F"] * m["G"] * m["N"]:
+                  erreurs.append(f"{code}: C={m['C']} mais FxGxN={m['F']*m['G']*m['N']}")
+              for ref in (m.get("plan_maintenance_ref") or []):
+                  if ref not in amdec["plan_maintenance"]:
+                      erreurs.append(f"{code}: tache preventive inconnue '{ref}'")
+              provenance = m.get("provenance") or {}
+              for field in ("category","source_file","source_location","original_values",
+                            "transformations","validation_status","validation_owner"):
+                  if field not in provenance:
+                      erreurs.append(f"{code}: provenance.{field} manquant")
+          # Aucune fiche d'instrumentation n'accompagne l'export DCS : le sens de
+          # chaque tag est ETABLI par recoupement, jamais declare. On exige donc
+          # au moins deux bases independantes et la preuve correspondante.
+          bases_admises = {"isa_5_1", "process", "data", "stoichio", "climatology"}
+          for tag, spec in tags["tags"].items():
+              if not (spec.get("evidence") or spec.get("rationale")):
+                  erreurs.append(f"{tag}: preuve d'interpretation manquante")
+              bases = set(spec.get("basis") or [])
+              inconnues = bases - bases_admises
+              if inconnues:
+                  erreurs.append(f"{tag}: base de determination inconnue {sorted(inconnues)}")
+              if len(bases) < 2:
+                  erreurs.append(
+                      f"{tag}: {len(bases)} base(s) de determination, deux au minimum"
+                  )
+          # La topologie relie les codes du detecteur aux pieces reelles. Une
+          # piece inexistante ou un capteur non declare dans tags.yaml ferait
+          # designer la mauvaise partie de l'equipement a l'exploitant.
+          composants = set(topo.get("components") or {})
+          alias = {spec["alias"] for spec in tags["tags"].values()}
+          for code, spec in (topo.get("sensors") or {}).items():
+              if code not in alias:
+                  erreurs.append(f"topology: capteur '{code}' absent de tags.yaml")
+              if spec.get("attaches_to") not in composants:
+                  erreurs.append(f"topology: '{code}' rattache a une piece inconnue")
+              if len(spec.get("at") or []) != 3:
+                  erreurs.append(f"topology: '{code}' sans position 3D valide")
+          for code, spec in (topo.get("components") or {}).items():
+              for mode in (spec.get("amdec_modes") or []):
+                  if mode not in amdec["modes"]:
+                      erreurs.append(f"topology: '{code}' cite un mode AMDEC inconnu '{mode}'")
+          for code, spec in (topo.get("finding_map") or {}).items():
+              for c in (spec.get("components") or []):
+                  if c not in composants:
+                      erreurs.append(f"topology: finding_map '{code}' -> piece inconnue '{c}'")
+              for s in (spec.get("sensors") or []):
+                  if s not in alias:
+                      erreurs.append(f"topology: finding_map '{code}' -> capteur inconnu '{s}'")
+          if erreurs:
+              print("Referentiel incoherent :")
+              for e in erreurs: print("  -", e)
+              sys.exit(1)
+          print("Referentiel metier coherent.")
+          PY
+
+  tests:
+    name: Tests (Python ${{ matrix.python }})
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
-
+        python: ["3.10", "3.11", "3.12"]
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: ${{ matrix.python }}
+          cache: pip
 
-      - name: Cache pip dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      - name: Install dependencies
+      - name: Installer les dependances
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install ruff
 
-      - name: Lint with ruff
-        run: |
-          # Configuration in pyproject.toml ([tool.ruff]) — single source of truth.
-          ruff check src/ api/ data/
-
-      - name: Security check dependencies
-        run: |
-          pip install pip-audit
-          pip-audit --ignore-vuln PYSEC-2022-42974 || true
-
-      - name: Run pytest with coverage
+      - name: Suite de tests
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          API_SECRET_KEY: test-secret-key
-          DATABASE_URL: sqlite:///data/ocp_bionic.db
-          MLFLOW_TRACKING_URI: ./mlruns
+          LOG_LEVEL: WARNING
+        run: pytest tests/ -q --cov=src --cov=api --cov-fail-under=85
+
+      - name: Evaluation du Judge
+        # Le systeme ne peut pas etre fusionne si son dispositif de controle ne
+        # detecte plus les fautes logicielles injectées. Ce test mesure la
+        # robustesse du contrôleur, jamais la validité industrielle.
+        if: always() && matrix.python == '3.11'
+        env:
           LOG_LEVEL: WARNING
         run: |
-          pytest tests/ \
-            -v \
-            --cov=src \
-            --cov=api \
-            --cov-report=term-missing \
-            --cov-report=xml \
-            --cov-fail-under=75 \
-            -x
+          python - <<'PY'
+          import sys
+          from src.pipeline import E7301Pipeline
+          from src.governance.judge_eval import JudgeEvaluator
+          res = JudgeEvaluator(E7301Pipeline(use_llm=False)).run(n_cases=6)
+          s = res.summary
+          print(res.report())
+          ok = (s["trap_detection_rate"] >= 0.85
+                and s["false_positive_rate"] <= 0.20
+                and s["separation"] >= 2.0)
+          sys.exit(0 if ok else 1)
+          PY
 
-      - name: Upload coverage report
-        uses: codecov/codecov-action@v4
-        if: always()
+      - name: Validation temporelle et lignée du modèle
+        if: matrix.python == '3.11'
+        env:
+          LOG_LEVEL: WARNING
+        run: python scripts/validate_release.py
+
+      - name: Publier les preuves de validation
+        if: matrix.python == '3.11'
+        uses: actions/upload-artifact@v4
         with:
-          file: ./coverage.xml
-          flags: unittests
-          name: ocp-bionic-coverage
+          name: e7301-validation-${{ github.sha }}
+          path: |
+            reports/model_validation.json
+            models/e7301_detector.manifest.json
+          if-no-files-found: error
+          retention-days: 90
 
-      - name: Check coverage badge
+  frontend:
+    name: Bancs du poste (jsdom)
+    runs-on: ubuntu-latest
+    # LES TROIS BANCS FRONTEND NE BLOQUAIENT RIEN.
+    # `package.json` declare `npm test`, le Makefile declare `test-front`, et
+    # l'integration continue n'appelait ni l'un ni l'autre : 84 verifications
+    # existaient sans jamais s'opposer a une fusion. Le poste est la seule
+    # surface que l'exploitant voit; c'est aussi celle qui cassait le plus
+    # silencieusement, puisqu'une erreur de cablage ne leve aucune exception
+    # cote Python.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Installer les dependances
         run: |
-          echo "Coverage report generated successfully"
-          cat coverage.xml | grep -o 'line-rate="[^"]*"' | head -1
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          npm install --no-audit --no-fund
+
+      - name: Regenerer les fixtures depuis le service reel
+        # Les bancs rejouent le VRAI app.js contre des reponses REELLES du
+        # service. Regenerer les fixtures a chaque execution garantit qu'un
+        # champ renomme cote API fait echouer le banc, au lieu de le laisser
+        # passer contre une capture perimee.
+        env:
+          LOG_LEVEL: WARNING
+        run: python scripts/dump_fixtures.py
+
+      - name: Cablage du poste, scene 3D et ecran de demarrage
+        run: |
+          node scripts/frontend_smoke.mjs
+          node scripts/twin_smoke.mjs
+          node scripts/boot_smoke.mjs
+
+  image:
+    name: Construction de l'image
+    runs-on: ubuntu-latest
+    needs: [qualite, tests, frontend]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Construire l'image
+        run: docker build -t ocp/e7301-surveillance:ci .
+
+      - name: Verifier que le service demarre et repond
+        run: |
+          docker run -d --name e7301_ci -p 8000:8000 \
+            -v "${{ github.workspace }}/data/raw:/app/data/raw:ro" \
+            ocp/e7301-surveillance:ci
+          for i in $(seq 1 30); do
+            # LA SONDE PORTE SUR LA DISPONIBILITE, PAS SUR LA PROMOTION DU MODELE.
+            # `/api/health` renvoie `degraded` tant qu'aucun modele n'est promu,
+            # ce qui est l'etat nominal voulu : exiger "ok" rendait ce controle
+            # impossible a satisfaire. `/api/health/ready` repond 200 ou 503.
+            if curl -fsS http://localhost:8000/api/health/ready >/dev/null; then
+              echo "Service operationnel apres ${i}0 s"; exit 0
+            fi
+            sleep 10
+          done
+          echo "Le service n'a pas demarre :"; docker logs e7301_ci; exit 1
+
+      - name: Journaux du conteneur
+        if: always()
+        run: docker logs e7301_ci || true

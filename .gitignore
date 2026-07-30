@@ -1,75 +1,100 @@
-# Python
+# ── Python ───────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
-*$py.class
 *.so
-.Python
-env/
-venv/
-.venv/
-ENV/
-
-# Virtual environments — NEVER commit these
-# If venv/ is already tracked: git rm -r --cached venv/
-venv*/
-.venv*/
 *.egg-info/
-dist/
 build/
+dist/
 .eggs/
 
-# Environment
+# ── Environnements virtuels ──────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── Secrets — ne jamais versionner ───────────────────────────────────────────
 .env
 *.env.local
+!.env.example
 
-# Data
-data/raw/*.csv
-data/raw/*.db
-data/processed/*.csv
+# ── Donnees ──────────────────────────────────────────────────────────────────
+# L'export DCS de reference EST versionne : il fait partie du livrable et
+# permet a quiconque clone le depot de reproduire tous les resultats.
+# Tout le reste (bases, exports intermediaires) ne l'est pas.
 data/*.db
-*.sqlite
-*.sqlite3
+data/*.db-*
+data/*.sqlite*
+data/processed/
+data/.fuse_hidden*
 
-# MLflow
-mlruns/
-mlartifacts/
+# Etat d'execution. Contient le REGISTRE DES TECHNICIENS : empreintes de mots
+# de passe et adresses reelles. Ne doit jamais etre versionne ni transmis.
+# `data/runtime/` EXCLUAIT LE REPERTOIRE, PAS SON CONTENU — et une negation ne
+# peut pas re-inclure un fichier dont le repertoire parent est exclu : Git n'y
+# descend jamais. `!data/runtime/.gitkeep` etait donc une regle INERTE, et le
+# marqueur qu'elle pretend versionner ne l'a jamais ete. En excluant le
+# CONTENU, la negation redevient effective.
+data/runtime/*
+!data/runtime/.gitkeep
+*.csv
+!reports/judge_eval_*.csv
 
-# Models
-models/
-*.pkl
-*.joblib
-*.h5
+# ── Modeles serialises ───────────────────────────────────────────────────────
+# Regenerables par `make train` en deux secondes. Les versionner alourdirait
+# le depot sans rien garantir : c'est la graine aleatoire fixee qui assure
+# la reproductibilite, pas le binaire.
+models/*.joblib
 
-# Notebooks
+# ── Dependances JavaScript ───────────────────────────────────────────────────
+# Les bancs de verification du poste utilisent jsdom. La dependance est
+# declaree dans package.json; l'arborescence installee ne se versionne jamais.
+# Sans barre finale : la regle doit aussi couvrir un lien symbolique, que le
+# poste de developpement avait laisse pointer vers un repertoire temporaire.
+node_modules
+package-lock.json
+
+# ── Sorties ──────────────────────────────────────────────────────────────────
+logs/
+tmp/
+*.log
 .ipynb_checkpoints/
-notebooks/.ipynb_checkpoints/
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-.DS_Store
-
-# Tests
+# ── Outils ───────────────────────────────────────────────────────────────────
 .pytest_cache/
+# Repertoire temporaire des tests, fixe dans pyproject.toml pour ne pas dependre
+# du dossier Temp de l'utilisateur, souvent protege sur un poste d'entreprise.
+.pytest-tmp/
+.ruff_cache/
+.mypy_cache/
 .coverage
 htmlcov/
 coverage.xml
 
-# Reports
-reports/*.pdf
-reports/*.html
-!reports/governance_template.md
+# ── Editeurs ─────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
 
-# Logs
-logs/
-*.log
+# ── Hors produit ─────────────────────────────────────────────────────────────
+# Outillage de redaction du rapport de stage : 11 Mo, 64 fichiers Python et
+# figures. Ce code n'a jamais ete audite et ne fait pas partie du livrable
+# technique. Un depot certifie ne doit pas embarquer de code non inspecte.
+rapport/
 
-# SHAP plots
-*.png
-*.svg
-!docs/
+# Livrables academiques et documents du protocole d'audit : ils decrivent le
+# travail, ils ne font pas fonctionner le poste.
+*.docx
+AUDIT_PROMPT.md
+AUDIT_ADVERSE_*.md
 
-# Streamlit
-.streamlit/
+# DOUBLON EXACT de data/raw/DATA.xlsx — meme empreinte MD5
+# (586fc00278043c571afebdcb41efb97a), 1 454 774 octets. Le chemin canonique
+# est celui que `src/config.py` designe via DCS_EXPORT; versionner les deux
+# mettrait 2,9 Mo pour les memes octets.
+docs/DATA.xlsx
+
+# Raccourci Windows, sans objet dans un depot.
+*.lnk

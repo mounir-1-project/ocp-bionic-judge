@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Poste de surveillance du refroidisseur d'acide de séchage E7301 — OCP, atelier sulfurique PS III">
+  <title>E7301 · Surveillance — PS III</title>
+  <!-- L'onglet du navigateur restait vide (`data:,`). En soutenance, plusieurs
+       onglets sont ouverts côte à côte : la marque est le seul repère. -->
+  <link rel="icon" type="image/png" href="/assets/favicon.png">
+  <link rel="apple-touch-icon" href="/assets/ocp-logo.png">
+  <link rel="stylesheet" href="/assets/app.css">
+  <script src="/assets/chart.umd.min.js" defer></script>
+  <script type="module" src="/assets/app.js"></script>
+</head>
+
+<body data-boot="pending">
+<a class="skip" href="#work">Aller au contenu</a>
+
+<!-- ══ Attente du service ═══════════════════════════════════════════════
+     Le poste n'affichait RIEN tant que le service ne répondait pas : coque à
+     opacité nulle, panneau d'identification masqué, aucun message. Or le
+     service charge l'historique et entraîne le modèle au démarrage — toute
+     ouverture pendant cette fenêtre tombait sur une page blanche. -->
+<div class="boot-wait" id="bootWait" role="status" aria-live="polite" hidden>
+  <img src="/assets/ocp-logo.png" alt="" width="176" height="220">
+  <strong>Connexion au poste E7301</strong>
+  <p id="bootWaitDetail">Le service construit la chaîne de traitement au démarrage.</p>
+  <span class="boot-bar" aria-hidden="true"><i></i></span>
+</div>
+
+<!-- ══ Identification ═══════════════════════════════════════════════════ -->
+<div class="gate" id="gate" hidden>
+  <div class="gate-plate">
+    <!-- Le logo ouvre le panneau d'identité : c'est le premier écran vu, et
+         l'appartenance de l'installation s'énonce avant son repère. -->
+    <div class="gate-org">
+      <img src="/assets/ocp-logo.png" alt="OCP" width="176" height="220">
+      <span>
+        <strong>OCP Group</strong>
+        <small>Maroc Chimie · Atelier sulfurique</small>
+      </span>
+    </div>
+
+    <div class="gate-mark">
+      <span class="gate-tag">S-PC-E7301</span>
+      <span class="gate-rule"></span>
+      <span class="gate-sub">Refroidisseur d'acide de séchage</span>
+    </div>
+    <dl class="gate-spec">
+      <div><dt>Atelier</dt><dd>Sulfurique · PS III</dd></div>
+      <div><dt>Site</dt><dd>Maroc Chimie</dd></div>
+      <div><dt>Constructeur</dt><dd>Chemetics</dd></div>
+      <div><dt>Tubes</dt><dd>904L · 3/4″</dd></div>
+    </dl>
+  </div>
+
+  <form class="gate-form" id="loginForm">
+    <p class="micro" id="gateKicker">Accès poste</p>
+    <h1 id="gateTitle">Identification</h1>
+    <p class="gate-note" id="gateNote">
+      Votre adresse identifie la session de quart. Elle devient le destinataire
+      des états critiques retenus par le contrôleur de cohérence.
+    </p>
+    <label><span>Adresse technicien</span>
+      <input id="loginEmail" name="email" type="email" autocomplete="email"
+             placeholder="prenom.nom@ocpgroup.ma" required></label>
+    <label id="passwordField"><span>Mot de passe</span>
+      <input id="loginPassword" name="password" type="password"
+             autocomplete="current-password" required></label>
+    <p class="form-error" id="loginError" aria-live="polite"></p>
+    <button class="btn btn-key" type="submit" id="gateSubmit">Ouvrir la session</button>
+
+    <p class="gate-alert" id="gateAlertNote">
+      <strong>Cette adresse recevra les états critiques.</strong>
+      Chaque décision de sévérité critique retenue par le contrôleur de
+      cohérence déclenche un courriel dédoublonné vers le technicien connecté,
+      tant que sa session reste ouverte.
+    </p>
+
+    <p class="gate-disclaimer" id="gateDisclaimer" hidden>
+      Aucun technicien n'est enregistré sur ce poste : l'accès protégé est
+      inactif et cette identification est <strong>déclarative</strong>.
+      Enregistrez un compte avec
+      <code>python scripts/manage_operators.py add</code> — l'authentification
+      s'activera d'elle-même au prochain démarrage.
+    </p>
+  </form>
+</div>
+
+<!-- ══ Poste ════════════════════════════════════════════════════════════ -->
+<div class="shell" id="shell">
+
+  <header class="command">
+    <div class="ident">
+      <!-- Marque institutionnelle, puis repère de l'appareil. L'ordre compte :
+           on lit l'exploitant avant l'équipement, jamais l'inverse. Le filet
+           les sépare sans les mettre sur le même plan. -->
+      <img class="ident-org" src="/assets/ocp-logo.png" alt="OCP"
+           width="176" height="220">
+      <span class="ident-rule" aria-hidden="true"></span>
+      <span class="ident-code">E7301</span>
+      <span class="ident-body">
+        <strong>Refroidisseur d'acide de séchage</strong>
+        <small>S-PC-E7301 · PS III · Maroc Chimie</small>
+      </span>
+    </div>
+
+    <div class="transport" role="group" aria-label="Rejeu de l'historique">
+      <span class="link-state" id="linkState"><i></i><span>Connexion</span></span>
+      <label class="pick">
+        <span>Vitesse</span>
+        <select id="speed">
+          <option value="24">1 jour / s</option>
+          <option value="120" selected>5 jours / s</option>
+          <option value="720">1 mois / s</option>
+        </select>
+      </label>
+      <button class="btn btn-key" id="play"><i class="glyph-play"></i>Rejouer</button>
+      <button class="btn" id="halt" disabled><i class="glyph-stop"></i>Arrêter</button>
+    </div>
+
+    <div class="stamp">
+      <strong id="clock">--:--</strong>
+      <small id="clockDate">—</small>
+    </div>
+
+    <div class="who" id="who">
+      <span class="who-badge" id="whoBadge">··</span>
+      <span class="who-body"><small>Session</small><strong id="whoName">Poste local</strong></span>
+      <button class="btn btn-ghost" id="logout" hidden>Quitter</button>
+    </div>
+  </header>
+
+  <!-- Onglets déclarés selon la convention WAI-ARIA : l'état sélectionné était
+       porté par une seule classe CSS, invisible pour un lecteur d'écran, et la
+       tabulation traversait les trois onglets au lieu du seul actif. -->
+  <nav class="views" role="tablist" aria-label="Vues du poste">
+    <button class="view-tab is-on" data-view="salle" role="tab"
+            id="tab-salle" aria-controls="panel-salle" aria-selected="true" tabindex="0">
+      <span class="view-idx">I</span>Salle<em>Procédé &amp; jumeau 3D</em>
+    </button>
+    <button class="view-tab" data-view="integrite" role="tab"
+            id="tab-integrite" aria-controls="panel-integrite" aria-selected="false" tabindex="-1">
+      <span class="view-idx">II</span>Intégrité<em>Épisodes · capteurs · AMDEC</em>
+    </button>
+    <button class="view-tab" data-view="controle" role="tab"
+            id="tab-controle" aria-controls="panel-controle" aria-selected="false" tabindex="-1">
+      <span class="view-idx">III</span>Contrôle<em>Cohérence &amp; angles morts</em>
+    </button>
+    <span class="view-slider" id="viewSlider" aria-hidden="true"></span>
+  </nav>
+
+  <main id="work">
+
+    <!-- ── I · Salle ─────────────────────────────────────────────────── -->
+    <section class="view is-on" data-panel="salle" id="panel-salle"
+             role="tabpanel" aria-labelledby="tab-salle" tabindex="0">
+
+      <div class="stage" id="stage">
+        <canvas id="twin" aria-label="Représentation 3D interactive du refroidisseur E7301"></canvas>
+
+        <!-- Les deux cartouches partagent un conteneur : en vis-à-vis sur
+             grand écran, empilés sous 760 px. Le verdict de sévérité était
+             auparavant masqué sur écran étroit — la seule lecture qu'un agent
+             de ronde consulte sur sa tablette. -->
+        <div class="stage-plates">
+          <div class="stage-plate stage-tl">
+            <span class="micro">État de l'appareil</span>
+            <strong id="assetState">En attente</strong>
+            <span class="plate-line" id="assetStamp">Aucune donnée rejouée</span>
+          </div>
+
+          <div class="stage-plate stage-tr" id="verdictPlate" data-sev="none"
+               role="status" aria-live="polite">
+            <span class="micro">Situation</span>
+            <strong id="verdictLabel">—</strong>
+            <span class="plate-line" id="verdictDetail">Démarrez le rejeu</span>
+          </div>
+        </div>
+
+        <div class="stage-tools">
+          <button class="tool" id="toolCut" aria-pressed="false" title="Coupe longitudinale">Coupe</button>
+          <button class="tool" id="toolReset" title="Recadrer">Recadrer</button>
+          <button class="tool" id="toolLabels" aria-pressed="true" title="Étiquettes capteurs">Repères</button>
+        </div>
+
+        <!-- Pied de scène : les deux textes sont empilés dans un même flux.
+             Positionnés séparément en absolu, ils se chevauchaient dès que la
+             mention de géométrie passait sur trois lignes. -->
+        <div class="stage-foot">
+          <p class="stage-hint">
+            Glisser pour orienter · molette pour zoomer · cliquer un capteur ou une pièce
+          </p>
+          <p class="stage-legal" id="stageLegal">
+            Géométrie construite sur <b>SIZE 1118-9754</b> de la fiche équipement.
+          </p>
+        </div>
+
+        <!-- Panneau capteur -->
+        <aside class="drawer" id="drawer" hidden>
+          <header>
+            <div>
+              <span class="micro" id="drawerRole">Capteur</span>
+              <h2 id="drawerName">—</h2>
+              <p id="drawerTag">—</p>
+            </div>
+            <button class="btn btn-ghost" id="drawerClose" aria-label="Fermer">✕</button>
+          </header>
+
+          <div class="drawer-value">
+            <strong id="drawerValue">—</strong>
+            <span id="drawerUnit"></span>
+            <span class="chip" id="drawerQuality">—</span>
+          </div>
+
+          <div class="drawer-chart"><canvas id="drawerChart"></canvas></div>
+
+          <dl class="drawer-facts" id="drawerFacts"></dl>
+
+          <div class="drawer-note">
+            <span class="micro">Interprétation du tag</span>
+            <p id="drawerRationale">—</p>
+          </div>
+        </aside>
+      </div>
+
+      <!-- Frise temporelle -->
+      <div class="frieze">
+        <div class="frieze-head">
+          <span class="micro">Fenêtre rejouée</span>
+          <strong id="friezeRange">Chargement de l'historique…</strong>
+        </div>
+        <div class="frieze-track" id="friezeTrack" aria-label="Progression du rejeu">
+          <div class="frieze-fill" id="friezeFill"></div>
+          <div class="frieze-marks" id="friezeMarks"></div>
+        </div>
+        <div class="frieze-foot"><span id="friezeStart">—</span><span id="friezeEnd">—</span></div>
+      </div>
+
+      <!-- Bandeau de lecture -->
+      <div class="readouts" id="readouts"></div>
+
+      <div class="split">
+        <article class="panel panel-trend">
+          <header class="panel-head">
+            <div><span class="micro">Fenêtre causale</span><h2 id="trendTitle">Températures acide</h2></div>
+            <div class="panel-tools">
+              <label class="pick"><span>Signaux</span>
+                <select id="trendSet">
+                  <option value="thermal">Thermique · 3 capteurs</option>
+                  <option value="titre">Titre acide · 2 analyseurs</option>
+                  <option value="debit">Débit &amp; charge</option>
+                  <option value="duty">Performance observée / attendue</option>
+                  <option value="absorption">Contexte absorption</option>
+                  <option value="degrade">Instrumentation dégradée</option>
+                </select></label>
+              <label class="pick"><span>Période</span>
+                <select id="trendSpan">
+                  <option value="24">24 h</option>
+                  <option value="168">7 j</option>
+                  <option value="504" selected>21 j</option>
+                  <option value="2160">90 j</option>
+                  <option value="0">Tout</option>
+                </select></label>
+            </div>
+          </header>
+          <div class="canvas-box"><canvas id="trendChart"></canvas></div>
+          <footer class="panel-foot" id="trendLegend"></footer>
+        </article>
+
+        <article class="panel panel-diag">
+          <header class="panel-head">
+            <div><span class="micro">Décision courante</span><h2>Diagnostic</h2></div>
+            <span class="chip" id="diagConfidence">—</span>
+          </header>
+          <div class="diag" id="diag">
+            <p class="void">Aucune décision. Démarrez le rejeu pour alimenter la chaîne.</p>
+          </div>
+        </article>
+      </div>
+
+      <article class="panel">
+        <header class="panel-head">
+          <div><span class="micro">Journal du rejeu</span><h2>Analyses successives</h2></div>
+          <div class="seg" role="group" aria-label="Filtre du journal">
+            <button class="is-on" data-feed="stream">Tout</button>
+            <button data-feed="alerts">Alertes</button>
+            <button data-feed="disagreements">Rejets</button>
+          </div>
+        </header>
+        <div class="feed" id="feed" aria-live="polite">
+          <p class="void">Flux en attente.</p>
+        </div>
+      </article>
+    </section>
+
+    <!-- ── II · Intégrité ───────────────────────────────────────────── -->
+    <section class="view" data-panel="integrite" hidden id="panel-integrite"
+             role="tabpanel" aria-labelledby="tab-integrite" tabindex="0">
+      <div class="kpi-row" id="kpiRow"></div>
+
+      <div class="split">
+        <article class="panel">
+          <header class="panel-head">
+            <div><span class="micro">Empreinte 14 mois</span><h2>Concentration des épisodes</h2></div>
+            <span class="chip" id="episodeBadge">—</span>
+          </header>
+          <div class="cal" id="cal"></div>
+          <footer class="panel-foot">
+            <p>La densité montre quand le système a réellement sollicité l'exploitant,
+               pas le volume brut d'heures atypiques.</p>
+          </footer>
+        </article>
+
+        <article class="panel panel-photo">
+          <!-- Dimensions intrinsèques déclarées et chargement différé. Sans
+               `width`/`height`, le navigateur ne connaît pas le rapport de la
+               photographie avant de l'avoir reçue : la carte se réajustait
+               après coup et déplaçait les deux tableaux placés en dessous.
+               L'image vit dans la vue Intégrité, jamais affichée en premier :
+               elle n'a aucune raison de disputer la bande passante au
+               chargement du poste. -->
+          <img src="/assets/e7301-tubesheet.jpg" width="834" height="625"
+               loading="lazy" decoding="async"
+               alt="Plaque tubulaire du refroidisseur E7301">
+          <div class="photo-cap">
+            <span class="micro">Anatomie réelle</span>
+            <h2>Plaque tubulaire 904L</h2>
+            <p>La surveillance couvre la signature thermique. L'état des tubes, des soudures
+               et des anodes reste du ressort de l'inspection.</p>
+            <!-- Une photographie industrielle sans source est invérifiable, et
+                 celle-ci ne sort pas d'une banque d'images : elle vient du
+                 dossier de maintenance de CET équipement. Le dire est un
+                 argument, le taire est une faiblesse. -->
+            <p class="photo-src">Photographie extraite de la gamme OCP
+               « Démontage et remontage des couvercles du refroidisseur d'acide
+               PS III » — FO09-PSS01-IDS/C, édition 02.</p>
+          </div>
+        </article>
+      </div>
+
+      <div class="split">
+        <article class="panel">
+          <header class="panel-head"><div><span class="micro">Priorisation</span><h2>Épisodes les plus sévères</h2></div></header>
+          <div class="tbl"><table>
+            <thead><tr><th>Début</th><th>Durée</th><th>Pic</th><th>Marge au seuil</th><th></th></tr></thead>
+            <tbody id="episodeRows"></tbody>
+          </table></div>
+        </article>
+
+        <article class="panel">
+          <header class="panel-head"><div><span class="micro">Instrumentation</span><h2>Disponibilité des capteurs</h2></div></header>
+          <div class="tbl"><table>
+            <thead><tr><th>Capteur</th><th>Dispo.</th><th>Gel</th><th>Butée</th></tr></thead>
+            <tbody id="sensorRows"></tbody>
+          </table></div>
+        </article>
+      </div>
+
+      <article class="panel">
+        <header class="panel-head">
+          <div><span class="micro">Plan préventif OCP</span><h2>Cadence A → H</h2></div>
+        </header>
+        <div class="plan" id="plan"></div>
+      </article>
+
+      <article class="panel">
+        <header class="panel-head">
+          <div><span class="micro">Référentiel du 23/09/2019</span><h2>Couverture AMDEC</h2></div>
+          <label class="pick"><span>Filtrer</span>
+            <input id="amdecFilter" type="search" placeholder="mode, élément, criticité…"></label>
+        </header>
+        <!-- Sans cette légende, le marqueur de provenance serait un ornement.
+             Avec elle, il devient une lecture : trois natures de lignes, trois
+             niveaux d'autorité, et le lecteur sait laquelle il conteste. -->
+        <p class="panel-note prov-legend">
+          <span class="prov" data-tone="source">OCP</span> cotation transcrite
+          du document de 2019, inchangée ·
+          <span class="prov" data-tone="derived">dérivée</span> libellé source
+          scindé pour rattacher les règles, cotation conservée ·
+          <span class="prov" data-tone="app">projet</span> proposée par ce
+          travail, sans ligne correspondante à l'AMDEC.
+          Le détail de chaque provenance est en infobulle.
+        </p>
+        <div class="tbl"><table>
+          <thead><tr><th>Élément</th><th>Mode</th><th>C</th><th>Détectable</th><th>Action de référence</th></tr></thead>
+          <tbody id="amdecRows"></tbody>
+        </table></div>
+      </article>
+    </section>
+
+    <!-- ── III · Contrôle ───────────────────────────────────────────── -->
+    <section class="view" data-panel="controle" hidden id="panel-controle"
+             role="tabpanel" aria-labelledby="tab-controle" tabindex="0">
+      <div class="split split-hero">
+        <!-- LE CHIFFRE MIS EN AVANT EST CELUI QUI SE DÉFEND.
+             Un « 100,0 % » en corps 72 sur un banc dont les pièges ont été
+             écrits contre les contrôles qui les attrapent est la cible la plus
+             facile d'une soutenance : un contrôle qui ne rate jamais rien ne
+             contrôle rien. La grandeur qui vaut quelque chose est l'ÉCART
+             entre la note des cas piégés et celle des cas sains — c'est elle
+             qui dit si le contrôleur discrimine, et elle n'est pas bornée par
+             construction. Le taux de détection reste publié, en second rang. -->
+        <article class="panel panel-score">
+          <span class="micro">Banc d'injection de fautes</span>
+          <div class="score">
+            <strong id="benchScore">—</strong><span>pts d'écart</span>
+          </div>
+          <p id="benchReading">Écart entre la note des cas piégés et celle des cas
+             sains, sur dix. C'est la mesure de discrimination du contrôleur. Ce
+             n'est ni une précision terrain, ni une validation externe.
+             <b>Le chiffre à lire en premier est celui des fautes d'un genre non
+             anticipé</b> : les pièges conçus mesurent la non-régression, lui
+             seul mesure ce que le contrôleur attrape sans l'avoir prévu.</p>
+          <div class="score-meta" id="benchMeta"></div>
+          <button class="btn btn-key" id="runBench">Relancer un échantillon</button>
+        </article>
+
+        <article class="panel">
+          <header class="panel-head"><div><span class="micro">Détail du banc</span><h2>Comportement par type de faute</h2></div></header>
+          <div id="bench"><p class="void">Exécution du banc…</p></div>
+        </article>
+      </div>
+
+      <article class="panel">
+        <header class="panel-head">
+          <div><span class="micro">Le détecteur verrait-il un encrassement ?</span>
+               <h2>Banc d'injection sur données réelles</h2></div>
+          <button class="btn" id="runFouling">Rejouer le banc</button>
+        </header>
+        <!-- La formulation précédente — « la règle ne s'est jamais déclenchée
+             sur les quatorze mois » — était vraie pour la fenêtre de référence
+             retenue, et fausse pour celle de 25 %, que l'analyse de
+             sensibilité teste pourtant juste à côté. Un constat qui dépend
+             d'un paramètre se publie avec ce paramètre. -->
+        <p class="panel-note">Avec la période de référence retenue (40 % initiaux),
+           la règle d'encrassement ne se déclenche sur aucune des quatorze mois
+           disponibles — voir l'analyse de sensibilité ci-dessous pour ce que
+           donnent les autres fenêtres. Ce banc superpose une dérive simulée aux
+           données réelles, dans une fenêtre où la règle est silencieuse, et
+           mesure ce que le détecteur en fait.</p>
+        <div id="foulingBench"><p class="void">Calcul en cours…</p></div>
+      </article>
+
+      <div class="split">
+
+        <article class="panel">
+          <header class="panel-head"><div><span class="micro">Corridor de vérification</span><h2>Les huit contrôles</h2></div></header>
+          <div class="checks" id="checks"></div>
+        </article>
+      </div>
+
+      <div class="split">
+        <article class="panel panel-flag">
+          <header class="panel-head">
+            <div><span class="micro">Ce que l'opérateur reçoit réellement</span>
+                 <h2>Taux horaire de signalement</h2></div>
+            <span class="chip" id="flagChip">—</span>
+          </header>
+          <p class="panel-note">La charge d'épisodes agrège. Ce taux-ci ne l'est pas :
+             c'est la part des heures de marche que le système signale.</p>
+          <div class="bars" id="flagBars"></div>
+        </article>
+
+        <article class="panel">
+          <header class="panel-head">
+            <div><span class="micro">Part du risque AMDEC couverte</span>
+                 <h2>Ce que le système ne voit pas</h2></div>
+            <span class="chip" id="coverChip">—</span>
+          </header>
+          <div class="cover" id="coverBox"></div>
+        </article>
+      </div>
+
+      <article class="panel">
+        <header class="panel-head">
+          <div><span class="micro">Escalade vers l'astreinte</span>
+               <h2>Canal e-mail du technicien</h2></div>
+          <span class="chip" id="mailChip">—</span>
+        </header>
+        <div class="mail-box" id="mailBox"><p class="void">Vérification…</p></div>
+        <footer class="panel-foot">
+          <div class="mail-actions">
+            <button class="btn" id="mailTest">Envoyer un e-mail de test</button>
+            <button class="btn" id="mailGov">Envoyer la synthèse de gouvernance</button>
+          </div>
+        </footer>
+      </article>
+
+      <article class="panel">
+        <header class="panel-head">
+          <div><span class="micro">Paramètres arbitraires</span><h2>Analyse de sensibilité</h2></div>
+        </header>
+        <p class="panel-note">Deux choix décident du comportement du système sans
+           justification physique. Leur influence est mesurée ici plutôt que subie.</p>
+        <div class="sens" id="sensBox"><p class="void">Calcul en cours…</p></div>
+      </article>
+
+      <article class="panel">
+        <header class="panel-head">
+          <div><span class="micro">Passeport de la donnée</span><h2>Chaîne source → décision</h2></div>
+        </header>
+        <div class="lineage" id="lineage"></div>
+      </article>
+
+      <div class="split">
+        <article class="panel">
+          <header class="panel-head"><div><span class="micro">Auto-surveillance</span><h2>Comportement du contrôleur</h2></div></header>
+          <div class="audit" id="audit"><p class="void">Aucune décision jugée pour l'instant.</p></div>
+        </article>
+
+        <article class="panel">
+          <header class="panel-head"><div><span class="micro">Limites déclarées</span><h2>Angles morts</h2></div></header>
+          <div class="blind" id="blind"></div>
+        </article>
+      </div>
+
+      <article class="panel">
+        <header class="panel-head">
+          <div><span class="micro">Validation</span><h2>Backtest temporel</h2></div>
+          <span class="chip" id="validationChip">Calcul…</span>
+        </header>
+        <p class="panel-note">Chaque modèle est appris sur le passé, séparé du test par un gap.
+           Les métriques décrivent une stabilité — jamais une précision de panne, faute
+           d'historique GMAO étiqueté.</p>
+        <div class="valid" id="valid"></div>
+        <footer class="panel-foot">
+          <span class="micro">Ce que le corpus ne permet pas d'affirmer</span>
+          <ul class="limits" id="controlLimits"></ul>
+        </footer>
+      </article>
+    </section>
+  </main>
+</div>
+
+<div class="toasts" id="toasts" aria-live="assertive"></div>
+
+<dialog class="modal" id="modal">
+  <header><h2 id="modalTitle">Analyse</h2><button class="btn btn-ghost" id="modalClose">✕</button></header>
+  <div id="modalBody"></div>
+</dialog>
+</body>
+</html>

@@ -1,0 +1,1167 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   E7301 — feuille de style unique du poste de surveillance.
+
+   Il n'y a qu'UN fichier de style, volontairement. La version precedente en
+   empilait deux : une base en theme clair, puis une couche de rattrapage en
+   theme sombre qui redeclarait l'integralite des jetons. Le rendu final etait
+   la moyenne accidentelle de deux intentions opposees, et toute retouche
+   devenait imprevisible.
+
+   La palette n'est pas choisie pour faire joli : elle vient de l'equipement.
+   L'acide de sechage donne l'ambre, l'eau de mer le turquoise, le 904L le gris
+   chaud, le chassis peint le bleu de la photo terrain.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  color-scheme: dark;
+
+  /* Fonds */
+  --void:        #060c0f;
+  --deep:        #0a1216;
+  --plate:       #0d171c;
+  /* `--plate-hi: #12212800` A ETE RETIRE : huit chiffres se terminant par `00`,
+     c'est-a-dire une couleur entierement transparente, et aucun consommateur
+     dans la feuille. Un jeton invisible et inutilise n'est pas une reserve,
+     c'est une erreur de saisie qu'aucun rendu ne pouvait reveler. */
+  --raise:       #122027;
+  --sunken:      #081014;
+
+  /* Traits */
+  --hair:        rgba(154, 190, 196, .13);
+  --hair-firm:   rgba(154, 190, 196, .26);
+  --hair-faint:  rgba(154, 190, 196, .07);
+
+  /* Encre */
+  /* Norme WCAG AA = 4,5:1 pour le petit texte.
+     --ink-4 valait #5b7276, soit 3,56:1 : il echouait alors qu'il porte les
+     micro-libelles en 10 px, c'est-a-dire le texte le plus petit du poste.
+
+     LA CORRECTION PRECEDENTE NE MESURAIT QU'UN SEUL FOND. Elle le releve a
+     #6b8488 et annonce 4,57:1 — exact sur --plate, et sur --plate seulement.
+     Or --raise (#122027) est le fond de survol de TOUTES les lignes du poste :
+     `.readout:hover`, `.event:hover`, `tbody tr:hover td`. Sur ce fond,
+     #6b8488 retombe a 4,20:1. Le texte le plus petit de l'interface repassait
+     donc sous la norme des que le pointeur l'atteignait — c'est-a-dire au
+     moment precis ou l'exploitant le lit.
+
+     Les valeurs ci-dessous sont mesurees sur le PIRE des cinq fonds
+     reellement employes (--void, --deep, --plate, --raise, --sunken). */
+  --ink:         #e9f2f1;   /* 14,6:1 au pire */
+  --ink-2:       #b3c6c7;   /*  9,4:1 au pire */
+  --ink-3:       #7c9396;   /*  5,1:1 au pire */
+  --ink-4:       #718a8e;   /*  4,5:1 au pire (--raise) */
+
+  /* ── Matieres de l'equipement ─────────────────────────────────────────
+     ISA-101 : la saturation est une RESSOURCE RARE. Ces teintes servent a
+     identifier un circuit, pas a attirer l'oeil. Elles sont volontairement
+     desaturees pour que le rouge et l'ambre d'alarme ressortent. Les variantes
+     `-live` ne sont employees que sur un etat anormal.                      */
+  --acid:        #b08268;   /* acide de sechage — desature */
+  --acid-live:   #e07a45;
+  --sea:         #7aa8b4;   /* eau de mer — desature */
+  --sea-live:    #4fbcd4;
+  --alloy:       #9fa7a6;   /* 904L */
+  /* `--frame` (bleu du chassis peint) A ETE RETIRE de la feuille : aucun
+     selecteur ne le consommait. La teinte reelle du chassis vit dans
+     `twin.js`, ou elle est appliquee a un materiau 3D — une feuille de style
+     ne peut pas la lui fournir. La declarer ici entretenait l'illusion d'une
+     charte unique la ou il y a, de fait, deux surfaces distinctes. */
+
+  /* Etats */
+  --ok:          #4fd6a6;
+  --warn:        #f0a52f;
+  --fault:       #f0453c;
+  --info:        #6fa8d6;
+
+  --ok-w:        rgba(79, 214, 166, .12);
+  --warn-w:      rgba(240, 165, 47, .13);
+  --fault-w:     rgba(240, 69, 60, .14);
+
+  /* Formes */
+  --edge:        3px;
+  --gap:         14px;
+  --pad:         18px;
+
+  --sans: "Segoe UI Variable Text", "Segoe UI", Inter, system-ui, -apple-system, sans-serif;
+  --disp: "Segoe UI Variable Display", "Segoe UI Semibold", Inter, system-ui, sans-serif;
+  --mono: "Cascadia Mono", "SF Mono", "JetBrains Mono", Consolas, monospace;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  font: 14px/1.5 var(--sans);
+  color: var(--ink);
+  background:
+    /* quadrillage de plan, tres discret : marque l'atelier sans decorer */
+    linear-gradient(var(--hair-faint) 1px, transparent 1px) 0 0 / 100% 46px,
+    linear-gradient(90deg, var(--hair-faint) 1px, transparent 1px) 0 0 / 46px 100%,
+    radial-gradient(120% 80% at 78% -12%, rgba(79, 188, 212, .07), transparent 62%),
+    var(--void);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* MASQUER UN DEBORDEMENT N'EST PAS LE CORRIGER.
+   Le poste portait `overflow-x: hidden` sur <body> : tout contenu plus large
+   que la fenetre etait rogne au bord droit — le bandeau « part du risque
+   couverte » apparaissait tronque — sans qu'aucune barre de defilement ne
+   permette d'y acceder. La contrainte est desormais posee a la source : chaque
+   conteneur peut retrecir, et seuls les tableaux, dont la largeur minimale est
+   irreductible, defilent dans leur propre boite. */
+* { min-width: 0; }
+img, canvas, svg, video { max-width: 100%; }
+
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+
+:focus-visible {
+  outline: 2px solid var(--sea-live);
+  outline-offset: 2px;
+}
+
+.skip {
+  position: fixed; z-index: 999; left: 12px; top: -60px;
+  padding: 10px 16px; background: var(--sea-live); color: #04161c; font-weight: 600;
+  transition: top .18s;
+}
+.skip:focus { top: 12px; }
+
+/* Micro-libelle : le seul element typographique repete du poste. */
+.micro {
+  display: block;
+  font: 500 10px/1.4 var(--sans);
+  letter-spacing: .17em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+  margin: 0;
+}
+
+.void {
+  color: var(--ink-4);
+  font-size: 13px;
+  margin: 0;
+  padding: 22px 0;
+}
+
+/* ═══ Identification ══════════════════════════════════════════════════════ */
+
+.gate {
+  position: fixed; inset: 0; z-index: 200;
+  display: grid; grid-template-columns: 1.05fr .95fr;
+  background: var(--void);
+}
+.gate[hidden] { display: none; }
+
+.gate-plate {
+  position: relative;
+  display: flex; flex-direction: column; justify-content: center; gap: 42px;
+  padding: 0 6vw;
+  background:
+    linear-gradient(115deg, rgba(224, 122, 69, .09), transparent 46%),
+    repeating-linear-gradient(90deg, var(--hair-faint) 0 1px, transparent 1px 34px),
+    var(--deep);
+  border-right: 1px solid var(--hair);
+}
+/* Traits de coupe, comme sur un plan */
+.gate-plate::before, .gate-plate::after {
+  content: ""; position: absolute; width: 34px; height: 34px;
+  border: 1px solid var(--hair-firm);
+}
+.gate-plate::before { top: 34px; left: 34px; border-right: 0; border-bottom: 0; }
+.gate-plate::after { bottom: 34px; right: 34px; border-left: 0; border-top: 0; }
+
+.gate-tag {
+  display: block;
+  font: 300 clamp(38px, 5.4vw, 74px)/1 var(--disp);
+  letter-spacing: -.02em;
+}
+.gate-rule {
+  display: block; width: 84px; height: 2px; margin: 20px 0 14px;
+  background: linear-gradient(90deg, var(--acid), transparent);
+}
+.gate-sub { color: var(--ink-3); letter-spacing: .04em; }
+
+/* Bloc d'appartenance de l'écran d'accueil. Il précède le repère de
+   l'appareil et reste nettement plus discret que lui : l'écran identifie une
+   MACHINE, sous l'autorité d'un exploitant. */
+.gate-org {
+  display: flex; align-items: center; gap: 18px;
+  padding-bottom: 26px; border-bottom: 1px solid var(--hair);
+}
+.gate-org img {
+  height: 54px; width: auto; display: block;
+  filter: brightness(1.12) saturate(1.05);
+}
+.gate-org span { display: grid; gap: 3px; }
+.gate-org strong {
+  font: 600 15px/1.2 var(--sans); letter-spacing: .06em; color: var(--ink-2);
+}
+.gate-org small {
+  font: 400 11.5px/1.3 var(--mono); letter-spacing: .04em; color: var(--ink-4);
+}
+
+.gate-spec { display: grid; grid-template-columns: 1fr 1fr; gap: 22px 34px; margin: 0; }
+.gate-spec dt { font: 500 10px/1.4 var(--sans); letter-spacing: .17em; text-transform: uppercase; color: var(--ink-4); }
+.gate-spec dd { margin: 5px 0 0; color: var(--ink-2); font-family: var(--mono); font-size: 13px; }
+
+.gate-form {
+  display: flex; flex-direction: column; justify-content: center; gap: 12px;
+  padding: 0 6vw; max-width: 560px;
+}
+.gate-form h1 { font: 300 34px/1.15 var(--disp); margin: 6px 0 4px; }
+.gate-note { color: var(--ink-3); font-size: 13px; margin: 0 0 12px; max-width: 42ch; }
+.gate-form label { display: grid; gap: 6px; }
+.gate-form label span { font: 500 10px/1.4 var(--sans); letter-spacing: .17em; text-transform: uppercase; color: var(--ink-4); }
+.gate-form input {
+  padding: 12px 13px; background: var(--sunken); color: var(--ink);
+  border: 1px solid var(--hair); border-radius: var(--edge);
+}
+/* `outline: none` A ETE RETIRE. Il supprimait le seul reperage de focus du
+   PREMIER ecran du poste, et seule la couleur de bordure restait — c'est-a-dire
+   une information portee par la couleur seule, sur les deux champs qu'un
+   utilisateur au clavier doit imperativement pouvoir situer. La bordure est
+   conservee comme renfort; le trait de focus global s'applique de nouveau. */
+.gate-form input:focus { border-color: var(--sea-live); }
+.gate-form .btn { margin-top: 14px; justify-content: center; }
+.form-error { color: var(--fault); font-size: 12.5px; min-height: 18px; margin: 0; }
+.gate-alert {
+  margin: 16px 0 0; padding: 12px 14px;
+  border: 1px solid var(--hair); border-left: 2px solid var(--acid);
+  border-radius: var(--edge);
+  font-size: 11.5px; line-height: 1.6; color: var(--ink-3);
+}
+.gate-alert strong { display: block; margin-bottom: 4px; color: var(--ink-2); }
+
+.gate-disclaimer {
+  margin: 14px 0 0; padding: 11px 13px;
+  border: 1px solid var(--hair); border-left: 2px solid var(--warn);
+  border-radius: var(--edge);
+  font-size: 11.5px; line-height: 1.6; color: var(--ink-3);
+}
+.gate-disclaimer[hidden] { display: none; }
+.gate-disclaimer code { font: 11px var(--mono); color: var(--ink-2); }
+
+/* ═══ Coque ═══════════════════════════════════════════════════════════════ */
+
+/* `100dvh` plutot que `100vh` : sur mobile, `vh` se cale sur le viewport
+   BARRES REPLIEES, si bien que la coque depassait de la hauteur de la barre
+   d'adresse tant qu'elle etait visible — un decalage permanent au premier
+   affichage, celui que l'exploitant voit en ouvrant le poste. `100vh` reste
+   declare juste avant, comme repli pour les navigateurs anciens. */
+.shell { display: flex; flex-direction: column; min-height: 100vh; min-height: 100dvh; }
+body[data-boot="pending"] .shell,
+body[data-boot="waiting"] .shell { opacity: 0; }
+
+/* Écran d'attente du service — voir `attendreLeService()` dans app.js. */
+.boot-wait {
+  position: fixed; inset: 0; z-index: 900;
+  display: grid; place-content: center; justify-items: center; gap: 14px;
+  padding: 24px; text-align: center;
+  background: radial-gradient(70% 55% at 50% 40%, rgba(79, 188, 212, .06), transparent 70%), var(--void);
+}
+.boot-wait[hidden] { display: none; }
+.boot-wait img { height: 54px; width: auto; opacity: .9; filter: brightness(1.12); }
+.boot-wait strong { font: 400 19px/1.2 var(--disp); letter-spacing: .01em; }
+.boot-wait p { margin: 0; max-width: 42ch; font-size: 12.5px; line-height: 1.6; color: var(--ink-3); }
+.boot-bar { display: block; width: 168px; height: 2px; overflow: hidden; background: var(--hair); }
+.boot-bar i { display: block; width: 40%; height: 100%; background: var(--sea-live); animation: bootrun 1.4s ease-in-out infinite; }
+@keyframes bootrun { 0% { transform: translateX(-110%); } 100% { transform: translateX(360%); } }
+@media (prefers-reduced-motion: reduce) { .boot-bar i { animation: none; width: 100%; opacity: .5; } }
+.shell { transition: opacity .3s; }
+
+/* ── Barre de commande ── */
+.command {
+  position: sticky; top: 0; z-index: 40;
+  display: grid;
+  grid-template-columns: minmax(230px, 1fr) auto auto auto;
+  align-items: center; gap: 26px;
+  padding: 12px 24px;
+  background: linear-gradient(180deg, rgba(10, 18, 22, .96), rgba(10, 18, 22, .88));
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--hair);
+}
+
+.ident { display: flex; align-items: center; gap: 13px; min-width: 0; }
+
+/* MARQUE INSTITUTIONNELLE.
+   Le logo est posé à taille modeste et sans cadre : dans un poste de conduite,
+   la charte accompagne, elle ne dispute pas l'attention aux grandeurs
+   procédé. Sa hauteur est calée sur celle du bloc de repère voisin pour que
+   les deux partagent une même ligne optique. */
+.ident-org {
+  /* 34 px, et pas moins : le logo est un bloc empilé — couronne au-dessus,
+     mot OCP en dessous. Contraindre sa hauteur réduit le mot deux fois plus
+     vite que la couronne, et sous 32 px il cesse d'être lisible. Recadrer sur
+     la seule couronne réglerait le problème mais altérerait la marque. */
+  flex: none; height: 34px; width: auto; display: block;
+  /* Le vert institutionnel est sombre sur un fond à 6 % de luminance. Un
+     éclaircissement léger rétablit le contraste sans déplacer la teinte. */
+  filter: brightness(1.18) saturate(1.05);
+}
+.ident-rule {
+  flex: none; width: 1px; height: 26px; background: var(--hair-firm);
+}
+.ident-code {
+  flex: none;
+  padding: 7px 11px 6px;
+  font: 500 15px/1 var(--mono); letter-spacing: .04em;
+  color: var(--acid);
+  border: 1px solid rgba(224, 122, 69, .4);
+  background: rgba(224, 122, 69, .08);
+  border-radius: var(--edge);
+}
+.ident-body { display: grid; min-width: 0; }
+.ident-body strong { font: 600 14px/1.3 var(--sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ident-body small { color: var(--ink-4); font-size: 11.5px; font-family: var(--mono); }
+
+.transport { display: flex; align-items: center; gap: 10px; }
+
+.link-state {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 11px; border: 1px solid var(--hair); border-radius: 999px;
+  font-size: 11.5px; color: var(--ink-3); white-space: nowrap;
+}
+.link-state i { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-4); }
+.link-state[data-link="live"] i { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-w); animation: beat 1.7s infinite; }
+.link-state[data-link="idle"] i { background: var(--sea); }
+.link-state[data-link="down"] i { background: var(--fault); }
+@keyframes beat { 50% { box-shadow: 0 0 0 7px transparent; } }
+
+.pick { display: inline-grid; gap: 3px; }
+.pick > span { font: 500 9.5px/1.3 var(--sans); letter-spacing: .16em; text-transform: uppercase; color: var(--ink-4); }
+.pick select, .pick input {
+  padding: 7px 10px; background: var(--sunken); color: var(--ink);
+  border: 1px solid var(--hair); border-radius: var(--edge); font-size: 12.5px;
+}
+
+.btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 15px;
+  background: var(--raise); color: var(--ink-2);
+  border: 1px solid var(--hair); border-radius: var(--edge);
+  font-size: 12.5px; font-weight: 500;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.btn:hover:not(:disabled) { border-color: var(--hair-firm); color: var(--ink); }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn-key {
+  background: linear-gradient(180deg, rgba(79, 188, 212, .2), rgba(79, 188, 212, .1));
+  border-color: rgba(79, 188, 212, .5); color: #ddf4fa;
+}
+.btn-key:hover:not(:disabled) { border-color: var(--sea-live); }
+.btn-ghost { background: none; border-color: transparent; padding: 6px 9px; }
+
+.glyph-play, .glyph-stop { width: 8px; height: 9px; background: currentColor; }
+.glyph-play { clip-path: polygon(0 0, 100% 50%, 0 100%); }
+
+.stamp { text-align: right; }
+.stamp strong { display: block; font: 300 21px/1 var(--disp); font-variant-numeric: tabular-nums; }
+.stamp small { color: var(--ink-4); font-size: 11px; font-family: var(--mono); }
+
+.who { display: flex; align-items: center; gap: 10px; }
+.who-badge {
+  display: grid; place-items: center; width: 32px; height: 32px;
+  border: 1px solid var(--hair-firm); border-radius: 50%;
+  font: 600 11px/1 var(--mono); color: var(--ink-2); text-transform: uppercase;
+}
+.who-body { display: grid; }
+.who-body small { font: 500 9.5px/1.3 var(--sans); letter-spacing: .16em; text-transform: uppercase; color: var(--ink-4); }
+.who-body strong { font-size: 12.5px; font-weight: 500; }
+
+/* ── Onglets ── */
+.views {
+  position: relative; display: flex; gap: 2px;
+  padding: 0 24px; border-bottom: 1px solid var(--hair);
+  background: rgba(8, 14, 18, .6);
+}
+.view-tab {
+  display: flex; align-items: baseline; gap: 9px;
+  padding: 13px 18px 12px;
+  background: none; border: 0;
+  font: 600 13.5px/1 var(--sans); color: var(--ink-4);
+  transition: color .16s;
+}
+.view-tab em { font: 400 11px/1 var(--sans); font-style: normal; color: var(--ink-4); opacity: .7; }
+.view-idx { font: 500 10px/1 var(--mono); letter-spacing: .1em; color: var(--ink-4); }
+.view-tab:hover { color: var(--ink-2); }
+.view-tab.is-on { color: var(--ink); }
+.view-tab.is-on .view-idx { color: var(--acid); }
+.view-tab.is-on em { color: var(--ink-3); opacity: 1; }
+
+.view-slider {
+  position: absolute; bottom: -1px; height: 2px;
+  background: linear-gradient(90deg, var(--acid), var(--sea));
+  transition: left .32s cubic-bezier(.4, 0, .15, 1), width .32s cubic-bezier(.4, 0, .15, 1);
+}
+
+/* ── Contenu ── */
+main { padding: 20px 24px 56px; display: grid; gap: var(--gap); }
+.view { display: grid; gap: var(--gap); }
+.view[hidden] { display: none; }
+
+/* Entree de vue : un decalage bref suffit a signaler le changement de contexte
+   sans faire attendre. Les panneaux arrivent en cascade tres serree, ce qui
+   donne une impression de reponse immediate meme quand une requete est encore
+   en vol. */
+.view.is-on > * {
+  animation: enter .26s cubic-bezier(.22, .8, .3, 1) backwards;
+}
+.view.is-on > *:nth-child(2) { animation-delay: .03s; }
+.view.is-on > *:nth-child(3) { animation-delay: .06s; }
+.view.is-on > *:nth-child(4) { animation-delay: .09s; }
+.view.is-on > *:nth-child(n+5) { animation-delay: .12s; }
+
+@keyframes enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Squelette de chargement : une zone vide qui respire se lit comme « en cours »,
+   une zone vide immobile se lit comme « cassé ». */
+.void[data-loading] {
+  background: linear-gradient(90deg, transparent, var(--hair-faint), transparent)
+              0 0 / 200% 100%;
+  animation: sweep 1.4s ease-in-out infinite;
+  border-radius: 2px;
+}
+@keyframes sweep { to { background-position: -200% 0; } }
+
+/* ═══ Scene 3D ════════════════════════════════════════════════════════════ */
+
+.stage {
+  position: relative;
+  height: clamp(420px, 62vh, 760px);
+  border: 1px solid var(--hair);
+  border-radius: var(--edge);
+  overflow: hidden;
+  background:
+    radial-gradient(75% 60% at 50% 34%, rgba(79, 188, 212, .07), transparent 70%),
+    linear-gradient(180deg, #0b171d, #060d11 70%);
+}
+/* Reperes de cadrage — vocabulaire du plan technique, pas de la decoration */
+.stage::before, .stage::after {
+  content: ""; position: absolute; width: 26px; height: 26px; z-index: 3;
+  border: 1px solid var(--hair-firm); pointer-events: none;
+}
+.stage::before { top: 14px; left: 14px; border-right: 0; border-bottom: 0; }
+.stage::after { bottom: 14px; right: 14px; border-left: 0; border-top: 0; }
+
+#twin { display: block; width: 100%; height: 100%; touch-action: none; }
+
+.stage-plate {
+  position: absolute; z-index: 4; min-width: 190px;
+  padding: 11px 14px;
+  background: rgba(6, 13, 17, .82);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--hair);
+  border-left: 2px solid var(--ink-4);
+  border-radius: var(--edge);
+  pointer-events: none;
+}
+/* Les deux cartouches sont posés par leur conteneur, en vis-à-vis : l'état de
+   l'appareil à gauche, la situation à droite. Sous 760 px ils s'empilent. */
+.stage-plates {
+  position: absolute; z-index: 4; top: 46px; left: 46px; right: 46px;
+  display: flex; justify-content: space-between; gap: 16px; pointer-events: none;
+}
+.stage-tr { text-align: right; border-left: 1px solid var(--hair); border-right: 2px solid var(--ink-4); }
+.stage-plate strong { display: block; margin: 5px 0 3px; font: 400 19px/1.15 var(--disp); }
+.plate-line { font-size: 11.5px; color: var(--ink-4); font-family: var(--mono); }
+
+#verdictPlate[data-sev="NORMAL"] { border-right-color: var(--ok); }
+#verdictPlate[data-sev="INFO"] { border-right-color: var(--info); }
+#verdictPlate[data-sev="WARNING"] { border-right-color: var(--warn); }
+#verdictPlate[data-sev="WARNING"] strong { color: var(--warn); }
+#verdictPlate[data-sev="CRITICAL"] { border-right-color: var(--fault); background: rgba(38, 10, 10, .82); }
+#verdictPlate[data-sev="CRITICAL"] strong { color: var(--fault); }
+
+.stage-tools { position: absolute; z-index: 4; right: 46px; bottom: 46px; display: flex; gap: 6px; }
+.tool {
+  padding: 8px 13px; font-size: 11.5px; letter-spacing: .04em;
+  background: rgba(6, 13, 17, .84); backdrop-filter: blur(8px);
+  border: 1px solid var(--hair); border-radius: var(--edge); color: var(--ink-3);
+}
+.tool:hover { color: var(--ink); border-color: var(--hair-firm); }
+.tool[aria-pressed="true"] { color: var(--sea-live); border-color: rgba(79, 188, 212, .5); background: rgba(79, 188, 212, .12); }
+
+/* Les deux mentions du pied de scene sont EMPILEES, jamais positionnees
+   independamment : c'est ce qui garantit qu'elles ne se recouvriront pas,
+   quel que soit le nombre de lignes rendu par la largeur disponible. */
+.stage-foot {
+  position: absolute; z-index: 4; left: 46px; bottom: 26px;
+  display: flex; flex-direction: column; gap: 7px;
+  max-width: min(52ch, calc(100% - 260px));
+  pointer-events: none;
+}
+.stage-hint {
+  margin: 0;
+  font: 500 10px/1.4 var(--sans); letter-spacing: .14em; text-transform: uppercase;
+  color: var(--ink-4);
+}
+.stage-legal {
+  margin: 0;
+  font-size: 10.5px; line-height: 1.45; color: var(--ink-4); opacity: .78;
+}
+.stage-legal b { color: var(--ink-3); font-weight: 600; }
+
+/* ── Panneau capteur ── */
+.drawer {
+  position: absolute; z-index: 6; top: 0; right: 0; bottom: 0; width: min(390px, 88%);
+  display: flex; flex-direction: column; gap: 15px;
+  padding: 20px;
+  background: rgba(7, 14, 18, .95);
+  backdrop-filter: blur(18px);
+  border-left: 1px solid var(--hair-firm);
+  overflow-y: auto;
+  animation: slide .26s cubic-bezier(.3, 0, .2, 1);
+}
+.drawer[hidden] { display: none; }
+@keyframes slide { from { transform: translateX(24px); opacity: 0; } }
+
+.drawer > header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.drawer h2 { margin: 5px 0 2px; font: 400 18px/1.25 var(--disp); }
+.drawer > header p { margin: 0; font: 11.5px var(--mono); color: var(--ink-4); }
+
+.drawer-value { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+.drawer-value strong { font: 200 46px/1 var(--disp); font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.drawer-value span:not(.chip) { color: var(--ink-3); font-size: 15px; }
+
+.chip {
+  padding: 4px 9px; border: 1px solid var(--hair); border-radius: 999px;
+  font: 500 10px/1.4 var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3);
+  white-space: nowrap;
+}
+.chip[data-tone="ok"] { color: var(--ok); border-color: rgba(79, 214, 166, .4); background: var(--ok-w); }
+.chip[data-tone="warn"] { color: var(--warn); border-color: rgba(240, 165, 47, .4); background: var(--warn-w); }
+.chip[data-tone="fault"] { color: var(--fault); border-color: rgba(240, 69, 60, .4); background: var(--fault-w); }
+
+/* ═══ Gravite : jamais la couleur seule ═══════════════════════════════════
+   Environ 8 % des hommes ne distinguent pas le rouge de l'ambre. Une salle de
+   controle ou la gravite n'est portee que par la teinte est inutilisable pour
+   eux, et illisible sur une impression en noir et blanc. Chaque etat porte
+   donc AUSSI un glyphe et un mot.                                          */
+
+.sev-mark {
+  display: inline-flex; align-items: center; gap: 6px;
+  font: 500 10px/1 var(--sans); letter-spacing: .12em; text-transform: uppercase;
+}
+.sev-mark::before {
+  display: inline-grid; place-items: center;
+  width: 15px; height: 15px; flex: none;
+  border: 1.5px solid currentColor; border-radius: 3px;
+  font: 700 10px/1 var(--sans);
+}
+.sev-mark[data-sev="NORMAL"] { color: var(--ok); }
+.sev-mark[data-sev="NORMAL"]::before { content: "="; border-radius: 50%; }
+.sev-mark[data-sev="INFO"] { color: var(--info); }
+.sev-mark[data-sev="INFO"]::before { content: "i"; border-radius: 50%; }
+.sev-mark[data-sev="WARNING"] { color: var(--warn); }
+.sev-mark[data-sev="WARNING"]::before { content: "!"; }
+.sev-mark[data-sev="CRITICAL"] { color: var(--fault); }
+.sev-mark[data-sev="CRITICAL"]::before { content: "\2715"; }
+
+/* Les bordures de gravite recoivent en plus un motif distinct : trait plein
+   pour l'avertissement, double trait pour le critique. */
+.event[data-sev="WARNING"] { border-left-style: solid; }
+.event[data-sev="CRITICAL"] { border-left-width: 4px; border-left-style: double; }
+.readout[data-tone="warn"] { border-top-style: solid; }
+.readout[data-tone="fault"] { border-top-width: 4px; border-top-style: double; }
+
+.drawer-chart { height: 152px; }
+.drawer-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 11px 16px; margin: 0; }
+.drawer-facts div { border-top: 1px solid var(--hair-faint); padding-top: 8px; }
+.drawer-facts dt { font: 500 9.5px/1.3 var(--sans); letter-spacing: .15em; text-transform: uppercase; color: var(--ink-4); }
+.drawer-facts dd { margin: 4px 0 0; font: 13px var(--mono); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+.drawer-note p { margin: 6px 0 0; font-size: 12px; line-height: 1.6; color: var(--ink-3); }
+
+/* ═══ Frise ═══════════════════════════════════════════════════════════════ */
+
+.frieze {
+  padding: 13px 18px;
+  border: 1px solid var(--hair); border-radius: var(--edge);
+  background: var(--plate);
+}
+.frieze-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 10px; }
+.frieze-head strong { font: 400 13px/1 var(--sans); color: var(--ink-2); }
+
+.frieze-track {
+  position: relative; height: 26px;
+  background:
+    repeating-linear-gradient(90deg, var(--hair-faint) 0 1px, transparent 1px 40px),
+    var(--sunken);
+  border: 1px solid var(--hair-faint); border-radius: 2px; overflow: hidden;
+}
+.frieze-fill {
+  position: absolute; inset: 0 100% 0 0;
+  background: linear-gradient(90deg, rgba(224, 122, 69, .18), rgba(79, 188, 212, .3));
+  border-right: 1px solid var(--sea-live);
+  transition: right .5s linear;
+}
+.frieze-marks { position: absolute; inset: 0; }
+.frieze-marks i {
+  position: absolute; top: 4px; bottom: 4px; width: 2px;
+  background: var(--warn); opacity: .6;
+}
+.frieze-marks i[data-sev="high"] { background: var(--fault); opacity: .9; }
+.frieze-foot { display: flex; justify-content: space-between; margin-top: 6px; font: 10.5px var(--mono); color: var(--ink-4); }
+
+/* ═══ Bandeau de lecture ══════════════════════════════════════════════════ */
+
+.readouts {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px;
+  background: var(--hair-faint);
+  border: 1px solid var(--hair); border-radius: var(--edge); overflow: hidden;
+}
+.readout {
+  padding: 13px 15px; background: var(--plate);
+  display: grid; gap: 4px; text-align: left;
+  border: 0; border-top: 2px solid transparent;
+  transition: background .15s, border-color .15s;
+}
+.readout:hover { background: var(--raise); }
+.readout[data-live="on"] { border-top-color: var(--sea); }
+.readout[data-tone="warn"] { border-top-color: var(--warn); }
+.readout[data-tone="fault"] { border-top-color: var(--fault); background: rgba(40, 12, 12, .5); }
+.readout-val { font: 300 24px/1 var(--disp); font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.readout-val em { font: 400 12px/1 var(--sans); font-style: normal; color: var(--ink-4); margin-left: 4px; }
+.readout-sub { font: 10.5px var(--mono); color: var(--ink-4); }
+.readout-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+
+/* Projection — troisieme niveau du modele d'Endsley. Ou va la grandeur, pas
+   seulement ou elle est. Le glyphe porte le sens, le mot le confirme : la
+   direction n'est jamais portee par la seule couleur. */
+.trend {
+  display: inline-flex; align-items: center; gap: 4px;
+  font: 500 9.5px/1 var(--sans); letter-spacing: .08em; text-transform: uppercase;
+  color: var(--ink-4); white-space: nowrap;
+}
+.trend i { font-style: normal; font-size: 12px; line-height: 1; }
+.trend[data-dir="up"] { color: var(--ink-3); }
+.trend[data-dir="down"] { color: var(--ink-3); }
+.trend[data-dir="flat"] i { opacity: .5; }
+.readout[data-tone="warn"] .trend,
+.readout[data-tone="fault"] .trend { color: inherit; }
+
+/* ═══ Panneaux ════════════════════════════════════════════════════════════ */
+
+.split { display: grid; grid-template-columns: 1.55fr 1fr; gap: var(--gap); }
+.split-hero { grid-template-columns: .8fr 1.4fr; }
+
+.panel {
+  position: relative;
+  padding: var(--pad);
+  background: var(--plate);
+  border: 1px solid var(--hair);
+  border-radius: var(--edge);
+  min-width: 0;
+}
+/* Repere d'angle : une amorce, pas un cadre complet */
+.panel::before {
+  content: ""; position: absolute; top: -1px; left: -1px; width: 22px; height: 2px;
+  background: linear-gradient(90deg, var(--acid), transparent);
+}
+
+.panel-head {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 16px; margin-bottom: 16px; flex-wrap: wrap;
+}
+.panel-head h2 { margin: 5px 0 0; font: 400 17px/1.2 var(--disp); }
+.panel-tools { display: flex; gap: 10px; flex-wrap: wrap; }
+.panel-note { margin: -6px 0 14px; font-size: 12.5px; color: var(--ink-3); max-width: 78ch; }
+.panel-foot { margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--hair-faint); }
+.panel-foot p { margin: 0; font-size: 12px; color: var(--ink-4); }
+
+.canvas-box { height: 260px; }
+.panel-diag .diag { display: grid; gap: 13px; }
+.diag-block { border-left: 2px solid var(--hair-firm); padding-left: 12px; }
+.diag-block[data-tone="warn"] { border-color: var(--warn); }
+.diag-block[data-tone="fault"] { border-color: var(--fault); }
+.diag-block p { margin: 5px 0 0; font-size: 13px; line-height: 1.6; color: var(--ink-2); }
+.reserves { margin: 6px 0 0; padding-left: 16px; display: grid; gap: 5px; }
+.reserves li { font-size: 12.5px; line-height: 1.5; color: var(--ink-3); }
+.reserves li::marker { color: var(--warn); }
+.reserves b { color: var(--warn); font-weight: 600; }
+.mode-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 7px; }
+.mode-tag {
+  padding: 4px 8px; font: 11px var(--mono);
+  border: 1px solid var(--hair); border-radius: 2px; color: var(--acid);
+  background: rgba(224, 122, 69, .07);
+}
+
+.seg { display: inline-flex; border: 1px solid var(--hair); border-radius: var(--edge); overflow: hidden; }
+.seg button {
+  padding: 7px 13px; background: none; border: 0; font-size: 12px; color: var(--ink-4);
+}
+.seg button.is-on { background: var(--raise); color: var(--ink); }
+
+.legend { display: flex; gap: 16px; flex-wrap: wrap; }
+.legend span { display: inline-flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--ink-3); }
+.legend i { width: 14px; height: 2px; border-radius: 2px; }
+
+/* ═══ Journal ═════════════════════════════════════════════════════════════ */
+
+.feed { display: grid; gap: 1px; max-height: 460px; overflow-y: auto; background: var(--hair-faint); }
+.event {
+  display: grid; grid-template-columns: 92px 1fr auto; gap: 14px; align-items: start;
+  padding: 12px 14px; background: var(--plate); border: 0; text-align: left; width: 100%;
+  border-left: 2px solid transparent; transition: background .13s;
+}
+.event:hover { background: var(--raise); }
+.event[data-sev="WARNING"] { border-left-color: var(--warn); }
+.event[data-sev="CRITICAL"] { border-left-color: var(--fault); }
+.event[data-sev="INFO"] { border-left-color: var(--info); }
+.event-time { font: 11px var(--mono); color: var(--ink-4); padding-top: 2px; }
+.event-body strong { display: block; font: 500 12.5px/1.4 var(--sans); }
+.event-body small { display: block; margin-top: 3px; font-size: 11.5px; color: var(--ink-4); line-height: 1.5; }
+.event-score { font: 500 12px/1 var(--mono); color: var(--ink-3); padding-top: 2px; white-space: nowrap; }
+
+/* ═══ Tableaux ════════════════════════════════════════════════════════════ */
+
+/* Un tableau ne peut pas retrecir indefiniment : c'est le seul element du
+   poste autorise a defiler horizontalement, et il le fait dans sa propre
+   boite plutot que d'entrainer la page entiere. */
+.tbl { overflow-x: auto; overscroll-behavior-x: contain; }
+.tbl table { min-width: 32rem; }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+th {
+  text-align: left; padding: 0 12px 9px;
+  font: 500 9.5px/1.3 var(--sans); letter-spacing: .15em; text-transform: uppercase;
+  color: var(--ink-4); border-bottom: 1px solid var(--hair);
+}
+td { padding: 10px 12px; border-bottom: 1px solid var(--hair-faint); color: var(--ink-2); }
+tbody tr:hover td { background: var(--raise); }
+td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.crit { display: inline-block; min-width: 34px; padding: 3px 7px; border-radius: 2px; font: 500 11px var(--mono); text-align: center; }
+
+/* Marqueur de provenance d'une ligne AMDEC. Discret par construction : il
+   qualifie l'autorité de la ligne sans voler la lecture au contenu. */
+.prov {
+  display: inline-block; margin-left: 8px; padding: 2px 6px;
+  border-radius: 2px; border: 1px solid var(--hair-firm);
+  font: 500 9.5px/1.4 var(--sans); letter-spacing: .1em; text-transform: uppercase;
+  color: var(--ink-4); vertical-align: 2px; cursor: help; white-space: nowrap;
+}
+.prov[data-tone="source"] { color: var(--ok); border-color: rgba(79, 214, 166, .35); }
+.prov[data-tone="derived"] { color: var(--sea-live); border-color: rgba(79, 188, 212, .35); }
+.prov[data-tone="app"] { color: var(--warn); border-color: rgba(240, 165, 47, .38); }
+.prov-legend { max-width: none; line-height: 2; }
+.prov-legend .prov { margin: 0 2px 0 0; cursor: default; }
+.crit[data-band="majeure"], .crit[data-band="critique"] { color: var(--fault); background: var(--fault-w); }
+.crit[data-band="significative"] { color: var(--warn); background: var(--warn-w); }
+.crit[data-band="mineure"] { color: var(--ink-3); background: var(--hair-faint); }
+.table-btn { padding: 5px 10px; font-size: 11.5px; background: var(--raise); border: 1px solid var(--hair); border-radius: 2px; color: var(--ink-2); }
+
+/* ═══ Indicateurs ═════════════════════════════════════════════════════════ */
+
+.kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: var(--gap); }
+.kpi {
+  padding: var(--pad); background: var(--plate);
+  border: 1px solid var(--hair); border-radius: var(--edge);
+  border-top: 2px solid var(--sea);
+}
+.kpi[data-evidence="derived"] { border-top-color: var(--warn); }
+.kpi-val { display: flex; align-items: baseline; gap: 6px; margin: 9px 0 7px; }
+.kpi-val strong { font: 200 34px/1 var(--disp); font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.kpi-val span { color: var(--ink-3); font-size: 13px; }
+.kpi p { margin: 0; font-size: 11.5px; line-height: 1.6; color: var(--ink-4); }
+
+/* ═══ Calendrier d'episodes ═══════════════════════════════════════════════ */
+
+.cal { display: grid; grid-template-columns: repeat(auto-fit, minmax(62px, 1fr)); gap: 5px; }
+.cal-cell { padding: 11px 8px; background: var(--sunken); border: 1px solid var(--hair-faint); border-radius: 2px; text-align: center; }
+.cal-cell strong { display: block; font: 300 19px/1 var(--disp); }
+.cal-cell small { display: block; margin-top: 5px; font: 9.5px var(--mono); color: var(--ink-4); text-transform: uppercase; }
+
+/* ═══ Plan preventif ══════════════════════════════════════════════════════ */
+
+.plan { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 9px; }
+.plan-item {
+  display: grid; grid-template-columns: 30px 1fr; gap: 12px; align-items: start;
+  padding: 13px; background: var(--sunken); border: 1px solid var(--hair-faint); border-radius: 2px;
+}
+.plan-key {
+  display: grid; place-items: center; width: 30px; height: 30px;
+  border: 1px solid var(--hair-firm); border-radius: 2px;
+  font: 500 13px var(--mono); color: var(--acid);
+}
+.plan-item strong { display: block; font: 500 12.5px/1.4 var(--sans); }
+.plan-item small { display: block; margin-top: 4px; font: 11px var(--mono); color: var(--ink-4); }
+
+/* ═══ Controle ════════════════════════════════════════════════════════════ */
+
+.panel-score { display: grid; gap: 13px; align-content: start; }
+.score { display: flex; align-items: baseline; gap: 6px; }
+.score strong { font: 200 62px/1 var(--disp); font-variant-numeric: tabular-nums; letter-spacing: -.03em; }
+.score span { font-size: 20px; color: var(--ink-3); }
+.panel-score p { margin: 0; font-size: 12.5px; line-height: 1.6; color: var(--ink-3); }
+.score-meta { display: flex; gap: 20px; flex-wrap: wrap; padding-top: 12px; border-top: 1px solid var(--hair-faint); }
+.score-meta span { font-size: 11.5px; color: var(--ink-4); }
+.score-meta strong { display: block; font: 400 17px/1.2 var(--disp); color: var(--ink); }
+/* La mesure de généralisation passe en premier et se distingue : c'est la
+   seule du bloc qui réponde à « que détecte-t-il qu'il ne connaît pas ? ». */
+.score-meta span[data-key="true"] {
+  order: -1; flex: 1 0 100%;
+  padding-bottom: 10px; margin-bottom: 2px;
+  border-bottom: 1px solid var(--hair-faint); color: var(--ink-3);
+}
+.score-meta span[data-key="true"] strong { font-size: 27px; }
+.score-meta strong[data-alert="true"] { color: var(--warn); }
+
+.checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: 9px; }
+.check { padding: 12px 13px; background: var(--sunken); border: 1px solid var(--hair-faint); border-radius: 2px; border-left: 2px solid var(--sea); }
+.check-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.check-top b { font: 500 12px var(--mono); color: var(--sea); }
+.check-top span { font: 11px var(--mono); color: var(--ink-4); }
+.check p { margin: 6px 0 0; font-size: 11.5px; line-height: 1.55; color: var(--ink-3); }
+
+.lineage { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 9px; }
+.lineage-node { padding: 13px; background: var(--sunken); border: 1px solid var(--hair-faint); border-radius: 2px; }
+.lineage-node strong { display: block; font: 500 12.5px/1.4 var(--sans); margin: 5px 0 5px; }
+.lineage-node small { font: 11px var(--mono); color: var(--ink-4); }
+
+.blind { display: grid; gap: 8px; }
+.blind-item {
+  display: grid; grid-template-columns: auto 1fr; gap: 13px; align-items: center;
+  padding: 12px 13px; background: var(--sunken); border: 1px solid var(--hair-faint);
+  border-left: 2px solid var(--fault); border-radius: 2px;
+}
+.blind-item strong { display: block; font: 500 12.5px var(--sans); }
+.blind-item small { display: block; margin-top: 3px; font: 11px var(--mono); color: var(--ink-4); }
+
+.audit { display: grid; gap: 9px; }
+.audit-line { display: flex; justify-content: space-between; gap: 14px; padding: 9px 0; border-bottom: 1px solid var(--hair-faint); font-size: 12.5px; }
+.audit-line span { color: var(--ink-4); }
+.audit-line b { font-family: var(--mono); font-weight: 500; color: var(--ink); }
+.audit-line em { font-style: normal; color: var(--ink-4); font-size: 11px; }
+.audit-reading {
+  margin: 4px 0 0; font-size: 12.5px; line-height: 1.6; color: var(--ink-3);
+}
+.audit-reading[data-tone="warn"] {
+  padding: 10px 12px; border-left: 2px solid var(--warn);
+  background: var(--warn-w); color: var(--ink-2);
+}
+.audit-watch { margin: 10px 0 0; padding-left: 17px; display: grid; gap: 7px; }
+.audit-watch li { font-size: 12.5px; line-height: 1.5; color: var(--ink-4); }
+.audit-watch li::marker { color: var(--sea); }
+.audit-issues { margin-top: 6px; }
+.audit-issues ul { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.audit-issues li {
+  display: flex; justify-content: space-between; gap: 12px;
+  font-size: 12.5px; color: var(--ink-3);
+}
+.audit-issues li span { font-family: var(--mono); color: var(--ink-4); }
+
+.valid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 9px; }
+.valid-cell { padding: 13px; background: var(--sunken); border: 1px solid var(--hair-faint); border-radius: 2px; }
+.valid-cell strong { display: block; margin: 6px 0 4px; font: 300 21px/1 var(--disp); font-variant-numeric: tabular-nums; }
+.valid-cell small { font: 10.5px var(--mono); color: var(--ink-4); line-height: 1.5; display: block; }
+
+.limits { margin: 9px 0 0; padding-left: 17px; display: grid; gap: 5px; }
+.limits li { font-size: 12px; color: var(--ink-3); line-height: 1.55; }
+.limits li::marker { color: var(--warn); }
+
+/* ═══ Taux de signalement ═════════════════════════════════════════════════ */
+
+/* LES BARRES SORTAIENT A HAUTEUR NULLE.
+   `.bar` etait une grille auto-dimensionnee, et la hauteur en pourcentage du
+   `<i>` se resolvait donc contre une hauteur indefinie : le navigateur la
+   ramenait a la hauteur du contenu, c'est-a-dire zero. Le panneau affichait un
+   rectangle noir avec les libelles de mois ecrases en bas.
+   La piste a desormais une hauteur DEFINIE et les barres y sont positionnees
+   en absolu : un pourcentage y a un referent, quelle que soit la valeur. */
+.panel-flag { position: relative; }
+.bars { display: grid; gap: 7px; }
+.bars-track {
+  position: relative;
+  /* Flex, et non grille : les barres sont posées sur la ligne de base et leur
+     hauteur est fournie en pixels par le script. La cible, positionnée en
+     absolu, est retirée du flux et ne compte donc pas comme une colonne. */
+  display: flex; align-items: flex-end; gap: 5px;
+  border-bottom: 1px solid var(--hair-firm);
+  /* Grille de fond : donne une échelle sans ajouter d'axe verbeux. */
+  background-image: repeating-linear-gradient(
+    to top, transparent 0 24px, rgba(255, 255, 255, .035) 24px 25px);
+}
+.bars-labels { display: flex; gap: 5px; }
+.bars-labels span {
+  flex: 1 1 0; min-width: 0;
+  font: 9.5px var(--mono); color: var(--ink-4); text-align: center;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bar {
+  position: relative; flex: 1 1 0; align-self: stretch;
+  border-radius: 3px;
+  transition: background-color .18s ease;
+}
+.bar:hover { background: rgba(255, 255, 255, .04); }
+.bar i {
+  position: absolute; left: 50%; bottom: 0; transform: translateX(-50%);
+  width: 100%; max-width: 30px; border-radius: 3px 3px 0 0;
+  background: linear-gradient(180deg, var(--sea), rgba(79, 188, 212, .3));
+  /* Montée à l'affichage : la barre pousse depuis la ligne de base. */
+  transform-origin: bottom;
+  animation: bar-grow .5s cubic-bezier(.22, .8, .3, 1) both;
+}
+.bar[data-tone="warn"] i { background: linear-gradient(180deg, var(--warn), rgba(240, 165, 47, .3)); }
+.bar[data-tone="fault"] i { background: linear-gradient(180deg, var(--fault), rgba(240, 69, 60, .32)); }
+.bar b {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  font: 10.5px var(--mono); color: var(--ink-2);
+  opacity: 0; transition: opacity .15s ease; pointer-events: none;
+}
+.bar:hover b, .bar:focus-visible b { opacity: 1; }
+@keyframes bar-grow { from { transform: translateX(-50%) scaleY(0); } }
+@media (prefers-reduced-motion: reduce) { .bar i { animation: none; } }
+
+.bar-target {
+  position: absolute; left: 0; right: 0; height: 0; z-index: 2;
+  border-top: 1px dashed var(--ok); pointer-events: none;
+}
+/* QUATRE VARIABLES INEXISTANTES SUBSISTAIENT DANS CE FICHIER, vestiges d'une
+   nomenclature de jetons abandonnee : `--surface-2` ici, `--line`, `--pane-2`
+   et `--ink-1` dans le journal d'escalade. Un `var()` sans repli et sans
+   declaration rend la propriete invalide au calcul : le libelle de cible
+   s'affichait donc SANS fond, pose a meme les barres. */
+.bar-target span {
+  position: absolute; right: 2px; top: -14px;
+  padding: 1px 5px; border-radius: 3px;
+  background: var(--raise);
+  font: 9.5px var(--mono); color: var(--ok);
+}
+
+/* ═══ Couverture du risque ════════════════════════════════════════════════ */
+
+.cover { display: grid; gap: 12px; }
+.cover-gauge {
+  position: relative; height: 24px;
+  background: var(--fault-w); border: 1px solid var(--hair); border-radius: 2px;
+  overflow: hidden;
+}
+.cover-gauge i {
+  position: absolute; inset: 0 auto 0 0;
+  background: linear-gradient(90deg, rgba(79, 214, 166, .45), rgba(79, 214, 166, .18));
+  border-right: 2px solid var(--ok);
+}
+.cover-gauge span {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  font: 11px var(--mono); color: var(--ink);
+}
+/* Couverture partielle : conditions surveillées, état non mesuré. Hachures
+   plutôt qu'aplat — la lecture doit dire « incomplet », pas « acquis ». */
+.cover-gauge i.cover-partial {
+  inset: 0 auto 0 auto;
+  border-right: 2px solid var(--warn);
+  background:
+    repeating-linear-gradient(135deg,
+      rgba(240, 165, 47, .34) 0 6px, rgba(240, 165, 47, .12) 6px 12px);
+}
+.cover-legend {
+  margin: 9px 0 0; font-size: 11.5px; line-height: 1.7; color: var(--ink-4);
+}
+.cover-legend b { color: var(--ok); font-family: var(--mono); }
+.cover-legend b.is-partial { color: var(--warn); }
+.cover-note { margin: 8px 0 0; font-size: 11.5px; line-height: 1.6; color: var(--ink-4); }
+.cover-tags {
+  padding: 9px 11px; border-left: 2px solid var(--warn);
+  background: var(--sunken); border-radius: 2px;
+}
+.cover-tags[data-ok="true"] { border-left-color: var(--ok); }
+.cover-tags b { color: var(--ink-2); font-family: var(--mono); }
+.cover-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.cover-list li {
+  display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: baseline;
+  font-size: 12px; color: var(--ink-3);
+}
+.cover-list b { color: var(--ink-2); }
+.cover-list small { display: block; font: 10.5px var(--mono); color: var(--ink-4); }
+
+/* ═══ Sensibilité et bancs ════════════════════════════════════════════════ */
+
+.sens-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+.sens-note { margin: 10px 0 0; font-size: 11.5px; line-height: 1.6; color: var(--ink-4); }
+.sens-note[data-alert="true"] {
+  padding: 10px 12px; border-left: 2px solid var(--warn);
+  background: var(--warn-w); color: var(--ink-2); border-radius: 2px;
+}
+tbody tr.is-on td { background: rgba(79, 188, 212, .09); color: var(--ink); }
+tbody tr.is-on td:first-child { box-shadow: inset 2px 0 0 var(--sea); }
+
+.mail-box { display: grid; gap: 12px; }
+.mail-reason {
+  margin: 0; padding: 11px 13px;
+  border-left: 2px solid var(--warn); background: var(--warn-w);
+  border-radius: 2px; font-size: 12px; line-height: 1.6; color: var(--ink-2);
+}
+.mail-actions { display: flex; gap: 9px; flex-wrap: wrap; }
+
+/* Journal d'escalade : une ligne par message émis, son sort en évidence. */
+.mail-journal-title {
+  margin: 18px 0 8px; font: 400 13px/1 var(--disp);
+  letter-spacing: .08em; text-transform: uppercase; color: var(--ink-4);
+}
+.mail-journal { margin: 0; padding: 0; list-style: none; }
+.mail-journal li {
+  display: grid; gap: 2px 10px; padding: 9px 11px; margin-bottom: 6px;
+  grid-template-columns: auto 1fr auto;
+  /* `--line` et `--pane-2` n'existent pas : le fond disparaissait et la
+     couleur de bord retombait sur `currentColor`, annulant le code couleur
+     d'etat pose juste en dessous. */
+  border-left: 2px solid var(--hair-firm); background: var(--sunken);
+  border-radius: 2px; font-size: 12px; line-height: 1.5;
+}
+.mail-journal li[data-tone="ok"] { border-left-color: var(--ok); }
+.mail-journal li[data-tone="warn"] { border-left-color: var(--warn); }
+.mail-journal li[data-tone="fault"] { border-left-color: var(--fault); }
+.mail-journal .mail-when { font-family: var(--mono); color: var(--ink-4); }
+.mail-journal b { color: var(--ink); font-weight: 600; }
+.mail-journal .mail-state {
+  font-family: var(--mono); font-size: 11px; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--ink-3);
+}
+.mail-journal .mail-to { grid-column: 1 / -1; color: var(--ink-3); }
+.mail-journal em { grid-column: 1 / -1; color: var(--ink-4); font-style: normal; }
+
+.bench-heads {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 14px; margin-bottom: 14px;
+}
+.bench-heads strong { display: block; margin-top: 5px; font: 300 27px/1 var(--disp); }
+.bench-heads strong[data-alert="true"] { color: var(--warn); }
+
+@media (max-width: 1180px) { .sens-grid { grid-template-columns: 1fr; } }
+
+/* ═══ Photo ═══════════════════════════════════════════════════════════════ */
+
+.panel-photo { padding: 0; overflow: hidden; display: grid; }
+.panel-photo img { width: 100%; height: 100%; min-height: 230px; object-fit: cover; filter: saturate(.7) contrast(1.05) brightness(.72); grid-area: 1/1; }
+.photo-cap { grid-area: 1/1; align-self: end; padding: var(--pad); background: linear-gradient(0deg, rgba(6, 12, 15, .95), transparent); }
+.photo-cap h2 { margin: 5px 0 6px; font: 400 17px/1.2 var(--disp); }
+.photo-cap p { margin: 0; font-size: 12px; color: var(--ink-3); max-width: 46ch; }
+.photo-src {
+  margin-top: 8px !important; padding-top: 7px;
+  border-top: 1px solid var(--hair-faint);
+  font-size: 10.5px !important; color: var(--ink-4) !important; font-style: italic;
+}
+
+/* ═══ Notifications ═══════════════════════════════════════════════════════ */
+
+.toasts { position: fixed; z-index: 300; right: 20px; bottom: 20px; display: grid; gap: 8px; }
+.toast {
+  padding: 12px 16px; background: var(--raise);
+  border: 1px solid var(--hair-firm); border-left: 2px solid var(--sea);
+  border-radius: var(--edge); font-size: 12.5px; max-width: 340px;
+  animation: rise .22s;
+}
+.toast[data-tone="fault"] { border-left-color: var(--fault); }
+.toast[data-tone="ok"] { border-left-color: var(--ok); }
+@keyframes rise { from { transform: translateY(8px); opacity: 0; } }
+
+.modal {
+  width: min(760px, 92vw); max-height: 84vh; padding: 0;
+  background: var(--plate); color: var(--ink);
+  border: 1px solid var(--hair-firm); border-radius: var(--edge);
+}
+.modal::backdrop { background: rgba(3, 7, 9, .78); backdrop-filter: blur(4px); }
+.modal header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--hair); }
+.modal h2 { margin: 0; font: 400 17px var(--disp); }
+.modal > div { padding: 20px; overflow-y: auto; max-height: 68vh; }
+.modal dl { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 20px; margin: 0 0 18px; }
+.modal dt { font: 500 9.5px/1.3 var(--sans); letter-spacing: .15em; text-transform: uppercase; color: var(--ink-4); }
+.modal dd { margin: 4px 0 0; font: 13px var(--mono); }
+
+/* ═══ Adaptations ═════════════════════════════════════════════════════════ */
+
+@media (max-width: 1180px) {
+  .split, .split-hero { grid-template-columns: 1fr; }
+  .command { grid-template-columns: 1fr auto; row-gap: 12px; }
+  .transport { grid-column: 1 / -1; order: 3; flex-wrap: wrap; }
+  .stamp { display: none; }
+}
+
+@media (max-width: 760px) {
+  main { padding: 14px 13px 40px; }
+  .command { padding: 11px 13px; }
+  .views { padding: 0 13px; overflow-x: auto; }
+  .view-tab em { display: none; }
+  .gate { grid-template-columns: 1fr; }
+  /* Le panneau d'identité disparaît sur écran étroit, mais la marque reste :
+     elle est repliée en tête du formulaire plutôt que supprimée. */
+  .gate-plate {
+    display: block; padding: 26px 6vw 0; border-right: 0; border-bottom: 1px solid var(--hair);
+  }
+  .gate-plate::before, .gate-plate::after, .gate-mark, .gate-spec { display: none; }
+  .gate-org { padding-bottom: 20px; border-bottom: 0; }
+  .gate-org img { height: 42px; }
+  .ident-rule { display: none; }
+  .ident-org { height: 26px; }
+  .stage { height: clamp(320px, 62dvh, 560px); }
+
+  /* LE VERDICT NE DISPARAIT PLUS SOUS 760 px.
+     `.stage-tr` etait mis en `display: none` : la seule lecture de severite du
+     poste — la plus importante d'un HMI d'alarme — s'effacait sur tablette et
+     sur telephone, c'est-a-dire exactement sur les ecrans qu'un agent de ronde
+     emporte. Les deux cartouches sont desormais EMPILES en tete de scene, sur
+     une seule colonne, plutot que places en vis-a-vis. */
+  .stage-tl, .stage-tr {
+    position: static; min-width: 0; text-align: left;
+    border-left: 2px solid var(--ink-4); border-right: 1px solid var(--hair);
+  }
+  .stage-plates {
+    position: absolute; z-index: 4; top: 16px; left: 16px; right: 16px;
+    display: grid; gap: 8px;
+  }
+  #verdictPlate[data-sev="NORMAL"] { border-left-color: var(--ok); }
+  #verdictPlate[data-sev="INFO"] { border-left-color: var(--info); }
+  #verdictPlate[data-sev="WARNING"] { border-left-color: var(--warn); }
+  #verdictPlate[data-sev="CRITICAL"] { border-left-color: var(--fault); }
+
+  .stage-tools { right: 16px; bottom: 16px; }
+  .stage-foot { display: none; }
+  .drawer { width: 100%; }
+}
+
+/* Palier telephone. Il n'en existait aucun sous 760 px : sur un ecran de
+   360 px, le bandeau de commande et la barre d'onglets restaient dimensionnes
+   pour une tablette. */
+@media (max-width: 460px) {
+  main { padding: 12px 10px 32px; gap: 12px; }
+  .command { gap: 12px; padding: 10px 12px; }
+  .transport { gap: 8px; }
+  .transport .pick { flex: 1 1 auto; }
+  .who-body, .link-state span { display: none; }
+  .view-tab { padding: 12px 12px 11px; font-size: 12.5px; }
+  .readouts { grid-template-columns: repeat(auto-fit, minmax(126px, 1fr)); }
+  .kpi-row { grid-template-columns: 1fr; }
+  .drawer { padding: 16px; }
+  .drawer-facts { grid-template-columns: 1fr; }
+  .modal dl { grid-template-columns: 1fr; }
+}
+
+/* POINTAGE GROSSIER — doigt ganté sur pupitre tactile.
+   Les commandes mesuraient 28 a 35 px de haut : conformes au minimum AA de
+   24 px, en dessous des 44 px du critere AAA et de l'usage en salle de
+   controle. La regle ne s'applique QU'aux pointeurs grossiers : a la souris,
+   la densite d'origine — qui est ce qui rend le poste lisible d'un coup
+   d'oeil — est preservee intacte. */
+@media (pointer: coarse) {
+  .btn, .tool, .table-btn { min-height: 44px; padding-inline: 16px; }
+  .btn-ghost { min-width: 44px; justify-content: center; }
+  .view-tab { min-height: 48px; }
+  .pick select, .pick input { min-height: 44px; }
+  .seg button { min-height: 40px; padding-inline: 14px; }
+  .readout, .event { padding-block: 15px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+
+/* Note de la fenêtre d'analyse : dit ce que la table contient avant qu'on la lise. */
+.modal-note {
+  margin: -4px 0 10px; font-size: 11.5px; line-height: 1.6; color: var(--ink-4);
+}
+.modal td em { font-style: normal; color: var(--ink-4); font-size: 11px; }

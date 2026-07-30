@@ -1,0 +1,364 @@
+# =============================================================================
+
+governance_defaults:
+  source_file: "DATA.xlsx"
+  source_location: "Feuille Feuil1, en-têtes B1:M1, données lignes 2:10183"
+  source_sha256: "93487c581f4cd684e8783251e91f15274d8ca4e3a0ae1eb332370039a5520239"
+  sampling_frequency: "1 h nominale"
+  determination_basis: "ISA-5.1 + physique du procede + coherence stoechiometrique"
+  business_owner: "Responsable procede PS III"
+  quality_rules:
+    - "Conserver et tracer les codes qualité DCS."
+    - "Refuser les valeurs hors plage physique."
+    - "Détecter gel, saturation, absence et rupture temporelle."
+    - "Aucune imputation globale ou silencieuse."
+
+registry_change_history:
+  - date: "2026-07-25"
+    version: "1.0"
+    author_role: "Ingénieur données — stage PS III"
+    change: >
+      Création du registre gouverné à partir de DATA.xlsx. Le sens de chaque tag
+      est établi par recoupement d'au moins deux bases indépendantes parmi
+      ISA-5.1, physique du procédé, comportement des données, cohérence
+      stœchiométrique et climatologie; la base retenue et sa preuve sont
+      publiées tag par tag.
+  - date: "2026-07-28"
+    version: "1.1"
+    author_role: "Ingénieur données — stage PS III"
+    change: >
+      Ajout de l'entrée externe T_SEAWATER (climatologie de Safi) et alignement
+      des trois références du système sur une même période d'apprentissage.
+# REGISTRE DES TAGS DCS — REFROIDISSEUR D'ACIDE DE SECHAGE E7301
+# Atelier Sulfurique, Ligne PS III, Maroc Chimie (OCP)
+# Source signaux : DATA.xlsx (pas horaire, 2024-01-01 07:00 -> 2025-02-28 11:00)
+# =============================================================================
+#
+# ETABLISSEMENT DU SENS DES TAGS
+# Chaque tag porte un champ `basis` qui indique COMMENT son sens a ete etabli :
+#   isa_5_1     : nomenclature instrumentation ISA-5.1 (TI, FI, AI, PHI...)
+#   process     : physique du procede sulfurique et donnees constructeur
+#                 Chemetics (tour de sechage, titre 93-98 %, plages de
+#                 temperature de service)
+#   data        : comportement observe sur 10 180 heures — plages, correlations
+#                 en marche etablie, effondrement a l'arret, autocorrelation
+#   stoichio    : coherence stoechiometrique de la ligne (1 t de soufre donne
+#                 3,06 t de H2SO4)
+#
+# Une determination s'appuie sur PLUSIEURS de ces bases concordantes. Le champ
+# `evidence` en donne le detail. Toute correction se fait ICI, sans toucher au
+# code.
+#
+# AVERTISSEMENT METHODOLOGIQUE — CORRELATIONS
+# Toutes les correlations citees dans les champs `rationale` sont calculees
+# SUR LA MARCHE ETABLIE UNIQUEMENT (process_state == RUNNING).
+# Calculees sur l'ensemble des donnees, elles sont trompeuses : pendant les
+# arrets tous les signaux s'effondrent ensemble, ce qui cree des correlations
+# artificielles tres elevees. Exemple mesure sur ce jeu :
+#     TI1100 ~ TI1105 : r = +0.976 sur tout,  r = -0.083 en marche
+#     023    ~ TI1100 : r = +0.970 sur tout,  r = +0.574 en marche
+# Conclure a partir des premieres serait une faute d'analyse.
+# =============================================================================
+
+equipment:
+  id: S-PC-E7301
+  code: E7301
+  name: REFROIDISSEUR D'ACIDE DE SECHAGE
+  fabricant: CHEMETICS
+  size: 1118-9754
+  atelier: PS III
+  site: Maroc Chimie
+  materiau_tubes: 904L
+  fluide_calandre: acide sulfurique de sechage
+  fluide_tubes: eau de mer
+  date_fabrication: 2014-04-08
+  date_mise_en_production: 2015-11-01
+
+# -----------------------------------------------------------------------------
+# BOUCLE PRINCIPALE DU REFROIDISSEUR (perimetre de surveillance)
+# -----------------------------------------------------------------------------
+tags:
+
+  S_MC_SULF_TI1100_B:
+    alias: T_ACID_IN
+    role: primary
+    label: "Temperature acide entree refroidisseur"
+    unit: "degC"
+    kind: temperature
+    basis: [isa_5_1, process, data]
+    evidence: >
+      ISA TI = Temperature Indicator, boucle 1100 = circuit acide de sechage.
+      Mediane 94 degC, s'effondre a l'arret process (fev-2024 : 40 degC).
+      Variable LIBRE : ecart-type 2,0 degC en marche, contre 0,6 degC pour la
+      sortie. Correle a la charge soufre (r = +0.57 en marche) : c'est la
+      temperature imposee par le procede en amont du faisceau.
+    range_operating: [85.0, 100.0]
+    range_physical: [0.0, 130.0]
+    alarm_high: 100.0
+    alarm_high_high: 105.0
+    # Sous ce niveau, le circuit acide n'est plus a temperature de service :
+    # la ligne est a l'arret ou en cours de reprise. Ce seuil gouverne la
+    # classification d'etat de marche, decision la plus determinante du
+    # systeme. Il etait ecrit en dur dans `dcs_loader.classify_process_state`.
+    shutdown_below: 60.0
+    # 904L : la vitesse de corrosion en H2SO4 98% croit fortement > 110 degC.
+    # Ref AMDEC : FAISCEAU TUBULAIRE / Corrosion / C=105
+    criticality_link: FAISCEAU_CORROSION
+
+  S_MC_SULF_TI1105_B:
+    alias: T_ACID_OUT
+    role: primary
+    label: "Temperature acide sortie refroidisseur (variable regulee)"
+    unit: "degC"
+    kind: temperature
+    basis: [isa_5_1, process, data]
+    evidence: >
+      Boucle 1105, aval immediat de 1100. Distribution tres resserree
+      (P1=63.7, P99=66.6 degC) : signature d'une variable sous regulation
+      en boucle fermee. C'est LA variable de performance du refroidisseur.
+      Preuve de la regulation : en marche etablie, la correlation avec
+      l'entree acide est quasi nulle (r = -0.08). Une sortie non regulee
+      suivrait mecaniquement son entree. Le regulateur absorbe donc
+      integralement les variations amont — c'est pourquoi la degradation
+      du faisceau ne se lit PAS sur ce signal (voir e7301_features.py).
+    setpoint: 66.0
+    control_band: [63.0, 68.0]
+    range_operating: [63.0, 68.0]
+    range_physical: [0.0, 130.0]
+    alarm_high: 68.0
+    alarm_high_high: 72.0
+    criticality_link: FAISCEAU_BOUCHAGE
+
+  S_MC_SULF_FI1300_B:
+    alias: F_ACID
+    role: primary
+    label: "Debit acide de sechage"
+    unit: "m3/h"
+    kind: flow
+    basis: [isa_5_1, process, data]
+    evidence: >
+      ISA FI = Flow Indicator. Mediane 56.5, tombe a ~0 a l'arret.
+      Correlation +0.54 avec la charge soufre en marche etablie.
+      LIMITE CONNUE : autocorrelation a 1 h de seulement 0.37, contre 0.92
+      pour les temperatures. Le signal varie plus vite que le pas
+      d'echantillonnage horaire : il est sous-echantillonne. Le duty
+      calcule en herite d'un bruit qui ne peut pas etre reduit sans
+      descendre a un pas plus fin.
+    range_operating: [40.0, 80.0]
+    range_physical: [0.0, 120.0]
+    alarm_low: 35.0
+    alarm_low_low: 20.0
+    # Debit faible => vitesse de circulation faible => depot / encrassement
+    criticality_link: FAISCEAU_BOUCHAGE
+
+  S_MC_SULF_AI1100_B:
+    alias: C_ACID_1100
+    role: primary
+    label: "Titre acide sulfurique circuit 1100"
+    unit: "%"
+    kind: concentration
+    basis: [isa_5_1, process, data]
+    evidence: >
+      ISA AI = Analyzer Indicator. Mediane 98.71%, ecart-type 0.33 :
+      typique d'un titre H2SO4 regule. La dilution est le principal moteur
+      de corrosion du 904L (minimum de resistance vers 93-96%).
+    range_operating: [98.0, 99.3]
+    range_physical: [80.0, 100.0]
+    alarm_low: 98.0
+    alarm_low_low: 97.0
+    saturation_value: 99.995     # butee haute d'echelle observee -> analyseur sature
+    criticality_link: FAISCEAU_CORROSION
+
+  S_MC_SULF_AI1200_B:
+    alias: C_ACID_1200
+    role: primary
+    label: "Titre acide sulfurique circuit 1200"
+    unit: "%"
+    kind: concentration
+    basis: [isa_5_1, process, data]
+    evidence: >
+      Second analyseur de titre (boucle 1200).
+      CORRECTION D'UNE ERREUR D'ANALYSE INITIALE : ces deux analyseurs avaient
+      ete pris pour une redondance de mesure. Ils ne le sont PAS. En marche
+      etablie leur correlation n'est que de +0.35, et AI1200 est
+      systematiquement plus bas que AI1100 de +0.124 point (ecart-type 0.079).
+      Un biais constant et une correlation faible designent DEUX CIRCUITS
+      DISTINCTS, pas deux mesures du meme point.
+      Consequence pratique : AI1200 < AI1100 dans 94.9 % des cas, donc un
+      min() des deux revient a n'utiliser qu'AI1200. Le systeme suit desormais
+      les deux separement et surveille la STABILITE DE LEUR ECART, ce qui est
+      un test de derive d'analyseur bien plus sensible qu'un seuil absolu.
+    range_operating: [98.0, 99.3]
+    range_physical: [80.0, 100.0]
+    alarm_low: 98.0
+    alarm_low_low: 97.0
+    saturation_value: 99.996
+    # Surveillance de l'ecart inter-analyseurs : on ne compare pas a zero mais
+    # au biais normal appris sur la periode de reference.
+    cross_check_with: S_MC_SULF_AI1100_B
+    cross_check_expected_bias: -0.124   # AI1200 - AI1100, mesure en marche
+    cross_check_bias_sigma: 0.079
+    cross_check_k_sigma: 4.0            # alerte au-dela de 4 sigma de derive
+    criticality_link: FAISCEAU_CORROSION
+
+  S_MC_SULF_TI1300_B:
+    alias: T_CIRC_1300
+    role: secondary
+    label: "Temperature du circuit thermique 1300"
+    unit: "degC"
+    kind: temperature
+    basis: [isa_5_1, process, data]
+    evidence: >
+      Mediane 43 degC et correlation 0.82 avec la sortie acide en marche.
+      Le projet le qualifie comme signal de contexte thermique du circuit
+      1300, sans l'utiliser pour attribuer une causalite au refroidisseur.
+    range_operating: [35.0, 55.0]
+    range_physical: [0.0, 130.0]
+    alarm_high: 60.0
+
+  S_MC_SULF_023_B:
+    alias: LOAD_SULFUR
+    role: context
+    label: "Charge soufre / allure de marche de la ligne"
+    unit: "t/h"
+    kind: load
+    basis: [isa_5_1, process, data]
+    evidence: >
+      Prefixe SULF, mediane 18.6, plage 0-25.8, tombe a 0 lors des arrets.
+      En marche etablie : correlation +0.57 avec la temperature d'entree acide,
+      +0.54 avec le debit acide et +0.64 avec le duty thermique. C'est le
+      pilote de charge de l'unite.
+      Coherence stoechiometrique : 1 t de soufre donne 3.06 t de H2SO4
+      (98/32). A 18.6 t/h, cela represente environ 1370 t/j, ce qui correspond
+      a la capacite d'une ligne sulfurique PS III.
+      Utilise comme VARIABLE DE NORMALISATION : sans elle, toute derive de
+      performance est confondue avec une simple variation d'allure.
+    range_operating: [10.0, 22.0]
+    range_physical: [0.0, 30.0]
+    shutdown_below: 8.0
+    # Variation horaire de charge au-dela de laquelle l'allure change trop vite
+    # pour que les grandeurs de performance soient interpretables : l'instant
+    # est classe TRANSIENT. Seuil auparavant ecrit en dur dans l'ingestion.
+    transient_rate_per_h: 2.0
+
+  S_MC_SULF_FI3412_B:
+    alias: F_3412
+    role: context
+    label: "Debit circuit 3412 (absorption)"
+    unit: "m3/h"
+    kind: flow
+    basis: [isa_5_1, process, data]
+    evidence: >
+      Boucle 34xx = section absorption. Suit la charge (correlation 0.90).
+      Hors perimetre refroidisseur, conserve comme contexte de marche.
+    range_operating: [1500.0, 2400.0]
+    range_physical: [0.0, 3000.0]
+
+  S_MC_SULF_AI3301_B:
+    alias: A_3301
+    role: context
+    label: "Analyseur 3301 (section absorption)"
+    unit: "-"
+    kind: analyzer
+    basis: [isa_5_1, data]
+    rationale: "Boucle absorption, hors perimetre. Conserve pour contexte."
+    range_operating: [7.0, 8.6]
+    range_physical: [0.0, 14.0]
+
+  S_MC_SULF_AI3302_B:
+    alias: A_3302
+    role: context
+    label: "Analyseur 3302 (section absorption)"
+    unit: "-"
+    kind: analyzer
+    basis: [isa_5_1, data]
+    rationale: "Boucle absorption, hors perimetre. Conserve pour contexte."
+    range_operating: [5.5, 8.6]
+    range_physical: [0.0, 20.0]
+
+  S_MC_SULF_PHI5306X-3_B:
+    alias: PHI_5306
+    role: degraded
+    label: "Indicateur 5306X-3"
+    unit: "-"
+    kind: analyzer
+    basis: [isa_5_1, data]
+    business_owner: "Service Instrumentation PS III"
+    fault_established: "valeur figee puis codes qualite DCS Bad / I-O Timeout"
+    evidence: >
+      CAPTEUR DEFAILLANT AVERE. Fige a la valeur constante -14.407 du
+      2024-01-01 au 2024-03-20 (soit ~1900 h), puis 139 codes qualite
+      Bad / Configure / I/O Timeout. Redevient plausible (4-10) ensuite.
+      EXCLU des features du modele. Sert de cas de test de la detection
+      de defaillance capteur.
+    range_physical: [-20.0, 20.0]
+    known_frozen_value: -14.406989
+    known_bad_periods:
+      - ["2024-01-01", "2024-03-20", "valeur figee -14.407"]
+
+  S_MC_SULF_TI5303-4X_B:
+    alias: TI_5303
+    role: degraded
+    label: "Temperature 5303-4X"
+    unit: "degC"
+    kind: temperature
+    basis: [isa_5_1, data]
+    business_owner: "Service Instrumentation PS III"
+    fault_established: "butee d'echelle 327,67 = 32767/100, depassement d'entier 16 bits"
+    evidence: >
+      CAPTEUR DEFAILLANT AVERE. Sature a la butee d'echelle 327.67 depuis
+      aout 2024 et n'en redescend jamais (7 mois de donnees mortes).
+      327.67 = 32767/100 : depassement de capacite d'un entier signe 16 bits
+      cote acquisition. EXCLU des features. Cas de test de reference pour
+      le mode de defaillance "capteur bloque en butee".
+    range_physical: [0.0, 400.0]
+    saturation_value: 327.67
+    known_bad_periods:
+      - ["2024-08-01", "2025-02-28", "sature a 327.67"]
+
+# -----------------------------------------------------------------------------
+# ENTREE EXTERNE — TEMPERATURE D'EAU DE MER
+#
+# Le fluide froid n'est pas instrumente dans l'export DCS. Sa temperature est
+# etablie par la climatologie de Safi, cote atlantique marocaine, ou le courant
+# des Canaries et l'upwelling cotier maintiennent une eau fraiche a faible
+# amplitude annuelle. Cette entree est ce qui rend le coefficient d'echange
+# global calculable, et donc l'encrassement observable.
+#
+# Valeurs et justification : voir `src/features/thermal.py` et
+# `docs/decisions/ADR-002-temperature-eau-de-mer.md`.
+# -----------------------------------------------------------------------------
+external_inputs:
+  T_SEAWATER:
+    label: "Temperature d'eau de mer a la prise"
+    unit: "degC"
+    basis: [climatology]
+    source: "Climatologie mensuelle de Safi, cote atlantique marocaine"
+    range_operating: [17.0, 22.0]
+    evidence: >
+      Minimum 17,0 degC en fevrier-mars, maximum 22,0 degC en septembre,
+      moyenne annuelle 19,3 degC. La prise d'eau etant immergee, ces valeurs
+      de surface constituent une borne HAUTE de l'amplitude reelle : l'ecart
+      introduit va dans le sens de la prudence sur le diagnostic.
+
+# -----------------------------------------------------------------------------
+# CODES QUALITE DCS (valeurs non numeriques presentes dans DATA.xlsx)
+# -----------------------------------------------------------------------------
+quality_codes:
+  Bad:            { severity: HIGH,   meaning: "Signal invalide declare par le DCS" }
+  Configure:      { severity: MEDIUM, meaning: "Point en cours de (re)configuration" }
+  "I/O Timeout":  { severity: HIGH,   meaning: "Perte de communication carte E/S" }
+
+# -----------------------------------------------------------------------------
+# ETATS PROCESS — determines par la charge soufre et le debit acide
+# -----------------------------------------------------------------------------
+process_states:
+  STOPPED:
+    description: "Ligne a l'arret"
+    rule: "LOAD_SULFUR < 8 or F_ACID < 20"
+  TRANSIENT:
+    description: "Demarrage / arret / changement d'allure"
+    rule: "abs(d(LOAD_SULFUR)/dt) > 2 t/h/h or T_ACID_IN < 60"
+  RUNNING:
+    description: "Marche etablie — seul etat ou la surveillance de performance est valide"
+    rule: "LOAD_SULFUR >= 8 and F_ACID >= 20 and T_ACID_IN >= 60"

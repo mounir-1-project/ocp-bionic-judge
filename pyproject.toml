@@ -1,43 +1,83 @@
 [build-system]
 requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
-name = "ocp-bionic-judge"
-version = "1.0.0"
-description = "OCP Bionic Judge — Industrial AI anomaly detection for phosphate equipment"
+name = "e7301-surveillance"
+version = "3.0.0"
+description = "Surveillance comportementale non supervisee du refroidisseur d'acide de sechage E7301 — demonstrateur PS III"
 readme = "README.md"
 requires-python = ">=3.10"
-authors = [
-    {name = "Mounir Sanbouli", email = "mounir.sanbouli.43@edu.uiz.ac.ma"}
-]
 license = {text = "MIT"}
+authors = [{name = "Mounir Sanbouli", email = "mounir.sanbouli.43@edu.uiz.ac.ma"}]
+keywords = ["surveillance-comportementale", "amdec", "echangeur", "ocp", "detection-anomalies"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["src*", "api*", "data*", "dashboard*"]
-exclude = ["tests*", "venv*", "mlruns*"]
+include = ["src*", "api*"]
+exclude = ["tests*", "legacy*", "notebooks*", "docs*"]
 
 [tool.setuptools.package-data]
-"*" = ["*.env.example", "*.md"]
-
-# Run `pip install -e .` once — all `from src.X import Y` imports work without sys.path hacks.
+"src.domain" = ["*.yaml"]
+"api" = ["*.html", "static/*.js", "static/*.css", "static/*.md", "static/*.txt", "static/*.jpg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# --import-mode=importlib avoids the legacy "prepend" sys.path behaviour that can
-# import modules twice (a known source of "metaclass conflict" errors under pytest,
-# especially on Python 3.12). See https://docs.pytest.org/en/stable/explanation/goodpractices.html
-addopts = "-v --tb=short --import-mode=importlib"
-asyncio_mode = "auto"
+
+# LES FICHIERS TEMPORAIRES DES TESTS RESTENT DANS LE DEPOT.
+#
+# Par defaut, pytest cree ses repertoires temporaires sous le dossier Temp de
+# l'utilisateur — sur Windows `%LOCALAPPDATA%\Temp\pytest-of-<user>`. Sur un
+# poste d'entreprise, ce chemin est frequemment protege : antivirus, acces
+# controle aux dossiers, ou simplement des droits herites d'une execution
+# precedente. Windows renvoie alors `PermissionError [WinError 5]` au moment ou
+# pytest tente d'y lister le contenu, et TOUS les tests qui demandent un
+# `tmp_path` echouent au setup — cinq fichiers de tests sur seize, sans qu'une
+# seule ligne du projet soit en cause.
+#
+# Un livrable dont la suite de tests ne s'execute pas sur la machine de
+# destination n'est pas livrable. On fixe donc le repertoire de base dans le
+# depot : il est ecrit la ou le projet a forcement le droit d'ecrire, et le
+# comportement devient identique sur toutes les machines.
+addopts = "-q --tb=short --import-mode=importlib --basetemp=.pytest-tmp"
+filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py310"
-select = ["E", "F", "I", "UP", "S", "B"]
-ignore = ["S101", "S603", "S607"]  # allow assert in tests, subprocess calls
+exclude = ["legacy", ".venv", "notebooks"]
 
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = [
+    "E501",    # longueur de ligne geree par le formateur
+    "RUF001",  # caracteres unicode ambigus : les libelles sont en francais
+    "RUF002",
+    "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+# Les scripts lances directement doivent inserer la racine du depot dans
+# sys.path AVANT d'importer le paquet : l'ordre est intentionnel.
+"scripts/*" = ["E402"]
+
+# TYPAGE — CONFIGURATION EFFECTIVE, MAIS NON BLOQUANTE, ET C'EST DIT ICI.
+#
+# Cette section existait sans que mypy soit installe nulle part : absent des
+# dependances, absent du Makefile, absent de l'integration continue. Le seul
+# endroit du depot qui le mentionnait etait `make clean`, pour effacer un cache
+# que rien ne produisait. `src/config.py` enonce en tete qu'une configuration
+# qui ment sur ce qu'elle controle est pire qu'absente : la regle vaut aussi
+# pour l'outillage.
+#
+# mypy est donc desormais une dependance declaree et une cible `make types`
+# reellement executable. Elle n'est PAS branchee sur l'integration continue :
+# le volume d'ecarts sur les 10 800 lignes du depot n'a pas ete mesure, et
+# ajouter une barriere sans connaitre ce qu'elle bloque reviendrait a livrer
+# une etape qu'on n'a jamais fait tourner. Voir l'action M8 du plan final.
 [tool.mypy]
 python_version = "3.10"
 ignore_missing_imports = true
 warn_return_any = false
+exclude = ["legacy/", "notebooks/"]

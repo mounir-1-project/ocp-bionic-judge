@@ -1,0 +1,1 @@
+{"required": false, "authenticated": true, "operator": {"username": "Poste local", "email": "", "role": "local", "csrf_token": ""}}

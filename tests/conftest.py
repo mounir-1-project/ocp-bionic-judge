@@ -1,121 +1,113 @@
 """
-OCP Bionic Judge — pytest Fixtures
-Uses SQLite in-memory for all tests (no PostgreSQL required).
+Fixtures partagees pour la suite de tests E7301.
+
+La chaine complete est construite UNE fois par session : l'ingestion et
+l'entrainement prennent quelques secondes, les refaire a chaque test rendrait
+la suite inutilisable et decouragerait de la lancer.
+
+Author: Mounir Sanbouli — Stage OCP, Programme Bionic
 """
 
 from __future__ import annotations
 
-import sys
-from datetime import datetime, timedelta
-from pathlib import Path
+import os
 
 import numpy as np
 import pandas as pd
 import pytest
-from sqlalchemy import create_engine
 
-sys.path.insert(0, str(Path(__file__).parents[1]))
+# La suite teste séparément l'authentification et conserve le client API
+# général en mode local pour éviter de masquer les contrats métier.
+os.environ.setdefault("AUTH_ENABLED", "false")
 
-from src.db import init_schema, reset_engine
+from src.config import DCS_EXPORT
+from src.domain.knowledge import load_domain
+from src.ingest.dcs_loader import ingest
+
+DATA_PATH = DCS_EXPORT
 
 
 @pytest.fixture(scope="session")
-def tmp_db_path(tmp_path_factory):
-    """Create a temp SQLite DB populated with test data.
+def domain():
+    """Connaissance domaine chargee depuis les YAML."""
+    return load_domain()
 
-    Yields:
-        SQLAlchemy engine connected to the temp DB.
+
+@pytest.fixture(scope="session")
+def ingestion(domain):
+    """Resultat d'ingestion des donnees DCS reelles."""
+    if not DATA_PATH.exists():
+        pytest.skip(f"Donnees DCS absentes: {DATA_PATH}")
+    return ingest(DATA_PATH, domain)
+
+
+@pytest.fixture(scope="session")
+def features(ingestion, domain):
+    """Table de features et jumeau thermique ajuste."""
+    from src.features.e7301_features import build_features
+
+    feats, twin = build_features(ingestion.readings, ingestion.quality, domain)
+    return feats, twin
+
+
+@pytest.fixture(scope="session")
+def pipeline():
+    """Chaine complete, sans LLM (deterministe et hors ligne)."""
+    if not DATA_PATH.exists():
+        pytest.skip(f"Donnees DCS absentes: {DATA_PATH}")
+    from src.pipeline import E7301Pipeline
+
+    return E7301Pipeline(data_path=DATA_PATH, use_llm=False)
+
+
+@pytest.fixture(scope="session")
+def sensitivity_report(pipeline):
+    """Analyse de sensibilite, calculee UNE fois pour toute la session.
+
+    Ce rapport reconstruit les features pour quatre periodes de reference : il
+    coute a lui seul plusieurs dizaines de secondes. Deux fichiers de tests en
+    ont besoin — celui qui verifie son contenu et celui qui verifie sa
+    typographie. Le recalculer deux fois doublait la duree de la suite, et une
+    suite lente finit par ne plus etre lancee.
     """
-    db_file = tmp_path_factory.mktemp("data") / "test.db"
-    engine = create_engine(f"sqlite:///{db_file}", connect_args={"check_same_thread": False})
-    init_schema(engine)
+    from src.governance.sensitivity import full_report
 
-    rng = np.random.default_rng(42)
-    now = datetime.now()
+    return full_report(pipeline)
 
-    # Machines
-    with engine.begin() as conn:
-        from sqlalchemy import text
-        conn.execute(text("""
-            INSERT OR IGNORE INTO machines (id, name, type, location, installed)
-            VALUES ('BROYEUR_01','Broyeur','broyeur','Khouribga','2020-01-01'),
-                   ('POMPE_02','Pompe','pompe','Benguerir','2020-01-01')
-        """))
 
-        # Sensor readings
-        for machine_id in ["BROYEUR_01", "POMPE_02"]:
-            for i in range(500):
-                ts = (now - timedelta(seconds=30 * i)).isoformat()
-                conn.execute(text("""
-                    INSERT INTO sensor_readings
-                    (machine_id, timestamp, temperature, vibration, pression, courant, rpm, shift)
-                    VALUES (:mid, :ts, :tmp, :vib, :pre, :cur, :rpm, 'matin')
-                """), {"mid": machine_id, "ts": ts,
-                       "tmp": float(rng.normal(65, 5)), "vib": float(rng.normal(4, 0.5)),
-                       "pre": float(rng.normal(3, 0.3)), "cur": float(rng.normal(35, 3)),
-                       "rpm": float(rng.normal(1450, 30))})
+@pytest.fixture(scope="session")
+def fouling_bench_report(pipeline):
+    """Banc d'injection, calcule UNE fois pour toute la session."""
+    from src.governance.fouling_injection import FoulingInjectionBench
 
-        # Anomalies
-        for i in range(30):
-            ts = (now - timedelta(seconds=300 * i)).isoformat()
-            conn.execute(text("""
-                INSERT INTO anomalies (machine_id, timestamp, anomaly_type, sensor_affected, severity)
-                VALUES ('BROYEUR_01', :ts, 'spike', 'temperature', 'WARNING')
-            """), {"ts": ts})
-
-        # ML decisions
-        for i in range(200):
-            ts    = (now - timedelta(seconds=30 * i)).isoformat()
-            score = float(rng.uniform(0, 1))
-            sev   = "CRITICAL" if score > 0.7 else ("WARNING" if score > 0.3 else "NORMAL")
-            conn.execute(text("""
-                INSERT INTO ml_decisions
-                (machine_id, timestamp, anomaly_score, is_anomaly, severity, model_version, inference_ms, features_json)
-                VALUES ('BROYEUR_01', :ts, :sc, :ia, :sev, 'IsolationForest', 0.5, '{}')
-            """), {"ts": ts, "sc": score, "ia": int(score > 0.5), "sev": sev})
-
-        # Judge evaluations
-        for i in range(50):
-            ts    = (now - timedelta(hours=i)).isoformat()
-            score = float(rng.uniform(5, 10))
-            conn.execute(text("""
-                INSERT INTO judge_evaluations
-                (machine_id, timestamp, global_score, relevance_score, history_score,
-                 confidence_score, compliance_score, feasibility_score, agreement, feedback, flagged_issues)
-                VALUES ('BROYEUR_01', :ts, :gs, :gs, :gs, :gs, :gs, :gs, :agr, 'Test', '[]')
-            """), {"ts": ts, "gs": score, "agr": int(score >= 6)})
-
-    yield engine
-    engine.dispose()
+    return FoulingInjectionBench(pipeline).run(
+        severities=(0.10, 0.30), durations_days=(60,)
+    )
 
 
 @pytest.fixture
-def sample_sensor_df() -> pd.DataFrame:
-    """Return a small DataFrame mimicking sensor_readings."""
-    rng = np.random.default_rng(99)
-    n   = 100
-    now = datetime.now()
-    return pd.DataFrame({
-        "machine_id":  ["BROYEUR_01"] * 50 + ["POMPE_02"] * 50,
-        "timestamp":   [(now - timedelta(seconds=30 * i)).isoformat() for i in range(n)],
-        "temperature": rng.normal(65, 5, n).round(2),
-        "vibration":   rng.normal(4, 0.5, n).round(3),
-        "pression":    rng.normal(3, 0.3, n).round(3),
-        "courant":     rng.normal(35, 3, n).round(2),
-        "rpm":         rng.normal(1450, 30, n).round(1),
-        "shift":       ["matin"] * n,
-    })
+def synthetic_readings(domain):
+    """Petit jeu synthetique controle, pour tester des cas limites.
 
+    Utilise uniquement la ou une donnee reelle ne permet pas d'isoler un
+    comportement precis (arret, gel de signal, chute de titre).
+    """
+    idx = pd.date_range("2024-06-01", periods=400, freq="h")
+    rng = np.random.default_rng(7)
+    df = pd.DataFrame(index=idx)
+    df.index.name = "timestamp"
+    df["LOAD_SULFUR"] = 18.5 + rng.normal(0, 0.2, len(idx))
+    df["F_ACID"] = 56.0 + rng.normal(0, 1.0, len(idx))
+    df["T_ACID_IN"] = 94.0 + rng.normal(0, 0.5, len(idx))
+    df["T_ACID_OUT"] = 66.0 + rng.normal(0, 0.3, len(idx))
+    df["C_ACID_1100"] = 98.70 + rng.normal(0, 0.03, len(idx))
+    df["C_ACID_1200"] = 98.57 + rng.normal(0, 0.03, len(idx))
+    df["T_CIRC_1300"] = 43.0 + rng.normal(0, 0.5, len(idx))
+    df["F_3412"] = 2000.0 + rng.normal(0, 20, len(idx))
+    df["A_3301"] = 7.9 + rng.normal(0, 0.05, len(idx))
+    df["A_3302"] = 7.4 + rng.normal(0, 0.05, len(idx))
 
-@pytest.fixture
-def anomaly_decision():
-    """Return a sample Detection Agent decision dict."""
-    return {
-        "machine_id": "BROYEUR_01",
-        "timestamp":  datetime.now().isoformat(),
-        "anomaly_score": 0.85, "severity": "CRITICAL",
-        "diagnosis": "Surchauffe moteur + vibrations élevées",
-        "recommended_action": "Arrêt préventif sous 2h",
-        "confidence": 0.88, "reasoning": "Température 87°C > seuil critique 80°C",
-        "shap_top_features": [{"feature": "temperature", "shap_value": 0.42}],
-    }
+    from src.ingest.dcs_loader import classify_process_state
+
+    df["process_state"] = classify_process_state(df, domain)
+    return df

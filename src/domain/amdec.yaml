@@ -1,0 +1,532 @@
+# =============================================================================
+# BASE DE CONNAISSANCE AMDEC — REFROIDISSEUR E7301
+# Transcription fidele de : "4-AMDEC - REFROIDISSEUR DE SECHAGE PSIII.xlsx"
+# analyse du 23/09/2019, realisee par OUBID, atelier PS III.
+#
+# Criticite C = F (frequence) x G (gravite) x N (non-detection)
+# Les baremes G / F / N sont ceux des onglets GRV / OCC / DET du fichier source.
+#
+# Ce fichier sépare la transcription OCP des règles dérivées de l'application :
+#  - le detecteur y rattache chaque anomalie a un mode de defaillance
+#  - le Judge y verifie que l'action recommandee correspond bien a l'action
+#    corrective prevue par l'AMDEC et au plan de maintenance preventive
+# =============================================================================
+
+bareme_gravite:      # onglet GRV
+  10: "Dangereux sans alarme — securite / non-respect reglementaire, SANS avertissement"
+  9:  "Dangereux avec alarme — securite / non-respect reglementaire, AVEC avertissement"
+  8:  "Tres eleve — arret > 8 h ou produit non conforme > 4 h"
+  7:  "Eleve — arret 4 a 8 h ou produit non conforme 2 a 4 h"
+  6:  "Modere — arret 1 a 4 h ou produit non conforme 1 a 2 h"
+  5:  "Faible — arret 30 min a 1 h"
+  4:  "Tres faible — arret 10 a 30 min, pas de produit non conforme"
+  3:  "Mineur — arret jusqu'a 10 min"
+  2:  "Tres mineur — parametres hors specification, ajustement en marche"
+  1:  "Sans effet — ajustement en maintenance normale"
+
+bareme_frequence:    # onglet OCC — MTBF en heures
+  10: { desc: "Defaillance chaque heure",   mtbf_h: 1 }
+  9:  { desc: "Defaillance chaque poste",   mtbf_h: 8 }
+  8:  { desc: "Defaillance chaque jour",    mtbf_h: 24 }
+  7:  { desc: "Defaillance chaque semaine", mtbf_h: 80 }
+  6:  { desc: "Defaillance chaque mois",    mtbf_h: 350 }
+  5:  { desc: "Defaillance tous les 3 mois", mtbf_h: 1000 }
+  4:  { desc: "Defaillance tous les 6 mois", mtbf_h: 2500 }
+  3:  { desc: "Defaillance chaque annee",   mtbf_h: 5000 }
+  2:  { desc: "Defaillance tous les 2 ans", mtbf_h: 10000 }
+  1:  { desc: "Defaillance tous les 5 ans", mtbf_h: 25000 }
+
+bareme_detection:    # onglet DET
+  1:  "Tres eleve — la surveillance detecte quasi certainement"
+  3:  "Eleve — surveillance ou controle visuel previennent la defaillance critique"
+  5:  "Modere — necessite un outillage specifique, la surveillance ne detecte pas"
+  7:  "Faible — necessite un demontage, la surveillance ne detecte pas"
+  10: "Tres faible — aucune detection possible"
+
+# -----------------------------------------------------------------------------
+# MODES DE DEFAILLANCE
+# `signature` = comment le mode se manifeste dans les donnees DCS.
+# C'est ce qui relie l'AMDEC papier a la detection temps reel.
+# -----------------------------------------------------------------------------
+modes:
+
+  FAISCEAU_BOUCHAGE:
+    provenance:
+      category: derived_rule
+      source_file: "4-AMDEC - REFROIDISSEUR DE SECHAGE PSIII.xlsx"
+      source_location: "Feuille AMDEC FOUR A SOUFRE, lignes 9-11"
+      original_values: { element: "FAISEAU TUBULAIRE", mode: "Fuite / Bouchage", F: 3, G: 7, N: 5, C: 105 }
+      transformations: ["Séparation du libellé source combiné Fuite / Bouchage pour le rattachement des règles."]
+      validation_status: derived_documented
+      validation_owner: "Ingénieur fiabilité OCP"
+    sous_equipement: FOUR
+    element: FAISCEAU TUBULAIRE
+    fonction: "Assurer l'echange thermique entre l'acide et l'eau de mer"
+    mode: "Bouchage / encrassement"
+    causes: ["Depot de sulfates", "Debris dans les tubes", "Tubes tamponnes cumules"]
+    effet: "Perte de capacité d'échange -> réduction de cadence puis arrêt de la ligne"
+    detection_actuelle: "Visuel (inspection interne, revision)"
+    F: 3
+    G: 7
+    N: 5
+    C: 105
+    action_corrective: "Mesure des épaisseurs (courant de Foucault) — nettoyage haute pression des tubes"
+    plan_maintenance_ref: ["B", "H"]
+    signature:
+      description: >
+        La temperature de sortie acide etant REGULEE, l'encrassement ne se voit
+        pas directement sur TI1105 : la vanne d'eau de mer s'ouvre davantage et
+        maintient la consigne. Il se lit sur le COEFFICIENT D'ECHANGE GLOBAL UA,
+        calcule par la methode efficacite-NTU a partir de la climatologie d'eau
+        de mer de Safi. Une baisse persistante de UA a debit, temperature et eau
+        de mer donnes est la signature du depot. La perte de controle sur TI1105
+        n'arrive qu'ensuite, quand la boucle froide a consomme toute sa marge :
+        c'est la manifestation terminale, pas le signal precoce.
+      indicators:
+        - ua_residual_trend_14d    # derive du coefficient d'echange global
+        - fouling_resistance       # Rf = 1/UA - 1/UA_attendu, en K/kW
+        - control_deviation_high   # TI1105 hors bande : stade terminal
+      horizon: "Degradation lente — semaines a mois"
+      # Deficit de coefficient d'echange, en ecarts-types de la reference, au-dela
+      # duquel la constatation passe d'INFO a WARNING.
+      #
+      # Une version precedente faisait dependre ce passage d'une corroboration
+      # par l'effort de regulation, avec un seuil que cet indicateur n'atteint
+      # jamais sur le corpus : la severite WARNING etait inatteignable. La
+      # gradation porte desormais sur la grandeur diagnostique elle-meme.
+      #
+      # 3,0 sigma correspond, sur les references ajustees, a une perte de l'ordre
+      # de 10 % du coefficient d'echange — le seuil a partir duquel le banc
+      # d'injection montre que la detection reste exploitable. A reviser avec le
+      # service fiabilite des qu'un evenement d'encrassement sera date.
+      warning_sigma: 3.0
+
+  FAISCEAU_FUITE:
+    provenance:
+      category: derived_rule
+      source_file: "4-AMDEC - REFROIDISSEUR DE SECHAGE PSIII.xlsx"
+      source_location: "Feuille AMDEC FOUR A SOUFRE, lignes 9-11"
+      original_values: { element: "FAISEAU TUBULAIRE", mode: "Fuite / Bouchage", F: 3, G: 7, N: 5, C: 105 }
+      transformations: ["Séparation du libellé source combiné Fuite / Bouchage pour le rattachement des règles."]
+      validation_status: derived_documented
+      validation_owner: "Ingénieur fiabilité OCP"
+    sous_equipement: FOUR
+    element: FAISCEAU TUBULAIRE
+    fonction: "Assurer l'echange thermique entre l'acide et l'eau de mer"
+    mode: "Fuite"
+    causes: ["Usure", "Corrosion", "Perte d'epaisseur"]
+    effet: "Arrêt de la ligne — mélange acide / eau de mer"
+    detection_actuelle: "Visuel"
+    F: 3
+    G: 7
+    N: 5
+    C: 105
+    action_corrective: "Mesure des épaisseurs (courant de Foucault) — tamponnage des tubes percés"
+    plan_maintenance_ref: ["B", "H"]
+    signature:
+      description: >
+        Une fuite tube envoie de l'eau de mer dans l'acide : le titre chute
+        brutalement et durablement. C'est LE signal le plus critique du systeme.
+        Une chute de titre non expliquee par une action operateur doit etre
+        traitee comme une suspicion de fuite jusqu'a preuve du contraire.
+      indicators:
+        - concentration_drop_sustained
+        - concentration_cross_check_divergence
+      horizon: "Evenement rapide — heures"
+      severite_immediate: CRITICAL
+
+  FAISCEAU_CORROSION:
+    provenance:
+      category: derived_rule
+      source_file: "4-AMDEC - REFROIDISSEUR DE SECHAGE PSIII.xlsx"
+      source_location: "Feuille AMDEC FOUR A SOUFRE, lignes 9-11"
+      original_values: { element: "FAISEAU TUBULAIRE", mode: "Fuite / Bouchage", cause: "Corrosion", F: 3, G: 7, N: 5, C: 105 }
+      transformations: ["La cause source Corrosion est utilisée comme règle de risque distincte; ce n'est pas une ligne AMDEC OCP autonome."]
+      validation_status: hypothesis
+      validation_owner: "Ingénieur fiabilité OCP"
+    sous_equipement: FOUR
+    element: FAISCEAU TUBULAIRE
+    fonction: "Assurer l'echange thermique entre l'acide et l'eau de mer"
+    mode: "Corrosion / perte d'épaisseur"
+    causes: ["Acide dilue", "Temperature excessive", "Protection anodique defaillante"]
+    effet: "Amincissement des tubes -> fuite -> arrêt de la ligne"
+    detection_actuelle: "Mesure d'epaisseur"
+    F: 3
+    G: 7
+    N: 5
+    C: 105
+    action_corrective: "Mesure des épaisseurs (courant de Foucault)"
+    plan_maintenance_ref: ["A", "B"]
+    signature:
+      description: >
+        Conditions FAVORISANT la corrosion du 904L, et non la corrosion
+        elle-meme (non mesurable en ligne) : titre acide sous specification
+        et/ou temperature acide excessive. Le systeme compte le TEMPS D'EXPOSITION
+        cumule a ces conditions — c'est un indicateur de duree de vie, pas une alarme.
+      indicators:
+        - concentration_below_spec
+        - temperature_in_excessive
+        - cumulative_corrosion_exposure_h
+      horizon: "Degradation tres lente — mois a annees"
+      # La signature ci-dessus le dit elle-meme : ce qui est surveille, ce sont
+      # les CONDITIONS qui favorisent la corrosion, pas la corrosion.
+      # L'amincissement des tubes ne se mesure que par courant de Foucault, a
+      # l'arret. Faute d'avoir declare ce champ, le mode heritait de
+      # `bool(indicators) = true` et etait compte comme pleinement couvert :
+      # 105 points de criticite ajoutes a tort a la couverture publiee.
+      #
+      # `partial` est le degre exact : le systeme voit ce qui use le faisceau,
+      # jamais son usure.
+      observable: partial
+
+  PLAQUE_SACRIFICIELLE_DYSFONCTION:
+    provenance:
+      category: ocp_source
+      source_file: "4-AMDEC - REFROIDISSEUR DE SECHAGE PSIII.xlsx"
+      source_location: "Feuille AMDEC FOUR A SOUFRE, ligne 18"
+      original_values: { element: "PLAQUE SACRIFICIELLE", mode: "Dysfonctionnement", F: 2, G: 8, N: 7, C: 112 }
+      transformations: ["Normalisation orthographique du code uniquement; cotations inchangées."]
+      validation_status: source_transcribed
+      validation_owner: "OCP - analyse OUBID du 23/09/2019"
+    sous_equipement: FOUR
+    element: PLAQUE SACRIFICIELLE
+    fonction: "Anode sacrificielle protegeant le metal de base"
+    mode: "Dysfonctionnement"
+    causes: ["Corrosion et perte d'epaisseur de l'anode"]
+    effet: "Perte de protection cathodique -> corrosion accélérée du faisceau"
+    detection_actuelle: "Visuel"
+    F: 2
+    G: 8
+    N: 7
+    C: 112                      # criticite la plus elevee de l'AMDEC
+    action_corrective: "Changement systématique"
+    plan_maintenance_ref: ["D", "E"]
+    signature:
+      description: >
+        NON OBSERVABLE dans les donnees DCS disponibles (pas de mesure de
+        potentiel / courant de protection anodique dans DATA.xlsx).
+        Le systeme ne PEUT PAS detecter ce mode : il le signale comme angle
+        mort et s'appuie sur l'echeancier preventif (controle 6 mois,
+        changement 3 ans). Le Judge doit sanctionner tout diagnostic qui
+        pretendrait detecter ce mode a partir des seuls signaux disponibles.
+      indicators: []
+      observable: false
+
+  PORTE_VISITE_FUITE:
+    provenance:
+      category: ocp_source
+      source_file: "4-AMDEC - REFROIDISSEUR DE SECHAGE PSIII.xlsx"
+      source_location: "Feuille AMDEC FOUR A SOUFRE, lignes 12-14"
+      original_values: { element: "PORTE DE VISITE", mode: "Fuite", F: 3, G: 6, N: 5, C: 90 }
+      transformations: ["Normalisation orthographique; cotations inchangées."]
+      validation_status: source_transcribed
+      validation_owner: "OCP - analyse OUBID du 23/09/2019"
+    sous_equipement: FOUR
+    element: PORTE DE VISITE
+    fonction: "Acces pour inspection"
+    mode: "Fuite"
+    causes: ["Usure", "Corrosion", "Perte d'epaisseur", "Joint degrade"]
+    effet: "Arrêt de la ligne"
+    detection_actuelle: "Visuel"
+    F: 3
+    G: 6
+    N: 5
+    C: 90
+    action_corrective: "Changement joint à chaque révision"
+    plan_maintenance_ref: ["C"]
+    signature:
+      description: "Non observable en ligne — inspection externe mensuelle (tache C)."
+      indicators: []
+      observable: false
+
+  CALANDRE_FUITE:
+    provenance:
+      category: ocp_source
+      source_file: "4-AMDEC - REFROIDISSEUR DE SECHAGE PSIII.xlsx"
+      source_location: "Feuille AMDEC FOUR A SOUFRE, lignes 15-17"
+      original_values: { element: "CALENDRE", mode: "Fuite", F: 3, G: 6, N: 5, C: 90 }
+      transformations: ["Correction orthographique CALENDRE vers CALANDRE; cotations inchangées."]
+      validation_status: source_transcribed
+      validation_owner: "OCP - analyse OUBID du 23/09/2019"
+    sous_equipement: FOUR
+    element: CALANDRE
+    fonction: "Circulation de l'acide sulfurique"
+    mode: "Fuite"
+    causes: ["Usure", "Corrosion", "Perte d'epaisseur"]
+    effet: "Arrêt de la machine"
+    detection_actuelle: "Visuel"
+    F: 3
+    G: 6
+    N: 5
+    C: 90
+    action_corrective: "Changement joint à chaque révision — inspection visuelle — mesure des épaisseurs"
+    plan_maintenance_ref: ["A", "C"]
+    signature:
+      description: >
+        Une fuite calandre significative se traduit par une perte de debit
+        acide non expliquee par la charge.
+      indicators: [flow_loss_unexplained]
+      observable: partial
+
+  VANNE_ACIDE_BOUCHAGE:
+    provenance:
+      category: ocp_source
+      source_file: "4-AMDEC - REFROIDISSEUR DE SECHAGE PSIII.xlsx"
+      source_location: "Feuille AMDEC FOUR A SOUFRE, ligne 19"
+      original_values: { element: "VANNE D'ACIDE", mode: "Bouchage", F: 3, G: 6, N: 5, C: 90 }
+      transformations: ["Normalisation du code; cotations inchangées."]
+      validation_status: source_transcribed
+      validation_owner: "OCP - analyse OUBID du 23/09/2019"
+    sous_equipement: FOUR
+    element: VANNE D'ACIDE
+    fonction: "Isolement et vidange d'acide dans la calandre"
+    mode: "Bouchage"
+    causes: ["Depot"]
+    effet: "Réduction de la cadence"
+    detection_actuelle: "Alarme"
+    F: 3
+    G: 6
+    N: 5
+    C: 90
+    action_corrective: "Changement systématique"
+    plan_maintenance_ref: ["F"]
+    signature: { description: "Non observable dans DATA.xlsx", indicators: [], observable: false }
+
+  VANNE_ACIDE_FUITE:
+    provenance:
+      category: ocp_source
+      source_file: "4-AMDEC - REFROIDISSEUR DE SECHAGE PSIII.xlsx"
+      source_location: "Feuille AMDEC FOUR A SOUFRE, ligne 20"
+      original_values: { element: "VANNE D'ACIDE", mode: "Fuite", F: 2, G: 8, N: 7, C: 112 }
+      transformations: ["Normalisation du code; cotations inchangées."]
+      validation_status: source_transcribed
+      validation_owner: "OCP - analyse OUBID du 23/09/2019"
+    sous_equipement: FOUR
+    element: VANNE D'ACIDE
+    fonction: "Isolement et vidange d'acide dans la calandre"
+    mode: "Fuite"
+    causes: ["Usure", "Fatigue"]
+    effet: "Arrêt de la ligne"
+    detection_actuelle: "Visuel"
+    F: 2
+    G: 8
+    N: 7
+    C: 112
+    action_corrective: "Changement systématique"
+    plan_maintenance_ref: ["F"]
+    signature: { description: "Non observable dans DATA.xlsx", indicators: [], observable: false }
+
+  VANNE_EM_BOUCHAGE:
+    provenance:
+      category: ocp_source
+      source_file: "4-AMDEC - REFROIDISSEUR DE SECHAGE PSIII.xlsx"
+      source_location: "Feuille AMDEC FOUR A SOUFRE, ligne 22"
+      original_values: { element: "VANNE D'E/M", mode: "Bouchage", F: 2, G: 3, N: 7, C: 42 }
+      transformations: ["Développement E/M en eau de mer dans le libellé; cotations inchangées."]
+      validation_status: source_transcribed
+      validation_owner: "OCP - analyse OUBID du 23/09/2019"
+    sous_equipement: FOUR
+    element: VANNE D'EAU DE MER
+    fonction: "Isolement et vidange de l'eau de mer"
+    mode: "Bouchage / coincement"
+    causes: ["Coincement"]
+    effet: "Réduction de la cadence"
+    detection_actuelle: "Alarme"
+    F: 2
+    G: 3
+    N: 7
+    C: 42
+    action_corrective: "Changement systématique"
+    plan_maintenance_ref: ["G"]
+    signature: { description: "Non observable dans DATA.xlsx", indicators: [], observable: false }
+
+  VANNE_ACIDE_DYSFONCTION:
+    provenance:
+      category: ocp_source
+      source_file: "4-AMDEC - REFROIDISSEUR DE SECHAGE PSIII.xlsx"
+      source_location: "Feuille AMDEC FOUR A SOUFRE, ligne 21"
+      original_values: { element: "VANNE D'ACIDE", mode: "Dysfonctionnement", F: 2, G: 3, N: 7, C: 42 }
+      transformations: ["Normalisation du code; cotations inchangées."]
+      validation_status: source_transcribed
+      validation_owner: "OCP - analyse OUBID du 23/09/2019"
+    sous_equipement: FOUR
+    element: VANNE D'ACIDE
+    fonction: "Isolement et vidange d'acide dans la calandre"
+    mode: "Dysfonctionnement"
+    causes: ["Usure et fatigue"]
+    effet: "Réduction de la cadence"
+    detection_actuelle: "Alarme"
+    F: 2
+    G: 3
+    N: 7
+    C: 42
+    action_corrective: "Contrôle de son état à chaque révision"
+    plan_maintenance_ref: ["F"]
+    signature: { description: "Non observable dans DATA.xlsx", indicators: [], observable: false }
+
+  VANNE_EM_FUITE:
+    provenance:
+      category: ocp_source
+      source_file: "4-AMDEC - REFROIDISSEUR DE SECHAGE PSIII.xlsx"
+      source_location: "Feuille AMDEC FOUR A SOUFRE, ligne 23"
+      original_values: { element: "VANNE D'E/M", mode: "Fuite", F: 2, G: 3, N: 7, C: 42 }
+      transformations: ["Développement E/M en eau de mer dans le libellé; cotations inchangées."]
+      validation_status: source_transcribed
+      validation_owner: "OCP - analyse OUBID du 23/09/2019"
+    sous_equipement: FOUR
+    element: VANNE D'EAU DE MER
+    fonction: "Isolement et vidange de l'eau de mer"
+    mode: "Fuite"
+    causes: ["Usure et fatigue"]
+    effet: "Arrêt de la ligne"
+    detection_actuelle: "Visuel"
+    F: 2
+    G: 3
+    N: 7
+    C: 42
+    action_corrective: "Changement systématique"
+    plan_maintenance_ref: ["G"]
+    signature: { description: "Non observable dans DATA.xlsx", indicators: [], observable: false }
+
+  VANNE_EM_DYSFONCTION:
+    provenance:
+      category: ocp_source
+      source_file: "4-AMDEC - REFROIDISSEUR DE SECHAGE PSIII.xlsx"
+      source_location: "Feuille AMDEC FOUR A SOUFRE, ligne 24"
+      original_values: { element: "VANNE D'E/M", mode: "Dysfonctionnement", F: 3, G: 1, N: 3, C: 9 }
+      transformations: ["Développement E/M en eau de mer dans le libellé; cotations inchangées."]
+      validation_status: source_transcribed
+      validation_owner: "OCP - analyse OUBID du 23/09/2019"
+    sous_equipement: FOUR
+    element: VANNE D'EAU DE MER
+    fonction: "Isolement et vidange de l'eau de mer"
+    mode: "Dysfonctionnement"
+    causes: ["Perte d'etancheite"]
+    effet: ""
+    detection_actuelle: "Visuel"
+    F: 3
+    G: 1
+    N: 3
+    C: 9
+    action_corrective: "Contrôle de son état à chaque révision"
+    plan_maintenance_ref: ["G"]
+    signature: { description: "Non observable dans DATA.xlsx", indicators: [], observable: false }
+
+# -----------------------------------------------------------------------------
+# MODES AJOUTES — INSTRUMENTATION
+# Absents de l'AMDEC mecanique de 2019, mais AVERES dans DATA.xlsx et
+# indispensables : un diagnostic base sur un capteur mort est pire qu'aucun
+# diagnostic. Cotation proposee selon les memes baremes, a valider par OCP.
+# -----------------------------------------------------------------------------
+  CAPTEUR_DEFAILLANT:
+    provenance:
+      category: application_rule
+      source_file: "DATA.xlsx"
+      source_location: "Profil qualité calculé; aucune ligne correspondante dans l'AMDEC OCP"
+      original_values: { F: null, G: null, N: null, C: null }
+      transformations: ["Cotation F6/G6/N3/C108 proposée par l'application, non validée par OCP."]
+      validation_status: hypothesis
+      validation_owner: "Instrumentation et ingénieur fiabilité OCP"
+    sous_equipement: INSTRUMENTATION
+    element: "Chaîne de mesure (capteur / transmetteur / carte E/S)"
+    fonction: "Fournir une mesure valide au systeme de conduite et de surveillance"
+    mode: "Signal figé, saturé en butée, ou code qualité Bad / I/O Timeout"
+    causes: ["Transmetteur HS", "Perte de communication E/S", "Depassement de capacite 16 bits", "Point en reconfiguration"]
+    effet: "Conduite et surveillance aveugles — risque de non-détection d'une défaillance réelle"
+    detection_actuelle: "Codes qualite DCS + analyse de variance du signal"
+    F: 6
+    G: 6
+    N: 3
+    C: 108
+    action_corrective: "Demande d'intervention instrumentation — vérification boucle de mesure"
+    plan_maintenance_ref: []
+    proposed_by: "Analyse de DATA.xlsx (a valider par OCP)"
+    signature:
+      description: >
+        Avere dans les donnees : TI5303-4X sature a 327.67 depuis aout 2024
+        (7 mois), PHI5306X-3 fige a -14.407 sur ~1900 h puis 139 codes qualite.
+      indicators: [quality_code_bad, signal_frozen, signal_saturated, out_of_physical_range]
+      observable: true
+      severite_immediate: WARNING
+
+# -----------------------------------------------------------------------------
+# PLAN DE MAINTENANCE PREVENTIVE
+# Source : "5-Plan de Maintenance Preventive REFROIDISSEUR DE SECHAGE PSIII.xlsx"
+# -----------------------------------------------------------------------------
+plan_maintenance:
+  A: { tache: "Mesure des épaisseurs de la calandre",              type: INSP, etat: "Arrêt process", periodicite: "4 ans" }
+  B: { tache: "Mesure des épaisseurs des tubes par courant de Foucault", type: INSP, etat: "Arrêt process", periodicite: "2 ans" }
+  C: { tache: "Inspection externe du refroidisseur",               type: INSP, etat: "En marche",     periodicite: "1 mois" }
+  D: { tache: "Contrôle anode sacrificielle",                      type: INSP, etat: "Arrêt process", periodicite: "6 mois" }
+  E: { tache: "Changement anode sacrificielle",                    type: SYS,  etat: "Arrêt process", periodicite: "3 ans", pdr: "Anode sacrificielle" }
+  F: { tache: "Changement de la vanne d'acide de vidange",         type: SYS,  etat: "Arrêt process", periodicite: "4 ans", pdr: "Vanne DN 3'' classe 150" }
+  G: { tache: "Changement des vannes de vidange eau de mer",       type: SYS,  etat: "Arrêt process", periodicite: "6 ans", pdr: "Vanne DN 3'' classe 150 (x2)" }
+  H: { tache: "Changement refroidisseur ou tubes tamponnes >= 30%", type: SYS, etat: "Arrêt process", periodicite: "8 ans", pdr: "Refroidisseur de rechange" }
+
+# -----------------------------------------------------------------------------
+# GAMMES D'INTERVENTION (source : fichiers 7 et 8)
+# Le Judge s'en sert pour verifier la FAISABILITE d'une action recommandee :
+# une action exigeant un arret process ne peut pas etre prescrite "immediatement"
+# sur une ligne en marche sans mention de la consignation.
+# -----------------------------------------------------------------------------
+gammes:
+  PS3-ABS-REFR:
+    intitule: "Demontage et remontage des PV / couvercles du refroidisseur d'acide PS III"
+    duree_min: 295
+    etat_requis: "Arrêt process + consignation"
+    epi: ["Casque", "Lunettes", "Chaussures", "Gants", "Tenue anti-acide complete + ecran"]
+    prerequis:
+      - "Consigner le moteur de la pompe d'absorption"
+      - "Isoler et consigner les circuits acide et eau de mer"
+      - "Vidanger les boites d'eau de mer"
+      - "Vidanger la calandre d'acide (pression interieure ramenee a 0 bar)"
+      - "Cadenas par intervenant"
+      - "Autorisation de travail"
+      - "Debranchement du courant sur les anodes (film-garde)"
+    outillage: ["Palan 2 T avec chariot", "Elingue", "Cles pipes et mixtes 36", "Marteau", "Burin"]
+    pdr: ["Joints", "Tiges M22x200"]
+  TAMPONNAGE:
+    intitule: "Tamponnage mecanique des tubes du refroidisseur d'acide"
+    etat_requis: "Arrêt process + consignation"
+    note: "Seuil de reforme : 30% de tubes tamponnes declenche la tache H"
+
+# -----------------------------------------------------------------------------
+# CHECK-LISTS D'INSPECTION (source : fichier 6)
+# Rattachees aux recommandations pour que le technicien ait un support existant.
+# -----------------------------------------------------------------------------
+checklists:
+  INSPECTION_EXTERNE:
+    periodicite: "1 mois"
+    etat: "En marche"
+    points:
+      - "Etat de la peinture du refroidisseur"
+      - "Massif et tiges d'ancrage"
+      - "Fuite d'eau de mer ou d'acide sur calandre"
+      - "Motopompe de vidange disponible"
+      - "Etancheite des vannes d'isolement"
+      - "Fonctionnement du film-garde (protection anodique)"
+      - "Conduites entree/sortie acide et eau de mer (fuite)"
+      - "Compensateur (si applicable)"
+      - "Couverture des caniveaux, caillebotis plastique"
+      - "Boulonnerie serree et complete"
+      - "Systeme de manutention des PV disponible"
+      - "Etat des caillebotis et garde-corps"
+      - "Etat de l'eclairage"
+      - "Etat de proprete autour du refroidisseur"
+  INSPECTION_INTERNE:
+    periodicite: "Revision"
+    etat: "Arrêt process"
+    points:
+      - "Plan de joint des PV boite a eau"
+      - "Ouvrir couvercle mesure pH — mentionner l'etat"
+      - "Tubes tamponnes non notes"
+      - "Debris a l'interieur des tubes"
+      - "Tubes necessitant un nettoyage haute pression"
+      - "Etat de la plaque tubulaire"
+      - "Etat interne boite a eau"
+      - "Soudure tubes / plaque tubulaire"
+      - "Ressuage des soudures tubes/plaque (si necessaire)"
+      - "Etat des tiges de fixation des plaques sacrificielles"
+      - "Etat des plaques sacrificielles (zinc / acier au carbone)"
+      - "Piqures sur la partie externe des tubes"
+      - "Formation de sulfates sur les tubes"

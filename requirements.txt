@@ -1,64 +1,53 @@
-# Database
-sqlalchemy==2.0.30
-psycopg2-binary==2.9.9
-alembic==1.13.1
-
-# Core ML
-numpy==1.26.4
-pandas==2.2.2
-# scikit-learn 1.7.x: (1) hdbscan depends on scikit-learn>=1.6, (2) scikit-learn 1.4.x
-# triggers a "metaclass conflict" on Python 3.12, and (3) we cap below 1.8 because
-# newer releases require numpy>=2 while this project pins numpy 1.26.4 — mixing them
-# breaks sklearn's base classes (the same metaclass error). 1.7.x works with numpy 1.26.
-scikit-learn>=1.6,<1.8
-scipy>=1.13,<2
+# ── Coeur : donnees et modelisation ──────────────────────────────────────────
+numpy>=1.26,<3
+pandas>=2.2
+scikit-learn>=1.4
+scipy>=1.11
 joblib>=1.4
+openpyxl>=3.1          # lecture des exports .xlsx
+xlrd>=2.0              # lecture des fiches .xls fournies par OCP
+PyYAML>=6.0            # referentiel domaine (tags.yaml, amdec.yaml)
 
-# Explainability
-shap>=0.46
+# ── API et dashboard ─────────────────────────────────────────────────────────
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.7
+httpx>=0.27
 
-# Clustering / Anomaly Detection
-hdbscan>=0.8.40
+# ── Journalisation et configuration ──────────────────────────────────────────
+loguru>=0.7
+python-dotenv>=1.0
 
-# MLflow
-mlflow>=2.14.3
+# ── Tests ────────────────────────────────────────────────────────────────────
+pytest>=8.0
+pytest-cov>=5.0
 
-# Protobuf — pin required: mlflow>=2.14.3 + langchain-google-genai both need proto5
-protobuf>=5.29.6,<6.0
+# ── Analyse (notebooks) ──────────────────────────────────────────────────────
+matplotlib>=3.8
+jupyter>=1.0
+pypdf>=5.0             # extraction textuelle des gammes PDF lors de l'audit
 
-# LangChain + Google Gemini (gratuit via Google AI Studio)
-langchain==0.3.3
-langchain-google-genai>=2.0.0,<3.0.0
-langchain-community==0.3.2
+# ── Optionnel : redaction par modele de langage ──────────────────────────────
+# Le systeme fonctionne integralement sans ces paquets ni cle API. Les installer
+# et renseigner GEMINI_API_KEY dans .env active la couche de redaction.
+# langchain-core>=0.3
+# langchain-google-genai>=2.0
 
-# API
-fastapi==0.111.0
-uvicorn[standard]==0.30.1
-httpx==0.27.0
-PyJWT>=2.8.0
-slowapi==0.1.9
-python-multipart==0.0.9
+# ── Optionnel : explicabilite SHAP ───────────────────────────────────────────
+# L'attribution par occlusion exacte est utilisee par defaut : exacte,
+# deterministe et sans dependance lourde. SHAP est utilise s'il est present.
+# shap>=0.46
 
-# Dashboard Streamlit (deprecie — remplace par le frontend React/Vite)
-# streamlit==1.36.0
-# plotly==5.22.0
-# streamlit-autorefresh==1.0.1
+# ── Qualite de code (developpement) ──────────────────────────────────────────
+ruff>=0.6
+bandit>=1.7
+# mypy : cible `make types`, informative. La configuration existait dans
+# pyproject.toml sans que l'outil soit installe nulle part.
+mypy>=1.11
 
-# Data Validation — pydantic>=2.7.4 required by langchain 0.3.3
-pydantic>=2.7.4
-pydantic-settings>=2.3.4
-
-# Environment
-python-dotenv==1.0.1
-
-# Logging
-loguru==0.7.2
-
-# Testing
-pytest==8.2.2
-pytest-asyncio==0.23.7
-pytest-cov==5.0.0
-
-# Utilities
-tqdm==4.66.4
-aiofiles==23.2.1
+# ── Scripts auxiliaires ──────────────────────────────────────────────────────
+# Non necessaires au poste ni aux tests, mais importes par deux scripts du
+# depot. Un fichier de dependances qui ne couvre pas son propre depot laisse un
+# ModuleNotFoundError a qui installe le projet et lance l'un d'eux.
+Pillow>=10.0          # scripts/make_contact_sheets.py — planches de contact
+python-docx>=1.1      # scripts/update_report_docx.py — export du rapport
