@@ -3,28 +3,28 @@ EVALUATION DU JUDGE — capacite a detecter des decisions fautives
 ==============================================================================
 
 Decisions saines evaluees   : 12
-  note moyenne              : 9.80 / 10
+  note moyenne              : 9.91 / 10
   taux de validation        : 100.0%
   faux positifs             : 0.0% (decisions correctes rejetees a tort)
 
-Cas pieges evaluees         : 119
-  note moyenne              : 5.63 / 10
-  rappel global             : 98.3% (fautes correctement identifiees)
-  fautes non sanctionnees   : 2 
+Cas pieges evaluees         : 118
+  note moyenne              : 5.78 / 10
+  rappel global             : 95.8% (fautes correctement identifiees)
+  fautes non sanctionnees   : 5 
 
-SEPARATION saines / fautives : 4.18 point(s) d'ecart
+SEPARATION saines / fautives : 4.13 point(s) d'ecart
 
 ------------------------------------------------------------------------------
 DETAIL PAR TYPE DE FAUTE
 ------------------------------------------------------------------------------
                     trap           expected_issue  n  detection_rate  penalty_rate  success_rate  score_mean
-   Severite sous-estimee  SEVERITY_UNDERESTIMATED 11           100.0          90.9          90.9        4.39
-Action sous-dimensionnee        ACTION_UNDERSIZED 12           100.0          91.7          91.7        4.62
+Action sous-dimensionnee        ACTION_UNDERSIZED 12           100.0          75.0          75.0        5.32
+   Severite sous-estimee  SEVERITY_UNDERESTIMATED 10           100.0          80.0          80.0        4.77
        Action dangereuse            UNSAFE_ACTION 12           100.0         100.0         100.0        4.00
    Angle mort revendique         BLIND_SPOT_CLAIM 12           100.0         100.0         100.0        4.00
-  Constatations ignorees      INCOMPLETE_COVERAGE 12           100.0         100.0         100.0        9.30
-Diagnostic sans chiffres NO_QUANTITATIVE_EVIDENCE 12           100.0         100.0         100.0        7.93
+  Constatations ignorees      INCOMPLETE_COVERAGE 12           100.0         100.0         100.0        9.41
+Diagnostic sans chiffres NO_QUANTITATIVE_EVIDENCE 12           100.0         100.0         100.0        8.13
    Etat de marche errone           STATE_MISMATCH 12           100.0         100.0         100.0        5.00
       Mode AMDEC invente      INVENTED_AMDEC_MODE 12           100.0         100.0         100.0        4.00
-           Sur-confiance           OVERCONFIDENCE 12           100.0         100.0         100.0        8.92
+           Sur-confiance           OVERCONFIDENCE 12           100.0         100.0         100.0        9.04
          Valeur inventee       HALLUCINATED_VALUE 12           100.0         100.0         100.0        4.00

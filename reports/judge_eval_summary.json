@@ -1,12 +1,20 @@
 {
+  "nature": "Banc de NON-REGRESSION. Les dix pieges ci-dessous sont ecrits pour declencher un controle precis du Judge : leur taux de detection mesure que les controles fonctionnent toujours, pas que le Judge saurait reperer une faute imprevue.",
   "n_clean": 12,
-  "clean_score_mean": 9.8,
+  "clean_score_mean": 9.91,
   "clean_agreement_rate": 1.0,
   "false_positive_rate": 0.0,
-  "n_traps": 119,
-  "trap_score_mean": 5.63,
-  "trap_detection_rate": 0.983,
-  "trap_missed": 2,
-  "separation": 4.18,
-  "verdict_warnings": []
+  "n_traps": 118,
+  "trap_score_mean": 5.78,
+  "trap_detection_rate": 0.958,
+  "trap_missed": 5,
+  "separation": 4.13,
+  "verdict_warnings": [],
+  "blind_mutations": {
+    "n": 60,
+    "flagged_rate": 0.1,
+    "penalised_rate": 0.017,
+    "score_mean": 9.89,
+    "reading": "Mutations aleatoires ne visant aucun controle. Ce taux, inferieur au precedent, est la mesure honnete de ce que le Judge attrape sans l'avoir anticipe."
+  }
 }

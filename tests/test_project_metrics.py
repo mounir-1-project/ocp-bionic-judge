@@ -31,6 +31,24 @@ def test_project_metrics_restent_coherentes_avec_les_artefacts():
     assert metrics["model"]["artifact_failed_gates"]
     assert metrics["api"]["route_count"] == len(api_routes)
     assert set(metrics["api"]["routes"]) == api_routes
+    # CE CONTROLE EXIGE UN AMORÇAGE, ET C'EST INHERENT.
+    #
+    # Il interdit de publier des metriques issues d'un run rouge — c'est son
+    # objet. Mais `project_metrics.json` est produit a partir du `junit.xml`
+    # d'une execution qui contient CE test : s'il echoue une fois, il
+    # s'auto-entretient. Run rouge -> metriques a `failures: 1` -> test rouge.
+    #
+    # La sortie de boucle, a executer une seule fois apres tout changement qui
+    # rend la suite rouge :
+    #
+    #   pytest tests/ -q --junitxml=reports/junit.xml \
+    #          --deselect tests/test_project_metrics.py::test_project_metrics_restent_coherentes_avec_les_artefacts
+    #   python scripts/generate_project_metrics.py
+    #   pytest tests/ -q --junitxml=reports/junit.xml     # vert, 267 cas
+    #   python scripts/generate_project_metrics.py        # instantane definitif
+    #
+    # Affaiblir l'assertion pour eviter la boucle reviendrait a autoriser la
+    # publication de metriques rouges : le remede serait pire que la gene.
     assert metrics["tests"]["failures"] == metrics["tests"]["errors"] == 0
     assert metrics["coverage"]["percent"] >= 85.0
     assert metrics["industrial_validation"]["production_go"] is False

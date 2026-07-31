@@ -394,11 +394,12 @@ Détail par type de faute :
 
 | Mesure | Décisions saines | Cas piégés |
 |---|---|---|
-| Nombre | 12 | 119 |
-| Note moyenne | 9,80 / 10 | 5,63 / 10 |
-| Taux de détection | — | **98,3 %** |
+| Nombre | 12 | 118 |
+| Note moyenne | 9,91 / 10 | 5,78 / 10 |
+| Taux de détection | — | **100 %** |
+| Détection ET sanction suffisante | — | **95,8 %** |
 | Faux positifs | **0 %** | — |
-| Séparation | **4,18 points** | |
+| Séparation | **4,13 points** | |
 
 | Faute injectée | Détection | Note moyenne |
 |---|---|---|
@@ -406,14 +407,14 @@ Détail par type de faute :
 | Mode AMDEC inexistant | 100 % | 4,00 |
 | Angle mort revendiqué | 100 % | 4,00 |
 | Action dangereuse | 100 % | 4,00 |
-| Sévérité sous-estimée | 100 % | 4,39 |
-| Action sous-dimensionnée | 100 % | 4,62 |
+| Sévérité sous-estimée | 100 % | 4,77 |
 | État de marche erroné | 100 % | 5,00 |
-| Diagnostic sans chiffres | 100 % | 7,93 |
-| Sur-confiance | 100 % | 8,92 |
-| Constatations ignorées | 100 % | 9,30 |
+| Action sous-dimensionnée | 100 % | 5,32 |
+| Diagnostic sans chiffres | 100 % | 8,13 |
+| Sur-confiance | 100 % | 9,04 |
+| Constatations ignorées | 100 % | 9,41 |
 
-**Le banc n'a pas seulement mesuré le Judge, il l'a corrigé.** La première exécution donnait 65 % de détection et a révélé trois défauts : des codes d'anomalie écrasés quand un contrôle en relevait plusieurs, une tolérance de confiance trop laxiste (0,99 annoncé sur 0,80 justifiable passait), et un état de marche erroné détecté mais insuffisamment pénalisé. Le banc élargi reconnaît les dix catégories de faute dans 100 % des cas ; deux cas sur 119 restent insuffisamment sanctionnés, d'où un succès global de 98,3 %.
+**Le banc n'a pas seulement mesuré le Judge, il l'a corrigé.** La première exécution donnait 65 % de détection et a révélé trois défauts : des codes d'anomalie écrasés quand un contrôle en relevait plusieurs, une tolérance de confiance trop laxiste (0,99 annoncé sur 0,80 justifiable passait), et un état de marche erroné détecté mais insuffisamment pénalisé. Le banc élargi reconnaît les dix catégories de faute dans **100 % des cas**. Cinq cas sur 118 restent détectés mais insuffisamment sanctionnés — trois « action sous-dimensionnée », deux « sévérité sous-estimée » — d'où 95,8 % lorsqu'on exige détection ET sanction. La détection ne faiblit pas ; c'est la fermeté de la sanction qui varie sur deux familles de fautes, et le distinguer vaut mieux qu'un taux unique.
 
 Le Judge a par ailleurs corrigé l'agent : il signalait `MISSING_CAVEAT` lorsque le modèle statistique était inapplicable sans que le diagnostic en fasse mention. L'agent énonce désormais cette réserve.
 

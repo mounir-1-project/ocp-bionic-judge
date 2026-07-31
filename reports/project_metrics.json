@@ -51,9 +51,9 @@
   },
   "application_version": "3.0.0",
   "coverage": {
-    "covered_lines": 3053,
-    "percent": 87.4,
-    "statements": 3493,
+    "covered_lines": 3609,
+    "percent": 87.15,
+    "statements": 4141,
     "status": "measured"
   },
   "data": {
@@ -68,7 +68,7 @@
     "source": "data/raw/DATA.xlsx",
     "usable_timestamps": 10180
   },
-  "generated_at_utc": "2026-07-31T01:07:55.602605+00:00",
+  "generated_at_utc": "2026-07-31T02:04:28.076531+00:00",
   "industrial_validation": {
     "production_go": false,
     "software_tests_prove_industrial_validity": false
@@ -103,11 +103,11 @@
   },
   "schema_version": "1.0",
   "tests": {
-    "duration_s": 31.213,
+    "duration_s": 138.343,
     "errors": 0,
     "failures": 0,
-    "skipped": 0,
+    "skipped": 1,
     "status": "measured",
-    "tests": 153
+    "tests": 267
   }
 }

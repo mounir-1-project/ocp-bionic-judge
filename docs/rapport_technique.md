@@ -23,14 +23,14 @@ indépendant du texte produit par l'agent, pas de la donnée ni du détecteur.
 
 Résultats mesurés :
 
-- **56 épisodes comportementaux candidats** identifiés sur 14 mois par l'artefact livré ; ils restent des hypothèses à qualifier, pas des pannes confirmées ;
+- **58 épisodes comportementaux candidats** identifiés sur 14 mois par l'artefact livré ; ils restent des hypothèses à qualifier, pas des pannes confirmées ;
 - **référence thermique semi-empirique** reconstruisant 96,8 % de la variance du proxy de duty sur sa période d'ajustement (R² = 0,968), sans constituer une validation physique externe ;
 - **deux défaillances d'instrumentation majeures** caractérisées, jusqu'alors non tracées : un capteur saturé en butée d'échelle pendant sept mois, et un capteur figé pendant environ 1 900 heures ;
 - **aucun encrassement du faisceau** sur la période — la signature dominante est un **sur-refroidissement** installé pendant 28 % du temps de marche, avec une régulation hors bande jusqu'à 99 % du temps en octobre 2024 ;
-- **Judge éprouvé sur 119 cas piégés** : 98 % des fautes injectées détectées et sanctionnées, 0 % de faux positifs, écart de 4,18 points entre décisions saines et décisions fautives. Le mot **« validé » a été retiré de cette ligne** : chaque piège du catalogue porte exactement le code d'anomalie que le Judge sait produire, si bien que ce taux mesure une **non-régression** des contrôles implémentés, jamais leur capacité face à une faute imprévue. `src/governance/judge_eval.py` le dit dans son en-tête — le présenter comme une validation serait une sur-vente. La mesure de généralisation est distincte, plus basse, et porte sur des mutations non ciblées ;
+- **Judge éprouvé sur 118 cas piégés** : **100 % des fautes injectées détectées**, 95,8 % détectées ET suffisamment sanctionnées, 0 % de faux positifs, écart de 4,13 points entre décisions saines et décisions fautives. Le mot **« validé » a été retiré de cette ligne** : chaque piège du catalogue porte exactement le code d'anomalie que le Judge sait produire, si bien que ce taux mesure une **non-régression** des contrôles implémentés, jamais leur capacité face à une faute imprévue. `src/governance/judge_eval.py` le dit dans son en-tête — le présenter comme une validation serait une sur-vente. La mesure de généralisation est distincte, plus basse, et porte sur des mutations non ciblées ;
 - **aucun chiffrage économique** : la couche qui en produisait a été retirée du périmètre, et deux tests interdisent son retour (§ 10.5). Les indicateurs publiés portent chacun leur niveau de preuve et ne se convertissent pas en dirhams.
 
-Le cœur de détection fonctionne intégralement hors ligne et sans service externe obligatoire. L'authentification locale est désactivée par défaut et ne devient utilisable qu'avec une empreinte PBKDF2 et une liste d'e-mails autorisés explicitement configurées ; elle n'est pas une authentification industrielle de production. Le relais SMTP reste une intégration externe de déploiement. La campagne finale couvre **254 tests automatisés** côté Python et **84 vérifications** des bancs du poste, avec **87 %** de couverture de lignes.
+Le cœur de détection fonctionne intégralement hors ligne et sans service externe obligatoire. L'authentification locale est désactivée par défaut et ne devient utilisable qu'avec une empreinte PBKDF2 et une liste d'e-mails autorisés explicitement configurées ; elle n'est pas une authentification industrielle de production. Le relais SMTP reste une intégration externe de déploiement. La campagne finale couvre **267 cas de test** côté Python — 262 fonctions, dont cinq paramétrées — et **84 vérifications** des bancs du poste, avec **87,15 %** de couverture de lignes.
 
 Deux erreurs d'analyse commises en cours de projet ont été détectées et corrigées : une causalité apparente entre une panne de capteur et un changement de régime, invalidée par une analyse à granularité plus fine ; et une hypothèse de redondance entre deux analyseurs de titre, invalidée par leur corrélation réelle. Elles sont documentées dans le corps du rapport, parce qu'un projet dont on ne peut pas retracer les corrections n'est pas vérifiable.
 
@@ -372,7 +372,7 @@ Le modèle statistique capte ce qu'aucune règle univariée ne peut voir : les *
 | Features | 11 features contractuelles ordonnées |
 | Période d'apprentissage | 02/01/2024 → 14/07/2024 (3 393 observations) |
 | Contamination supposée | 2 % |
-| Seuil de décision du runtime non promu | 0,9642 |
+| Seuil de décision du runtime non promu | 0,9643 |
 | Graine aléatoire | 42 (reproductibilité) |
 
 ## 6.3 Explicabilité par occlusion exacte
@@ -387,9 +387,9 @@ Cette méthode a été retenue plutôt que SHAP pour trois raisons : elle est **
 
 Le runtime reconstruit localement signale **511 heures atypiques** sur les heures scorables. **Ce chiffre brut est inexploitable en salle de contrôle** : un opérateur ne traite pas 511 points d'alarme. Ce runtime est explicitement `runtime_trained_unpromoted` et ne peut pas être présenté comme un modèle approuvé.
 
-Les heures atypiques sont agrégées en **épisodes** — regroupement des heures consécutives avec tolérance de 6 heures d'interruption, et rejet des épisodes de moins de 3 heures. L'artefact final produit **56 épisodes candidats** sur 14 mois. Ces valeurs sont recalculées avec le modèle livré et ne constituent pas 56 défaillances confirmées.
+Les heures atypiques sont agrégées en **épisodes** — regroupement des heures consécutives avec tolérance de 6 heures d'interruption, et rejet des épisodes de moins de 3 heures. L'artefact final produit **58 épisodes candidats** sur 14 mois. Ces valeurs sont recalculées avec le modèle livré et ne constituent pas 58 défaillances confirmées.
 
-C'est cette agrégation qui rend le signal plus opérable : 511 points sont ramenés à 56 épisodes candidats, soit un facteur d'environ 9.1. Le pic de chaque épisode reste analysable en détail.
+C'est cette agrégation qui rend le signal plus opérable : 530 points sont ramenés à 58 épisodes candidats, soit un facteur d'environ 9,1. Le pic de chaque épisode reste analysable en détail.
 
 > Tous les nombres de cette section proviennent de `reports/project_metrics.json` et du manifeste du modèle. Un test — `test_le_rapport_technique_cite_les_artefacts` — échoue si l'un d'eux s'en écarte.
 
@@ -471,18 +471,26 @@ Dix types de faute ont été catalogués, correspondant chacun à une erreur pla
 
 | Métrique | Valeur |
 |---|---|
-| Note moyenne | 9,80 / 10 |
+| Note moyenne | 9,91 / 10 |
 | Taux de validation | 100 % |
 | **Faux positifs** | **0 %** |
 
-**Cas piégés — 119 cas**
+**Cas piégés — 118 cas**
 
 | Métrique | Valeur |
 |---|---|
-| Note moyenne | 5,63 / 10 |
-| **Succès détection + sanction** | **98,3 %** |
-| Cas insuffisamment sanctionnés | 2 |
-| **Séparation saines / fautives** | **4,18 points** |
+| Note moyenne | 5,78 / 10 |
+| **Taux de détection** | **100 %**, sur les dix types de faute |
+| **Détection ET sanction suffisante** | **95,8 %** |
+| Cas détectés mais insuffisamment sanctionnés | 5 |
+| **Séparation saines / fautives** | **4,13 points** |
+
+Les cinq cas concernés se répartissent sur deux types seulement : « action
+sous-dimensionnée » (sanction dans 9 cas sur 12) et « sévérité sous-estimée »
+(8 sur 10). Le Judge les **repère tous** ; il ne les fait pas toujours payer
+assez cher au regard du critère `min_penalty`. Distinguer les deux mesures est
+plus honnête qu'un taux unique : ce n'est pas la détection qui faiblit, c'est
+la fermeté de la sanction sur deux familles de fautes.
 
 **Détail par type de faute**
 
@@ -778,7 +786,7 @@ Un générateur synthétique aurait été plus simple et sans valeur : il n'aura
 
 ## 12.2 Interfaces
 
-L'API FastAPI expose **42 routes `/api/`** couvrant la santé détaillée du système, la gouvernance, les séries temporelles, la santé des capteurs, les épisodes, l'analyse à la demande, le pilotage du rejeu, l'évaluation du Judge, les sessions technicien, les notifications, le cycle de vie des alarmes et les gammes de maintenance.
+L'API FastAPI expose **45 routes `/api/`** couvrant la santé détaillée du système, la gouvernance, les séries temporelles, la santé des capteurs, les épisodes, l'analyse à la demande, le pilotage du rejeu, l'évaluation du Judge, les sessions technicien, les notifications, le cycle de vie des alarmes et les gammes de maintenance.
 
 L'interface est servie par la même application, sans étape de compilation. Elle remplace le synoptique statique par une représentation WebGL **horizontale et conceptuelle** du E7301 : calandre, fonds, brides, plaques tubulaires, faisceau illustratif et selles. Aucune cote ni quantité de tubes n'est revendiquée sans les plans 711-104/105/106. Le modèle tourne lentement, peut être orienté à la souris et colore les zones concernées en ambre ou rouge selon la sévérité. Un clic ouvre l'événement correspondant ou la vue AMDEC filtrée ; un mode sans WebGL reste disponible.
 
@@ -790,9 +798,9 @@ Lorsque l'administrateur active explicitement le profil local de démonstration,
 
 | Élément | Valeur |
 |---|---|
-| Tests automatisés (Python) | 254 |
+| Tests automatisés (Python) | 267 cas, 262 fonctions |
 | Vérifications des bancs du poste (jsdom) | 84 — câblage, scène 3D, écran de démarrage |
-| Couverture de lignes | 87 % (seuil bloquant en intégration continue : 85 %) |
+| Couverture de lignes | 87,15 % (seuil bloquant en intégration continue : 85 %) |
 | Fonctionnement hors ligne | Intégral pour la détection et le Judge |
 | Graine aléatoire fixée | Oui (42) |
 | Dépendance à un service externe obligatoire | Aucune |

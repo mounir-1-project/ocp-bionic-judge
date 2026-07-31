@@ -1,5 +1,5 @@
 {
-  "created_at_utc": "2026-07-31T01:07:51.426048+00:00",
+  "created_at_utc": "2026-07-31T01:09:05.159534+00:00",
   "data": {
     "path": "data/raw/DATA.xlsx",
     "sha256": "93487c581f4cd684e8783251e91f15274d8ca4e3a0ae1eb332370039a5520239",
@@ -368,12 +368,12 @@
       }
     },
     "path": "models/e7301_detector.joblib",
-    "sha256": "8f4d690ee1712d27440dbc48dfec4831c37e8abcc86699467cc8cbc43ad4263e",
+    "sha256": "8112933163ba12dbeed97628294fb03768c50508872bd1f0f26074e7709aa55b",
     "size_bytes": 6477939
   },
   "model_identity": {
     "id": "e7301-behavioral-iforest",
-    "version": "2026-07-31T010751.426048+0000"
+    "version": "2026-07-31T010905.159534+0000"
   },
   "promotion": {
     "process": "manual_governed_promotion",
@@ -413,7 +413,7 @@
       "t_out_local_z",
       "t_in_local_z"
     ],
-    "trained_at_utc": "2026-07-31T01:07:51.426048+00:00"
+    "trained_at_utc": "2026-07-31T01:09:05.159534+00:00"
   },
   "validation": {
     "failed_mandatory_gates": [
