@@ -68,11 +68,27 @@ release-runtime:  ## Produit l'artefact DANS l'image d'execution (seul artefact 
 	           && pip install -q --no-cache-dir pytest \
 	           && python scripts/validate_release.py"
 
+# L'EN-TETE SE DELIMITE PAR SON PREFIXE, PAS PAR UNE LIGNE VIDE.
+#
+# Cette cible extrayait l'en-tete par `sed -n '1,/^$/p'` — « de la ligne 1
+# jusqu'a la premiere ligne vide ». Or `requirements-runtime.lock` n'en
+# contient AUCUNE : l'en-tete de quatorze lignes est suivi immediatement des
+# epinglages. Sed imprimait donc le FICHIER ENTIER, et le nouveau `pip freeze`
+# etait concatene a l'ancien contenu.
+#
+# Resultat mesure : 32 insertions, 0 suppression, et des epinglages
+# contradictoires dans le meme fichier — `loguru==0.7.2` et `loguru==0.7.3`,
+# `python-dotenv==1.0.1` et `1.2.2`. Le verrou cense garantir la
+# reproductibilite devenait irresolvable, et la commande sortait en code 0.
+#
+# `awk` s'arrete a la premiere ligne qui ne commence pas par `#` : la
+# delimitation ne depend plus d'une ligne vide qui n'existe pas.
 lock-runtime:  ## Regenere requirements-runtime.lock dans l'image d'execution
 	docker run --rm -v "$(CURDIR):/w" -w /w python:3.11-slim \
 	  bash -c "pip install -q --no-cache-dir -r requirements-runtime.txt \
 	           && pip freeze --exclude-editable > /tmp/f.txt \
-	           && cat requirements-runtime.lock | sed -n '1,/^\$$/p' > /tmp/h.txt \
+	           && awk '/^#/ {print; next} {exit}' requirements-runtime.lock > /tmp/h.txt \
+	           && test -s /tmp/h.txt \
 	           && cat /tmp/h.txt /tmp/f.txt > requirements-runtime.lock"
 	@echo "Verrou regenere. Relancer 'make release-runtime' pour aligner le manifeste."
 
