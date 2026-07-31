@@ -1,5 +1,5 @@
 {
-  "created_at_utc": "2026-07-28T15:18:05.020698+00:00",
+  "created_at_utc": "2026-07-31T01:07:51.426048+00:00",
   "data": {
     "path": "data/raw/DATA.xlsx",
     "sha256": "93487c581f4cd684e8783251e91f15274d8ca4e3a0ae1eb332370039a5520239",
@@ -29,20 +29,20 @@
           "t_out_local_z",
           "t_in_local_z"
         ],
-        "n_train": 3393,
+        "n_train": 3367,
         "period": [
           "2024-01-02 07:00:00",
-          "2024-07-14 19:00:00"
+          "2024-07-13 17:00:00"
         ],
-        "threshold": 0.9641781702155621
+        "threshold": 0.9642612800415576
       },
       "references": {
         "conductance": {
           "coef": [
-            1.0515495131786121,
-            0.29008315589497713,
-            0.8173694282081175,
-            -46.54211779264282
+            1.0515384585054666,
+            0.2900280950453808,
+            0.8172711512105373,
+            -46.53574325969156
           ],
           "feature_names": [
             "F_ACID^0.8",
@@ -51,25 +51,25 @@
             "const"
           ],
           "label": "Reference de coefficient d'echange global",
-          "n_train": 3502,
-          "r2": 0.9243,
-          "residual_std": 0.6262,
+          "n_train": 3505,
+          "r2": 0.9244,
+          "residual_std": 0.6259,
           "seawater_source": "Climatologie mensuelle de Safi, cote atlantique marocaine (17,0 degC en fevrier a 22,0 degC en septembre)",
           "target": "ua_kw_per_k",
           "train_period": [
             "2024-01-01 07:00:00",
-            "2024-07-13 14:00:00"
+            "2024-07-13 17:00:00"
           ],
-          "ua_reference": 17.763,
+          "ua_reference": 17.766,
           "unit": "kW/K"
         },
         "hierarchy": "L'encrassement se diagnostique sur le coefficient d'echange global. L'effort de regulation mesure la conduite, pas l'etat de la surface d'echange.",
         "inlet": {
           "coef": [
-            0.3959603188529988,
-            -0.21696651273614587,
-            0.016463694855440775,
-            80.74415779805246
+            0.3959603188530018,
+            -0.21696651273614218,
+            0.016463694855440636,
+            80.74415779805237
           ],
           "feature_names": [
             "LOAD_SULFUR",
@@ -81,7 +81,7 @@
           "learned_gain": null,
           "n_train": 3532,
           "naive_r2": null,
-          "r2": 0.4790872677911977,
+          "r2": 0.4790872677911976,
           "residual_std": 1.5320929083698698,
           "target": "T_ACID_IN",
           "train_period": [
@@ -92,12 +92,12 @@
         },
         "regulation_effort": {
           "coef": [
-            17.85913329170446,
-            -62.373649951742024,
-            -14.18760616152787,
-            25.282966642259193,
-            0.8621519369624906,
-            -1425.2526509800423
+            17.85706630344868,
+            -62.36338617980952,
+            -14.176755747904139,
+            25.280697640629164,
+            0.8620264357160821,
+            -1425.9164351102168
           ],
           "feature_names": [
             "LOAD_SULFUR",
@@ -109,14 +109,14 @@
           ],
           "label": "Reference d'effort de regulation",
           "learned_gain": 0.0059,
-          "n_train": 3502,
-          "naive_r2": 0.9622648410002661,
-          "r2": 0.9682016592916014,
-          "residual_std": 24.39411853046639,
+          "n_train": 3505,
+          "naive_r2": 0.9622995252624186,
+          "r2": 0.9682353735419509,
+          "residual_std": 24.384043640786004,
           "target": "duty_kw",
           "train_period": [
             "2024-01-01 07:00:00",
-            "2024-07-13 14:00:00"
+            "2024-07-13 17:00:00"
           ],
           "unit": "kW"
         }
@@ -159,7 +159,7 @@
           ],
           "independence": {
             "regulation_effort_z": {
-              "corr_control_deviation": -0.9377,
+              "corr_control_deviation": -0.9378,
               "independent": false,
               "reading": "Réécriture de l'écart de consigne pondérée par le débit. Ne constitue jamais une preuve d'encrassement.",
               "role": "conduite",
@@ -173,13 +173,13 @@
               "shared_variance_pct": 0.1
             },
             "ua_residual_z": {
-              "corr_control_deviation": -0.5365,
+              "corr_control_deviation": -0.5366,
               "independent": false,
               "reading": "Indicateur d'encrassement. Partiellement confondu : la vanne d'eau de mer n'est pas instrumentée et agit sur le même UA apparent. Le banc d'injection chiffre le retard qui en résulte.",
               "role": "diagnostic",
               "shared_variance_pct": 28.8
             },
-            "verdict": "Le diagnostic d'encrassement est porté par le résidu de coefficient d'échange, seul indicateur construit sur la grandeur que l'encrassement dégrade. Sa confusion résiduelle avec l'écart de consigne est mesurée et publiée plutôt que niée. L'effort de régulation n'est jamais utilisé comme preuve : il gradue une alerte déjà établie."
+            "verdict": "Le diagnostic d'encrassement est porté par le résidu de coefficient d'échange, seul indicateur construit sur la grandeur que l'encrassement dégrade. Sa confusion résiduelle avec l'écart de consigne est mesurée et publiée plutôt que niée. L'effort de régulation n'entre dans aucune condition de déclenchement ni de gradation : il est cité comme contexte, et sa valeur de preuve est nulle. La gradation de l'alerte d'encrassement porte sur le déficit de coefficient d'échange lui-même, dont le seuil est gouverné dans amdec.yaml."
           },
           "n_features": 11,
           "n_observations": 8484,
@@ -187,13 +187,13 @@
           "shadow_redundancy_abs_r_ge_0_80": [
             {
               "control_variable": "control_deviation",
-              "correlation": -0.9377,
+              "correlation": -0.9378,
               "feature": "regulation_effort_z",
               "reading": "cette grandeur est une réécriture de la variable régulée : elle ne constitue pas une preuve indépendante"
             },
             {
               "control_variable": "T_ACID_OUT",
-              "correlation": -0.9377,
+              "correlation": -0.9378,
               "feature": "regulation_effort_z",
               "reading": "cette grandeur est une réécriture de la variable régulée : elle ne constitue pas une preuve indépendante"
             }
@@ -296,14 +296,14 @@
                 "2024-01-01 07:00:00",
                 "2024-09-10 07:00:00"
               ],
-              "score_p95": 0.9772,
-              "score_psi": 0.5808,
-              "test_alert_rate": 0.0715,
+              "score_p95": 0.9774,
+              "score_psi": 0.5796,
+              "test_alert_rate": 0.0726,
               "test_period": [
                 "2024-09-11 22:00:00",
                 "2024-12-05 15:00:00"
               ],
-              "threshold": 0.9648,
+              "threshold": 0.9647,
               "train_period": [
                 "2024-01-02 07:00:00",
                 "2024-09-10 07:00:00"
@@ -319,14 +319,14 @@
                 "2024-01-01 07:00:00",
                 "2024-12-04 15:00:00"
               ],
-              "score_p95": 0.9441,
-              "score_psi": 0.0672,
-              "test_alert_rate": 0.0341,
+              "score_p95": 0.9446,
+              "score_psi": 0.0681,
+              "test_alert_rate": 0.0346,
               "test_period": [
                 "2024-12-05 16:00:00",
                 "2025-02-28 11:00:00"
               ],
-              "threshold": 0.966,
+              "threshold": 0.9653,
               "train_period": [
                 "2024-01-02 07:00:00",
                 "2024-12-04 15:00:00"
@@ -335,16 +335,16 @@
           ],
           "interpretation": "Les taux, le PSI et les régimes mesurent stabilité et charge d'alerte, jamais une performance de détection de panne.",
           "max_score_psi": 3.7446,
-          "mean_test_alert_rate": 0.0776,
+          "mean_test_alert_rate": 0.078,
           "regime_diagnostics": [
             {
-              "alert_rate": 0.0787,
+              "alert_rate": 0.0793,
               "n": 1513,
               "regime": "chaud_charge_basse",
-              "score_median": 0.7336
+              "score_median": 0.7335
             },
             {
-              "alert_rate": 0.0402,
+              "alert_rate": 0.0411,
               "n": 2189,
               "regime": "chaud_charge_haute",
               "score_median": 0.7766
@@ -353,27 +353,27 @@
               "alert_rate": 0.1343,
               "n": 2189,
               "regime": "froid_charge_basse",
-              "score_median": 0.7771
+              "score_median": 0.7778
             },
             {
               "alert_rate": 0.0436,
               "n": 1513,
               "regime": "froid_charge_haute",
-              "score_median": 0.5917
+              "score_median": 0.5913
             }
           ],
-          "std_test_alert_rate": 0.0499,
-          "threshold_spread": 0.0013
+          "std_test_alert_rate": 0.0498,
+          "threshold_spread": 0.0014
         }
       }
     },
     "path": "models/e7301_detector.joblib",
-    "sha256": "53109119a2a5264f2401f484e5a49d398f484ceb1cbfd9ab1e7d7154adece16f",
-    "size_bytes": 6496211
+    "sha256": "8f4d690ee1712d27440dbc48dfec4831c37e8abcc86699467cc8cbc43ad4263e",
+    "size_bytes": 6477939
   },
   "model_identity": {
     "id": "e7301-behavioral-iforest",
-    "version": "2026-07-28T151805.020698+0000"
+    "version": "2026-07-31T010751.426048+0000"
   },
   "promotion": {
     "process": "manual_governed_promotion",
@@ -383,23 +383,23 @@
   },
   "runtime": {
     "packages": {
-      "fastapi": "0.140.0",
+      "fastapi": "0.111.0",
       "joblib": "1.5.3",
-      "numpy": "2.2.6",
-      "pandas": "2.3.3",
+      "numpy": "1.26.4",
+      "pandas": "2.2.2",
       "pydantic": "2.13.4",
-      "scikit-learn": "1.7.2"
+      "scikit-learn": "1.4.2"
     },
-    "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.35",
-    "python": "3.10.12"
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.12.10"
   },
   "schema_version": "2.0",
   "training": {
     "data_period": [
       "2024-01-02 07:00:00",
-      "2024-07-14 19:00:00"
+      "2024-07-13 17:00:00"
     ],
-    "decision_threshold": 0.9641781702155621,
+    "decision_threshold": 0.9642612800415576,
     "ordered_features": [
       "ua_residual_z",
       "regulation_effort_z",
@@ -413,7 +413,7 @@
       "t_out_local_z",
       "t_in_local_z"
     ],
-    "trained_at_utc": "2026-07-28T15:18:05.020698+00:00"
+    "trained_at_utc": "2026-07-31T01:07:51.426048+00:00"
   },
   "validation": {
     "failed_mandatory_gates": [
@@ -460,7 +460,7 @@
         ],
         "independence": {
           "regulation_effort_z": {
-            "corr_control_deviation": -0.9377,
+            "corr_control_deviation": -0.9378,
             "independent": false,
             "reading": "Réécriture de l'écart de consigne pondérée par le débit. Ne constitue jamais une preuve d'encrassement.",
             "role": "conduite",
@@ -474,13 +474,13 @@
             "shared_variance_pct": 0.1
           },
           "ua_residual_z": {
-            "corr_control_deviation": -0.5365,
+            "corr_control_deviation": -0.5366,
             "independent": false,
             "reading": "Indicateur d'encrassement. Partiellement confondu : la vanne d'eau de mer n'est pas instrumentée et agit sur le même UA apparent. Le banc d'injection chiffre le retard qui en résulte.",
             "role": "diagnostic",
             "shared_variance_pct": 28.8
           },
-          "verdict": "Le diagnostic d'encrassement est porté par le résidu de coefficient d'échange, seul indicateur construit sur la grandeur que l'encrassement dégrade. Sa confusion résiduelle avec l'écart de consigne est mesurée et publiée plutôt que niée. L'effort de régulation n'est jamais utilisé comme preuve : il gradue une alerte déjà établie."
+          "verdict": "Le diagnostic d'encrassement est porté par le résidu de coefficient d'échange, seul indicateur construit sur la grandeur que l'encrassement dégrade. Sa confusion résiduelle avec l'écart de consigne est mesurée et publiée plutôt que niée. L'effort de régulation n'entre dans aucune condition de déclenchement ni de gradation : il est cité comme contexte, et sa valeur de preuve est nulle. La gradation de l'alerte d'encrassement porte sur le déficit de coefficient d'échange lui-même, dont le seuil est gouverné dans amdec.yaml."
         },
         "n_features": 11,
         "n_observations": 8484,
@@ -488,13 +488,13 @@
         "shadow_redundancy_abs_r_ge_0_80": [
           {
             "control_variable": "control_deviation",
-            "correlation": -0.9377,
+            "correlation": -0.9378,
             "feature": "regulation_effort_z",
             "reading": "cette grandeur est une réécriture de la variable régulée : elle ne constitue pas une preuve indépendante"
           },
           {
             "control_variable": "T_ACID_OUT",
-            "correlation": -0.9377,
+            "correlation": -0.9378,
             "feature": "regulation_effort_z",
             "reading": "cette grandeur est une réécriture de la variable régulée : elle ne constitue pas une preuve indépendante"
           }
@@ -597,14 +597,14 @@
               "2024-01-01 07:00:00",
               "2024-09-10 07:00:00"
             ],
-            "score_p95": 0.9772,
-            "score_psi": 0.5808,
-            "test_alert_rate": 0.0715,
+            "score_p95": 0.9774,
+            "score_psi": 0.5796,
+            "test_alert_rate": 0.0726,
             "test_period": [
               "2024-09-11 22:00:00",
               "2024-12-05 15:00:00"
             ],
-            "threshold": 0.9648,
+            "threshold": 0.9647,
             "train_period": [
               "2024-01-02 07:00:00",
               "2024-09-10 07:00:00"
@@ -620,14 +620,14 @@
               "2024-01-01 07:00:00",
               "2024-12-04 15:00:00"
             ],
-            "score_p95": 0.9441,
-            "score_psi": 0.0672,
-            "test_alert_rate": 0.0341,
+            "score_p95": 0.9446,
+            "score_psi": 0.0681,
+            "test_alert_rate": 0.0346,
             "test_period": [
               "2024-12-05 16:00:00",
               "2025-02-28 11:00:00"
             ],
-            "threshold": 0.966,
+            "threshold": 0.9653,
             "train_period": [
               "2024-01-02 07:00:00",
               "2024-12-04 15:00:00"
@@ -636,16 +636,16 @@
         ],
         "interpretation": "Les taux, le PSI et les régimes mesurent stabilité et charge d'alerte, jamais une performance de détection de panne.",
         "max_score_psi": 3.7446,
-        "mean_test_alert_rate": 0.0776,
+        "mean_test_alert_rate": 0.078,
         "regime_diagnostics": [
           {
-            "alert_rate": 0.0787,
+            "alert_rate": 0.0793,
             "n": 1513,
             "regime": "chaud_charge_basse",
-            "score_median": 0.7336
+            "score_median": 0.7335
           },
           {
-            "alert_rate": 0.0402,
+            "alert_rate": 0.0411,
             "n": 2189,
             "regime": "chaud_charge_haute",
             "score_median": 0.7766
@@ -654,17 +654,17 @@
             "alert_rate": 0.1343,
             "n": 2189,
             "regime": "froid_charge_basse",
-            "score_median": 0.7771
+            "score_median": 0.7778
           },
           {
             "alert_rate": 0.0436,
             "n": 1513,
             "regime": "froid_charge_haute",
-            "score_median": 0.5917
+            "score_median": 0.5913
           }
         ],
-        "std_test_alert_rate": 0.0499,
-        "threshold_spread": 0.0013
+        "std_test_alert_rate": 0.0498,
+        "threshold_spread": 0.0014
       }
     }
   }

@@ -68,13 +68,13 @@
     "source": "data/raw/DATA.xlsx",
     "usable_timestamps": 10180
   },
-  "generated_at_utc": "2026-07-28T15:18:15.876281+00:00",
+  "generated_at_utc": "2026-07-31T01:07:55.602605+00:00",
   "industrial_validation": {
     "production_go": false,
     "software_tests_prove_industrial_validity": false
   },
   "model": {
-    "alert_hours_historical": 511,
+    "alert_hours_historical": 530,
     "artifact_failed_gates": [
       "labels_gmao",
       "redondance_features",
@@ -83,7 +83,7 @@
     ],
     "artifact_promotion_status": "candidate",
     "claim": "surveillance comportementale non supervisée, non validée terrain",
-    "episodes": 56,
+    "episodes": 58,
     "n_features": 11,
     "ordered_features": [
       "ua_residual_z",
@@ -99,7 +99,7 @@
       "t_in_local_z"
     ],
     "runtime_source": "runtime_trained_unpromoted",
-    "threshold": 0.9641781702155621
+    "threshold": 0.9642612800415576
   },
   "schema_version": "1.0",
   "tests": {
