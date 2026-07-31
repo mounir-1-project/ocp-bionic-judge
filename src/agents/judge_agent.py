@@ -60,6 +60,7 @@ import pandas as pd
 from loguru import logger
 
 from src.agents.schemas import (
+    CONFIANCE_MAX,
     EXECUTION_WINDOW_LABEL,
     MIN_URGENCY_FOR_SEVERITY,
     URGENCY_HOURS,
@@ -594,6 +595,31 @@ class VerificationLayer:
         # confiance annoncee a 0.99 sur des preuves justifiant 0.80. Une quasi
         # certitude affichee doit etre gagnee, pas supposee.
         gap = d.confidence - expected
+
+        # UN PLAFOND NE SE FRANCHIT PAS, MEME DE PEU.
+        #
+        # La tolerance seule ne suffit pas. En alignant le controleur sur le
+        # bareme de l'agent, la corroboration des deux etages a porte la
+        # confiance justifiable maximale de 0,80 a 0,90 : une annonce a 0,99 ne
+        # laissait plus qu'un ecart de 0,09, sous la tolerance de 0,12, et
+        # cessait d'etre relevee. Le piege `_m_overconfidence` du banc, qui
+        # affiche exactement 0,99, n'etait donc plus detecte — regression
+        # introduite par une correction, et invisible tant que la suite n'a pas
+        # tourne.
+        #
+        # Le bareme ne peut jamais produire plus de `CONFIANCE_MAX`. Annoncer
+        # au-dela n'est pas un ecart d'appreciation : c'est revendiquer une
+        # certitude qu'aucune combinaison de preuves ne justifie.
+        if d.confidence > CONFIANCE_MAX:
+            return Check(
+                id="V5_CONFIDENCE", label="La confiance est-elle calibree sur les preuves ?",
+                passed=False, weight=self.WEIGHTS["V5_CONFIDENCE"],
+                score=max(0.0, 5.0 - 20.0 * (d.confidence - CONFIANCE_MAX)),
+                detail=f"Sur-confiance : {d.confidence:.2f} annoncé alors que le barème "
+                       f"des preuves plafonne à {CONFIANCE_MAX:.2f}. Aucune combinaison "
+                       f"de constatations ne justifie une certitude supérieure.",
+                issue_codes=["OVERCONFIDENCE"],
+            )
         if gap > 0.12:
             return Check(
                 id="V5_CONFIDENCE", label="La confiance est-elle calibree sur les preuves ?",

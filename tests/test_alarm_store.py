@@ -46,9 +46,15 @@ def test_cycle_de_vie_persistant(tmp_path):
     )
     assert alarm["status"] == "ACKNOWLEDGED"
     assert alarm["acknowledged_by"] == "technicien@ocpgroup.ma"
+    # LA COLONNE `transition` NOMME L'ACTION, PAS L'ETAT D'ARRIVEE.
+    # Elle recevait auparavant `target`, si bien que le journal inscrivait
+    # « ACTIVE » aussi bien pour une desinhibition que pour une reapparition :
+    # l'auditeur ne pouvait plus dire POURQUOI l'etat avait change. Les
+    # transitions systeme nommaient deja leur cause (APPEARED, REPEATED,
+    # REACTIVATED); seules les actions imputables a une personne la perdaient.
     assert [item["transition"] for item in alarm["history"]] == [
         "APPEARED",
-        "ACKNOWLEDGED",
+        "ACKNOWLEDGED_BY_OPERATOR",
     ]
     store.close()
 

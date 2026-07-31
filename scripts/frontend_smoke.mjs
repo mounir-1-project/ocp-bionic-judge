@@ -15,9 +15,20 @@
 
 import { readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { JSDOM } from "jsdom";
 
-const ROOT = resolve(new URL("..", import.meta.url).pathname);
+// LA RACINE SE RESOUT PAR `fileURLToPath`, JAMAIS PAR `.pathname`.
+//
+// Sur Windows, le `pathname` d'une URL `file:` vaut `/C:/dev/projet/` — avec
+// une barre oblique de tete. `resolve()` le traite alors comme un chemin
+// relatif au lecteur courant et le prefixe : le banc cherchait ses fixtures
+// dans `C:\C:\dev\...` et echouait en ENOENT.
+//
+// Sous Linux le `pathname` vaut deja `/chemin/absolu` et `resolve()` ne change
+// rien : le defaut etait INVISIBLE hors Windows, donc invisible dans
+// l'environnement ou ces bancs ont ete ecrits et verifies.
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const FIXTURES = resolve(process.argv[2] || join(ROOT, "tests", "fixtures", "api"));
 
 /* ── Fixtures ────────────────────────────────────────────────────────────── */
@@ -107,7 +118,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 process.on("unhandledRejection", (e) => failures.push(`promesse rejetee: ${e?.message || e}`));
 
-await import(`file://${join(ROOT, "api", "static", "app.js")}`);
+await import(pathToFileURL(join(ROOT, "api", "static", "app.js")).href);
 await sleep(400);
 
 // L'authentification est desactivee dans les fixtures : le poste demande une

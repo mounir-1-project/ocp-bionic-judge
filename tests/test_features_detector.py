@@ -300,11 +300,26 @@ def _hist(effort: float = 0.0, ua: float = 0.0, n: int = 100) -> pd.DataFrame:
     Returns:
         DataFrame d'historique.
     """
-    return pd.DataFrame({
-        "regulation_effort_trend_14d": [effort] * n,
-        "ua_residual_trend_14d": [ua] * n,
-        "t_in_residual_trend_14d": [0.0] * n,
-    })
+    # L'HISTORIQUE DOIT PORTER UN INDEX TEMPOREL.
+    #
+    # Ce constructeur laissait l'index entier par defaut, ce qui suffisait tant
+    # que la persistance se comptait en LIGNES (`tail(72)`). Depuis qu'elle se
+    # compte en HEURES, `_fenetre_calendaire` soustrait un `Timedelta` de la
+    # derniere borne : sur un index entier, cela leve
+    # `TypeError: unsupported operand type(s) for -: 'int' and 'Timedelta'`.
+    #
+    # Le defaut etait dans le TEST, pas dans le code : en exploitation,
+    # `history` est toujours une tranche de `features`, donc indexee par le
+    # temps. Un repli sur le comptage de lignes aurait reintroduit en silence
+    # exactement le defaut que la fenetre calendaire corrige.
+    return pd.DataFrame(
+        {
+            "regulation_effort_trend_14d": [effort] * n,
+            "ua_residual_trend_14d": [ua] * n,
+            "t_in_residual_trend_14d": [0.0] * n,
+        },
+        index=pd.date_range("2024-06-01", periods=n, freq="h"),
+    )
 
 
 def test_situation_nominale_ne_declenche_rien(domain):
@@ -422,11 +437,18 @@ def test_sur_refroidissement_est_un_regime_de_conduite(domain):
 
 def test_derive_non_persistante_ignoree(domain):
     """Un ecart bref ne doit pas etre annonce comme une derive d'encrassement."""
-    hist = pd.DataFrame({
-        "regulation_effort_trend_14d": [0.0] * 100,
-        "ua_residual_trend_14d": [0.0] * 90 + [-2.5] * 10,
-        "t_in_residual_trend_14d": [0.0] * 100,
-    })
+    # Index horaire, pour la meme raison que dans `_hist` : la persistance se
+    # mesure en heures et `_fenetre_calendaire` soustrait un `Timedelta`.
+    # Les dix dernieres heures portent l'ecart, les soixante-deux precedentes
+    # de la fenetre de 72 h sont nominales — la derive n'est donc pas installee.
+    hist = pd.DataFrame(
+        {
+            "regulation_effort_trend_14d": [0.0] * 100,
+            "ua_residual_trend_14d": [0.0] * 90 + [-2.5] * 10,
+            "t_in_residual_trend_14d": [0.0] * 100,
+        },
+        index=pd.date_range("2024-06-01", periods=100, freq="h"),
+    )
     findings = RuleEngine(domain).evaluate(_row(ua_residual_trend_14d=-2.5), hist)
     assert "FOULING_DRIFT" not in {f.code for f in findings}
 

@@ -288,7 +288,12 @@ def test_le_canal_d_escalade_est_redige_en_francais(relais):
         recipient=None, starttls=True,
         cooldown_minutes=60.0, minimum_severity="CRITICAL",
     )
-    _exiger(_textes_du_rapport(notifier.status(), "escalade"))
+    # Minimum abaisse a 2, et c'est justifie : `status()` n'expose que DEUX
+    # champs de texte libre — `reason` et `retry_policy`. Les autres chaines
+    # (`mode`, `minimum_severity`) sont des codes d'un seul mot, ecartes par
+    # `_textes_du_rapport` qui ne retient que les chaines contenant un espace.
+    # Exiger trois textes ici ferait echouer un controle sain.
+    _exiger(_textes_du_rapport(notifier.status(), "escalade"), minimum=2)
 
 
 # ── Notation des nombres ──────────────────────────────────────────────────────

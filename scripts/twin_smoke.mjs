@@ -15,11 +15,22 @@
  */
 
 import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { tmpdir } from "node:os";
 import { JSDOM } from "jsdom";
 
-const ROOT = resolve(new URL("..", import.meta.url).pathname);
+// LA RACINE SE RESOUT PAR `fileURLToPath`, JAMAIS PAR `.pathname`.
+//
+// Sur Windows, le `pathname` d'une URL `file:` vaut `/C:/dev/projet/` — avec
+// une barre oblique de tete. `resolve()` le traite alors comme un chemin
+// relatif au lecteur courant et le prefixe : le banc cherchait ses fixtures
+// dans `C:\C:\dev\...` et echouait en ENOENT.
+//
+// Sous Linux le `pathname` vaut deja `/chemin/absolu` et `resolve()` ne change
+// rien : le defaut etait INVISIBLE hors Windows, donc invisible dans
+// l'environnement ou ces bancs ont ete ecrits et verifies.
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const topology = JSON.parse(readFileSync(process.argv[2] || join(ROOT, "tests", "fixtures", "api", "topology.json"), "utf8"));
 
 const dom = new JSDOM("<canvas id='c'></canvas>", { pretendToBeVisual: true });
@@ -55,7 +66,7 @@ const THREE_PATH = join(ROOT, "api", "static", "three.module.min.js");
 const work = mkdtempSync(join(tmpdir(), "e7301-twin-"));
 
 writeFileSync(join(work, "three-stub.mjs"), `
-export * from "file://${THREE_PATH}";
+export * from "${pathToFileURL(THREE_PATH).href}";
 
 export class WebGLRenderer {
   constructor() {
@@ -83,7 +94,15 @@ const twinSource = readFileSync(join(ROOT, "api", "static", "twin.js"), "utf8")
   .replace('from "./three.module.min.js"', 'from "./three-stub.mjs"');
 writeFileSync(join(work, "twin.mjs"), twinSource, "utf8");
 
-const { CoolerTwin } = await import(`file://${join(work, "twin.mjs")}`);
+// LES URL `file:` SE CONSTRUISENT PAR `pathToFileURL`, JAMAIS PAR CONCATENATION.
+//
+// `file://${chemin}` fonctionne sous Linux, ou les separateurs sont deja des
+// barres obliques. Sous Windows le chemin contient des ANTISLASHES : inseres
+// dans une chaine JavaScript ecrite sur disque, ils sont relus comme des
+// sequences d'echappement — `\d`, `\o`, `\a`, `\s` disparaissent, `\t`
+// devient une tabulation. Le banc cherchait alors
+// `file://C:devocp-bionic-judgeapistatic...` et echouait en ERR_INVALID_URL.
+const { CoolerTwin } = await import(pathToFileURL(join(work, "twin.mjs")).href);
 
 const canvas = dom.window.document.getElementById("c");
 Object.defineProperty(canvas, "clientWidth", { value: 1280 });
@@ -166,7 +185,7 @@ const someFaded = opacities.some((o) => o < 0.99);
 // Les tags de role `context` (allure de ligne, section absorption) ne sont pas
 // physiquement sur le refroidisseur : ils sont regroupes a l'ecart, et c'est
 // voulu. Seuls les capteurs du perimetre doivent toucher leur piece.
-const box = new (await import(`file://${join(work, "three-stub.mjs")}`)).Box3();
+const box = new (await import(pathToFileURL(join(work, "three-stub.mjs")).href)).Box3();
 const distances = [];
 for (const [alias, entry] of twin.sensors) {
   if (entry.meta.role === "context") continue;

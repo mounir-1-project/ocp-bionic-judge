@@ -25,10 +25,21 @@
  */
 
 import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { JSDOM } from "jsdom";
 
-const ROOT = resolve(new URL("..", import.meta.url).pathname);
+// LA RACINE SE RESOUT PAR `fileURLToPath`, JAMAIS PAR `.pathname`.
+//
+// Sur Windows, le `pathname` d'une URL `file:` vaut `/C:/dev/projet/` — avec
+// une barre oblique de tete. `resolve()` le traite alors comme un chemin
+// relatif au lecteur courant et le prefixe : le banc cherchait ses fixtures
+// dans `C:\C:\dev\...` et echouait en ENOENT.
+//
+// Sous Linux le `pathname` vaut deja `/chemin/absolu` et `resolve()` ne change
+// rien : le defaut etait INVISIBLE hors Windows, donc invisible dans
+// l'environnement ou ces bancs ont ete ecrits et verifies.
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const html = readFileSync(join(ROOT, "api", "dashboard.html"), "utf8");
 const css = readFileSync(join(ROOT, "api", "static", "app.css"), "utf8");
 
@@ -52,7 +63,7 @@ globalThis.Chart = window.Chart = class { constructor() {} update() {} destroy()
 let tentatives = 0;
 globalThis.fetch = async () => { tentatives += 1; throw new Error("connexion refusee"); };
 
-await import(`file://${join(ROOT, "api", "static", "app.js")}`);
+await import(pathToFileURL(join(ROOT, "api", "static", "app.js")).href);
 await new Promise((r) => setTimeout(r, 500));
 
 const doc = window.document;

@@ -86,6 +86,18 @@ def corroboration(rule_codes: list[str]) -> bool:
     return bool(codes - _CODES_SANS_PREUVE) and bool(codes & _CODES_MODELE)
 
 
+# BORNES DU BAREME DE CONFIANCE.
+#
+# Elles etaient ecrites en dur dans la clause de bornage, donc invisibles pour
+# le controleur. Or le PLAFOND est une information de premiere importance : au
+# mieux des preuves possibles — constatation deterministe, corroboration des
+# deux etages, modele applicable, marche etablie, mode pleinement observe — le
+# bareme ne depasse jamais 0,95. Toute confiance annoncee au-dela est donc
+# injustifiable PAR CONSTRUCTION, quel que soit l'ecart a la valeur attendue.
+CONFIANCE_MIN = 0.15
+CONFIANCE_MAX = 0.95
+
+
 def confiance_justifiable(
     *,
     rule_codes: list[str],
@@ -135,7 +147,7 @@ def confiance_justifiable(
     # Un mode dont l'etat n'est pas mesurable interdit la certitude; un mode
     # partiellement observe la reduit sans l'interdire.
     valeur -= {"none": 0.30, "partial": 0.10}.get(mode_observabilite, 0.0)
-    return round(min(0.95, max(0.15, valeur)), 2)
+    return round(min(CONFIANCE_MAX, max(CONFIANCE_MIN, valeur)), 2)
 
 
 # Formulation lisible de la fenetre d'execution, pour l'exploitant.

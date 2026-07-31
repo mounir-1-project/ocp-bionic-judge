@@ -24,6 +24,24 @@ exclude = ["tests*", "legacy*", "notebooks*", "docs*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+# LA RACINE DU DEPOT EST DECLAREE EXPLICITEMENT SUR sys.path.
+#
+# `--import-mode=importlib`, plus bas, N'INSERE PAS la racine dans `sys.path` —
+# c'est la difference documentee avec le mode `prepend`. Sans cette ligne,
+# `tests/conftest.py` echoue des sa premiere instruction :
+#
+#     from src.config import DCS_EXPORT
+#     ModuleNotFoundError: No module named 'src.config'
+#
+# Le defaut etait invisible tant que la suite etait lancee par
+# `python -m pytest`, forme qui ajoute d'elle-meme le repertoire courant. Le
+# point d'entree `pytest` ne le fait pas — et c'est celui qu'emploient le
+# Makefile, l'integration continue et toute personne qui clone le depot.
+#
+# Declarer le chemin ici plutot que dependre de la maniere dont la commande est
+# invoquee : c'est la seule forme qui donne le meme resultat partout.
+pythonpath = ["."]
+
 # LES FICHIERS TEMPORAIRES DES TESTS RESTENT DANS LE DEPOT.
 #
 # Par defaut, pytest cree ses repertoires temporaires sous le dossier Temp de
