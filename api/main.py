@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field
 
 from src import config
 from src.notifications import EmailNotifier
+from src.notifications.redaction import rediger_gouvernance
 from src.operations import AlarmStore, WorkflowStore
 from src.pipeline import E7301Pipeline
 from src.realtime.replay import DCSReplay, _compact
@@ -1531,7 +1532,16 @@ async def notification_status() -> dict:
 async def notification_test(request: Request) -> dict:
     """Place un email de test dans la file asynchrone."""
     _require_roles(request, "maintenance", "reliability_engineer", "administrator")
-    if not _notifier().enqueue_test():
+    # API-5 — LE DESTINATAIRE ETAIT TRANSMIS D'UN COTE, PAS DE L'AUTRE.
+    # `enqueue_test` et `enqueue_governance` portent la meme signature et servent
+    # le meme bouton, cote a cote sur la page Controle. Seul le second recevait
+    # `demandeur` : le technicien qui teste le canal recevait le courriel a la
+    # premiere adresse abonnee, pas a la sienne — et il en concluait que le canal
+    # ne marchait pas.
+    operator = request.state.operator
+    if not _notifier().enqueue_test(
+        demandeur=operator.email if operator is not None else None
+    ):
         raise HTTPException(status_code=409, detail="Canal email non configure")
     return {"accepted": True}
 
@@ -1547,8 +1557,13 @@ def notification_governance(request: Request) -> dict:
         "health": pipeline.health_report(),
         "judge": pipeline.judge.auditor.report(),
     }
+    # LE RAPPORT EST REDIGE, PAS VIDE. `json.dumps` expediait trois cents
+    # lignes de structure interne — coefficients de regression compris, et le
+    # chemin absolu du fichier source — a l'adresse d'un technicien.
+    operator = request.state.operator
     accepted = _notifier().enqueue_governance(
-        json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+        rediger_gouvernance(payload),
+        demandeur=operator.email if operator is not None else None,
     )
     if not accepted:
         raise HTTPException(status_code=409, detail="Canal email non configure")

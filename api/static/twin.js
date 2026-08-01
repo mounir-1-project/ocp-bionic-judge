@@ -546,6 +546,10 @@ export class CoolerTwin {
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.userData.component = component;
+    // Position d'origine, memorisee a la construction : c'est elle qui sert de
+    // reference a la vue eclatee, et le retour a la normale doit y revenir
+    // EXACTEMENT, pas approximativement.
+    mesh.userData.posOrigine = mesh.position.clone();
 
     const source = mesh.material;
     if (source && !Array.isArray(source)) {
@@ -554,6 +558,13 @@ export class CoolerTwin {
       let propre = this._ownMaterials.get(cle);
       if (!propre) {
         propre = source.clone();
+        // PROVENANCE DU CLONE — indispensable a `setCutaway`.
+        // Le clonage par piece a debranche la coupe : celle-ci rendait
+        // transparents `mat.alloy` et `mat.cladding`, que plus aucun maillage
+        // n'utilise. Conserver le materiau d'origine permet de retrouver, au
+        // moment de la coupe, tous les clones issus de la calandre et du
+        // bardage — sans reintroduire le partage que le clonage supprime.
+        propre.userData.materiauSource = source;
         this._ownMaterials.set(cle, propre);
         this.baseColors.set(propre, {
           color: propre.color.clone(),
@@ -1463,11 +1474,135 @@ export class CoolerTwin {
         this.faulted.push({ material: m, severity });
       }
     }
+    // L'ORDRE COMPTE. `_eclater` memorise, a la premiere mise en defaut d'une
+    // piece, le centre qu'elle occupe AU REPOS. `_marquerPieces` s'en sert
+    // ensuite pour ancrer le cartouche. Dans l'ordre inverse, une panne qui
+    // persiste ferait recalculer le centre depuis la position deja eclatee, et
+    // le repere s'eloignerait un peu plus a chaque cycle.
+    this._eclater(comps);
     this._marquerPieces(comps);
     for (const [alias, entry] of this.sensors) {
       entry.severity = sens[alias] || "NORMAL";
       this._paintLabel(entry);
     }
+  }
+
+  /**
+   * Vue eclatee : la piece en defaut sort de l'appareil, et y revient.
+   *
+   * POURQUOI CE MOUVEMENT EXISTE.
+   * Colorer une piece en rouge ne suffit pas quand elle est ENFERMEE. Le
+   * faisceau tubulaire est le composant le plus souvent mis en cause, et il est
+   * invisible tant que la coupe n'est pas active : l'exploitant lisait
+   * « CRITIQUE » dans le bandeau et voyait un appareil intact. Extraire la
+   * piece la designe sans exiger la moindre manipulation de la vue.
+   *
+   * Direction : radiale, dans le plan perpendiculaire a l'axe de l'appareil.
+   * Une piece deja excentree — piquage, vanne — s'ecarte donc dans son propre
+   * sens, ce qui conserve la lecture de sa position reelle. Une piece centree
+   * sur l'axe, comme le faisceau, n'a pas de direction radiale : elle monte.
+   *
+   * Le deplacement DURE tant que la panne dure. Un aller-retour bref se lirait
+   * comme un artefact d'affichage; une piece qui reste sortie se lit comme une
+   * designation. Le retour est anime, jamais instantane, et ramene a la
+   * position memorisee a la construction.
+   *
+   * @param {Record<string, string>} comps Pieces en defaut, par code.
+   */
+  _eclater(comps) {
+    if (!this._eclats) this._eclats = new Map();
+    // Toute piece cesse d'etre designee tant qu'on ne l'a pas reconfirmee.
+    for (const etat of this._eclats.values()) etat.cible = 0;
+
+    const boite = new THREE.Box3();
+    const centre = new THREE.Vector3();
+    for (const code of Object.keys(comps)) {
+      const meshes = (this.components.get(code) || [])
+        .filter((m) => m.userData.posOrigine);
+      if (!meshes.length) continue;
+
+      let etat = this._eclats.get(code);
+      if (!etat) {
+        boite.makeEmpty();
+        for (const mesh of meshes) boite.expandByObject(mesh);
+        boite.getCenter(centre);
+        const dir = new THREE.Vector3(0, centre.y, centre.z);
+        if (dir.lengthSq() < 1e-4) dir.set(0, 1, 0);
+        dir.normalize();
+
+        // LA DISTANCE SE CALCULE, ELLE NE SE FIXE PAS.
+        //
+        // Une valeur en dur de 1,15 m paraissait franche jusqu'a ce qu'on la
+        // confronte aux dimensions reelles : le faisceau tubulaire a lui-meme
+        // 0,5 m de rayon et la calandre 0,56 m. Monte de 1,15 m, son bord
+        // inferieur arrive a 0,65 m — il EFFLEURE le dessus de l'enveloppe. A
+        // l'ecran cela se lit comme une piece posee sur l'appareil, pas comme
+        // une piece extraite, et l'effet manque son but.
+        //
+        // On additionne donc le rayon de l'enveloppe, la demi-epaisseur de la
+        // piece dans sa direction de sortie, et une marge franche. Une petite
+        // vanne sort peu, le faisceau sort beaucoup : chaque piece se degage
+        // NETTEMENT, quelle que soit sa taille.
+        const taille = boite.getSize(new THREE.Vector3());
+        const demiEpaisseur = Math.abs(taille.y * dir.y) / 2
+                            + Math.abs(taille.z * dir.z) / 2;
+        const distance = SHELL_R + demiEpaisseur + 0.75;
+
+        // `base` est le centre AU REPOS, fige a la premiere mise en defaut.
+        // Il sert d'ancrage au cartouche de designation, qui doit suivre la
+        // piece sans se recalculer sur une position deja deplacee.
+        etat = {
+          meshes, dir, distance,
+          base: centre.clone(), avance: 0, cible: 0,
+        };
+        this._eclats.set(code, etat);
+      }
+      etat.cible = 1;
+    }
+  }
+
+  /**
+   * Avance l'extraction d'un pas de temps et applique les positions.
+   *
+   * CETTE METHODE EXISTE PARCE QUE MON BANC ETAIT CREUX. `twin_smoke.mjs` ne
+   * peut pas appeler `_loop` — elle exige un contexte WebGL que jsdom n'a pas.
+   * J'y avais donc REECRIT l'interpolation pour la mesurer. Le banc validait
+   * ma copie, pas l'original : les deux pouvaient diverger sans qu'aucune
+   * verification ne s'en apercoive, et « 32/32 » ne disait rien du code servi
+   * au navigateur. Un controle qui teste sa propre reimplementation ne teste
+   * rien.
+   *
+   * Le mouvement vit maintenant ICI, en un seul exemplaire. `_loop` l'appelle
+   * a chaque image, le banc l'appelle image par image : ils exercent la meme
+   * ligne de code.
+   *
+   * L'interpolation est adoucie aux deux extremites — un deplacement lineaire
+   * demarre et s'arrete sec, ce qui se lit comme un saut. Le lissage donne le
+   * mouvement continu d'une piece qu'on extrait.
+   *
+   * @param {number} dt Temps ecoule depuis l'image precedente, en secondes.
+   * @returns {Map<string, number>} Distance parcourue par piece, pour les reperes.
+   */
+  animerEclats(dt) {
+    const VITESSE = 4.0; // aller ou retour complet en ~0,5 s
+    const deplacement = new Map();
+    for (const [code, etat] of this._eclats || new Map()) {
+      etat.avance += (etat.cible - etat.avance) * Math.min(1, dt * VITESSE);
+      if (etat.avance < 1e-4 && etat.cible === 0) etat.avance = 0;
+      const t = Math.min(1, Math.max(0, etat.avance));
+      const adouci = t * t * (3 - 2 * t);
+      const d = adouci * etat.distance;
+      deplacement.set(code, d);
+      for (const mesh of etat.meshes) {
+        const o = mesh.userData.posOrigine;
+        mesh.position.set(
+          o.x + etat.dir.x * d,
+          o.y + etat.dir.y * d,
+          o.z + etat.dir.z * d,
+        );
+      }
+    }
+    return deplacement;
   }
 
   /**
@@ -1557,7 +1692,13 @@ export class CoolerTwin {
       anneau.renderOrder = 1000;
       this._reperes.add(anneau);
 
-      this.reperes.push({ sprite, anneau, critique });
+      // Le repere suit la piece quand elle sort : sinon le cartouche resterait
+      // sur la calandre pendant que la piece qu'il nomme s'en eloigne.
+      // L'ancrage vient de `_eclats`, ou il a ete fige AU REPOS.
+      this.reperes.push({
+        sprite, anneau, critique, code,
+        base: (this._eclats?.get(code)?.base || centre).clone(),
+      });
     }
   }
 
@@ -1596,7 +1737,23 @@ export class CoolerTwin {
    */
   setCutaway(enabled) {
     this.cutaway = Boolean(enabled);
-    for (const m of [this.mat.alloy, this.mat.cladding]) {
+
+    // LA COUPE AGIT SUR LES MATERIAUX REELLEMENT RENDUS.
+    //
+    // Elle ne touchait que `this.mat.alloy` et `this.mat.cladding`, c'est-a-dire
+    // la PALETTE. Or `_register()` clone le materiau pour chaque piece : la
+    // calandre et le bardage n'utilisent plus ces objets. La coupe rendait donc
+    // transparents des materiaux que rien n'affiche, l'enveloppe restait opaque,
+    // et les organes internes — rendus visibles par la ligne ci-dessous —
+    // demeuraient enfermes dedans. Le bouton ne produisait aucun effet visible.
+    //
+    // On rassemble ici les originaux de la palette, pour les maillages
+    // decoratifs non enregistres, ET tous les clones qui en descendent.
+    const enveloppe = [this.mat.alloy, this.mat.cladding];
+    for (const clone of (this._ownMaterials || new Map()).values()) {
+      if (enveloppe.includes(clone.userData?.materiauSource)) enveloppe.push(clone);
+    }
+    for (const m of enveloppe) {
       m.transparent = this.cutaway;
       m.opacity = this.cutaway ? 0.14 : 1;
       m.depthWrite = !this.cutaway;
@@ -1855,10 +2012,24 @@ export class CoolerTwin {
       }
     }
 
+    const deplacement = this.animerEclats(dt);
+
     // Reperes de piece : ils battent au meme rythme que la piece qu'ils
-    // designent, et font face a la camera pour rester lisibles sous tout angle.
-    for (const { sprite, anneau, critique } of this.reperes || []) {
+    // designent, la suivent quand elle sort, et font face a la camera pour
+    // rester lisibles sous tout angle.
+    for (const { sprite, anneau, critique, code, base } of this.reperes || []) {
       const p = critique ? pulseC : pulseW;
+      const etat = this._eclats?.get(code);
+      if (etat && base) {
+        const d = deplacement.get(code) ?? 0;
+        anneau.position.set(
+          base.x + etat.dir.x * d,
+          base.y + etat.dir.y * d,
+          base.z + etat.dir.z * d,
+        );
+        sprite.position.copy(anneau.position);
+        sprite.position.y += 1.1;
+      }
       sprite.material.opacity = 0.62 + 0.38 * p;
       anneau.material.opacity = 0.35 + 0.55 * p;
       anneau.scale.setScalar(1 + p * 0.35);

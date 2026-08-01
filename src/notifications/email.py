@@ -18,6 +18,54 @@ if TYPE_CHECKING:
     from src.pipeline import Analysis
 
 
+def diagnostiquer_echec(exc: Exception) -> str:
+    """Traduit un échec d'envoi en cause actionnable.
+
+    LE NOM DE CLASSE NE SUFFIT PAS. Le journal ne conservait que
+    `type(exc).__name__` — l'interface affichait donc « SMTPAuthenticationError »
+    à un exploitant, qui n'a aucun moyen d'en déduire quoi faire. Le cas le plus
+    fréquent, et de loin, est le mot de passe Gmail ordinaire là où Google exige
+    un mot de passe d'application depuis mai 2022 : la cause est connue, la
+    correction est connue, et rien de tout cela n'était dit.
+
+    Le texte du serveur n'est pas recopié tel quel : il varie selon le relais et
+    peut contenir l'adresse d'authentification. Chaque cause est traduite par une
+    phrase fixe, vérifiable, qui ne divulgue aucun paramètre du poste.
+
+    Args:
+        exc: Exception levée par la tentative d'envoi.
+
+    Returns:
+        Une phrase décrivant la cause et la correction attendue.
+    """
+    nom = type(exc).__name__
+    if isinstance(exc, smtplib.SMTPAuthenticationError):
+        return (
+            f"{nom} : le relais a refusé l'identification. Gmail n'accepte plus "
+            "le mot de passe du compte depuis mai 2022 — il faut un mot de passe "
+            "d'application de 16 caractères, saisi sans espaces dans "
+            "SMTP_PASSWORD."
+        )
+    if isinstance(exc, smtplib.SMTPRecipientsRefused):
+        return f"{nom} : le relais a refusé l'adresse du destinataire."
+    if isinstance(exc, smtplib.SMTPSenderRefused):
+        return (
+            f"{nom} : le relais a refusé l'expéditeur. SMTP_FROM doit "
+            "correspondre au compte authentifié par SMTP_USERNAME."
+        )
+    if isinstance(exc, smtplib.SMTPNotSupportedError):
+        return (
+            f"{nom} : le relais ne propose pas STARTTLS sur ce port. Utiliser "
+            "le port 587 avec SMTP_STARTTLS=true."
+        )
+    if isinstance(exc, (TimeoutError, OSError)):
+        return (
+            f"{nom} : le relais est injoignable. Vérifier SMTP_HOST, SMTP_PORT, "
+            "et qu'aucun pare-feu ne bloque la sortie sur ce port."
+        )
+    return nom
+
+
 @dataclass
 class MailJob:
     """Message prêt à être envoyé par le worker."""
@@ -88,6 +136,10 @@ class EmailNotifier:
         self._pending_keys: set[str] = set()
         self._sent = 0
         self._spooled = 0
+        # Alertes qualifiees qu'aucune adresse active ne pouvait recevoir.
+        # Ce compteur rend visible un canal muet : il valait zero parce que
+        # ces alertes n'etaient meme pas comptees.
+        self._sans_destinataire = 0
         self._failed = 0
         self._suppressed = 0
         self._last_error: str | None = None
@@ -185,7 +237,23 @@ class EmailNotifier:
         """Reçoit une analyse du rejeu sans jamais bloquer celui-ci."""
         severity = analysis.decision.severity
         rank = {"NORMAL": 0, "INFO": 1, "WARNING": 2, "CRITICAL": 3}
-        if not self.enabled:
+        # UNE ALERTE CRITIQUE SANS DESTINATAIRE DISPARAISSAIT SANS TRACE.
+        #
+        # Le garde etait `if not self.enabled` — or `enabled` exige un
+        # destinataire actif. Sans session ouverte et sans `ALERT_EMAIL_TO`,
+        # une decision CRITICAL validee par le controleur repartait donc en
+        # silence : pas d'envoi, pas de fichier, pas de ligne de journal, pas
+        # meme un increment de `_suppressed`. Rien.
+        #
+        # C'est l'exact contraire de ce que ce module promet en tete de
+        # fichier : « si le canal sortant tombe, il faut pouvoir dire APRES
+        # COUP quelles alertes auraient du partir ». Et le moment ou l'alerte
+        # automatique compte le plus est precisement celui ou personne n'est
+        # devant l'ecran — donc celui ou aucune session n'est ouverte.
+        #
+        # On ne garde plus que l'exutoire. L'absence de destinataire est
+        # traitee plus bas, apres redaction du message, et laisse une trace.
+        if not (self.transport_ready or self.journal_ready):
             return
         if not analysis.verdict.agreement:
             # Une décision rejetée par le contrôleur ne sort pas du poste :
@@ -199,19 +267,43 @@ class EmailNotifier:
         event_key = f"{severity}:{','.join(sorted(modes))}"
         now = time.time()
         subject = f"[E7301][{severity}] {', '.join(modes)}"
+        # LE CORPS ETAIT ECRIT SANS ACCENTS — « Severite », « Equipement »,
+        # « decision rejetee », « references operationnelles » — alors que le
+        # depot impose l'inverse sur tout texte lu par un exploitant, et qu'un
+        # test le verrouille. Ce message-ci echappait au corpus controle. La
+        # note du controleur portait de surcroit un point decimal anglais.
+        note = f"{analysis.verdict.global_score:.2f}".replace(".", ",")
         body = (
-            f"Equipement : S-PC-E7301\n"
+            f"Équipement : S-PC-E7301 — refroidisseur d'acide de séchage\n"
             f"Horodatage DCS : {analysis.decision.timestamp}\n"
-            f"Severite : {severity}\n"
+            f"Sévérité : {severity}\n"
+            f"Modes AMDEC suspectés : {', '.join(modes)}\n\n"
             f"Diagnostic : {analysis.decision.diagnosis}\n"
-            f"Action : {analysis.decision.recommended_action.description}\n"
+            f"Action recommandée : "
+            f"{analysis.decision.recommended_action.description}\n"
             f"Urgence : {analysis.decision.recommended_action.urgency}\n"
-            f"Judge : {analysis.verdict.global_score:.2f}/10 - "
-            f"{'accord' if analysis.verdict.agreement else 'decision rejetee'}\n\n"
-            "Ce message est un canal complementaire. L'alarme HMI locale et "
-            "les procedures OCP restent les references operationnelles."
+            f"Contrôleur : {note}/10 — accord\n\n"
+            "Aucune panne n'est confirmée : le système signale un écart de "
+            "comportement,\nsa cause reste à établir sur le terrain.\n\n"
+            "Ce message est un canal complémentaire. L'alarme HMI locale et "
+            "les procédures\nOCP restent les références opérationnelles."
         )
-        for recipient in self._destinataires():
+
+        destinataires = self._destinataires()
+        if not destinataires:
+            # Aucune adresse active : on trace, on compte, on n'oublie pas.
+            self._sans_destinataire += 1
+            orphelin = MailJob(subject, body, "(aucun destinataire)", event_key)
+            self._deposer(orphelin)
+            self._tracer(
+                orphelin,
+                "non distribue",
+                "aucun destinataire actif : aucune session ouverte et "
+                "ALERT_EMAIL_TO non renseigné",
+            )
+            return
+
+        for recipient in destinataires:
             key = f"{recipient}:{event_key}"
             if (
                 key in self._pending_keys
@@ -222,26 +314,71 @@ class EmailNotifier:
             self._pending_keys.add(key)
             self._enqueue(MailJob(subject, body, recipient, key))
 
-    def enqueue_test(self) -> bool:
+    # FENETRE DE COURSE ENTRE `enabled` ET `_destinataires()[0]`.
+    #
+    # `enabled` verifie bien qu'un destinataire existe — verification faite,
+    # ce n'etait donc pas un `IndexError` garanti. Mais il relache le verrou
+    # avant de rendre la main, et ces deux methodes indexaient ENSUITE la liste
+    # a `[0]`. Entre les deux, `remove_recipient` peut la vider : il est appele
+    # par le thread HTTP a la fermeture d'une session.
+    #
+    # Le cas n'est pas theorique. C'est exactement ce qui se produit quand une
+    # session expire pendant qu'un rapport part : `enabled` a repondu vrai, la
+    # session tombe, l'indexation leve `IndexError` et l'envoi remonte en 500
+    # sans qu'aucune trace ne dise pourquoi. Une seule lecture, et un retour
+    # `False` conforme a la signature.
+    def _premier_destinataire(self, souhaite: str | None = None) -> str | None:
+        """Destinataire d'un envoi ponctuel, celui qui l'a demandé si possible.
+
+        LE RAPPORT PARTAIT AU PREMIER PAR ORDRE ALPHABETIQUE. `_destinataires()`
+        rend une liste TRIEE, et ces envois en prenaient l'element `[0]` — sans
+        aucun rapport avec le technicien qui venait de cliquer. Avec deux
+        adresses actives, « astreinte@… » passe avant « mounir@… » : le rapport
+        demande par l'un arrivait chez l'autre, et l'interface annoncait un
+        succes. La docstring de l'endpoint promet pourtant « envoie AU
+        TECHNICIEN ».
+
+        L'adresse demandee n'est retenue que si elle est deja destinataire
+        actif : ce canal ne doit pas devenir un moyen d'expedier l'etat du poste
+        vers une adresse arbitraire.
+        """
+        destinataires = self._destinataires()
+        if souhaite:
+            cible = souhaite.strip().lower()
+            if cible in destinataires:
+                return cible
+        return destinataires[0] if destinataires else None
+
+    def enqueue_test(self, demandeur: str | None = None) -> bool:
         """Ajoute un message de vérification de configuration."""
-        if not self.enabled:
+        destinataire = self._premier_destinataire(demandeur)
+        if not self.enabled or destinataire is None:
             return False
+        # NOTIF-1 — DEUX CORPS DE MESSAGE, DEUX TYPOGRAPHIES, DANS CE FICHIER.
+        # Le rapport de gouvernance est intégralement accentué depuis
+        # `redaction.py` ; celui-ci restait en « operationnel » et « associee ».
+        # ADR-011 règle 3 annonce que le test de typographie « couvre toute
+        # surface lisible » : cette chaîne n'est retournée par aucune API, elle
+        # échappe donc au parcours du test. C'est pourtant le seul message que
+        # le technicien reçoit quand il vérifie son propre canal.
         self._enqueue(MailJob(
             "[E7301] Test du canal de notification",
-            "Le canal email du poste E7301 est operationnel. "
-            "Aucune alerte process n'est associee a ce message.",
-            self._destinataires()[0],
+            "Le canal e-mail du poste E7301 est opérationnel.\n"
+            "Aucune alerte procédé n'est associée à ce message : il ne vaut que "
+            "comme vérification du relais et du destinataire.",
+            destinataire,
         ))
         return True
 
-    def enqueue_governance(self, report: str) -> bool:
+    def enqueue_governance(self, report: str, demandeur: str | None = None) -> bool:
         """Envoie le rapport de gouvernance demandé par le technicien."""
-        if not self.enabled:
+        destinataire = self._premier_destinataire(demandeur)
+        if not self.enabled or destinataire is None:
             return False
         self._enqueue(MailJob(
             "[E7301] Rapport de gouvernance du Judge",
             report,
-            self._destinataires()[0],
+            destinataire,
         ))
         return True
 
@@ -276,7 +413,7 @@ class EmailNotifier:
                 self._last_error = None
             except Exception as exc:
                 self._failed += 1
-                self._last_error = type(exc).__name__
+                self._last_error = diagnostiquer_echec(exc)
                 logger.warning(
                     "Email E7301 non envoye (%s)",
                     type(exc).__name__,
@@ -285,7 +422,7 @@ class EmailNotifier:
                     job.attempt += 1
                     self._enqueue(job)
                 else:
-                    self._tracer(job, "echec", type(exc).__name__)
+                    self._tracer(job, "echec", self._last_error)
                     if job.deduplication_key:
                         self._pending_keys.discard(job.deduplication_key)
 
@@ -324,9 +461,18 @@ class EmailNotifier:
                 "dans le fichier .env pour activer l'escalade."
             )
         elif not self._destinataires():
+            # DIRE QUE L'ALERTE AUTOMATIQUE EST HORS SERVICE, PAS EN ATTENTE.
+            # L'ancienne phrase decrivait un canal qui s'activerait tout seul a
+            # la prochaine session. Elle laissait croire que la surveillance
+            # etait couverte, alors qu'aucune alerte ne peut partir tant que
+            # personne n'est connecte — c'est-a-dire la nuit, le week-end, et
+            # pendant tout arret de poste.
             reason = (
-                "Aucun destinataire : l'adresse du technicien devient "
-                "destinataire à l'ouverture de sa session."
+                "AUCUNE ALERTE NE PEUT PARTIR. Aucun destinataire actif : "
+                "l'adresse d'un technicien ne devient destinataire qu'à "
+                "l'ouverture de sa session. Pour une escalade permanente, "
+                "indépendante de toute session, renseigner ALERT_EMAIL_TO "
+                "dans le fichier .env."
             )
         else:
             reason = ""
@@ -339,6 +485,7 @@ class EmailNotifier:
             "spool": str(self.spool) if self.spool else None,
             "spooled": self._spooled,
             "suppressed": self._suppressed,
+            "undelivered_no_recipient": self._sans_destinataire,
             "journal": self.journal[:25],
             "reason": reason,
             "automatic": True,

@@ -33,6 +33,12 @@ import { JSDOM } from "jsdom";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const topology = JSON.parse(readFileSync(process.argv[2] || join(ROOT, "tests", "fixtures", "api", "topology.json"), "utf8"));
 
+// Source lue en texte : certains invariants portent sur la FORME du code —
+// notamment le fait que la boucle de rendu delegue l'animation au lieu d'en
+// porter une copie. Un banc ne peut pas exercer `_loop` sous jsdom; il peut en
+// revanche verifier qu'elle n'abrite pas une seconde implementation.
+const sourceTwin = readFileSync(join(ROOT, "api", "static", "twin.js"), "utf8");
+
 const dom = new JSDOM("<canvas id='c'></canvas>", { pretendToBeVisual: true });
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
@@ -129,17 +135,58 @@ twin.setState({
 const faultedAfter = (twin.faulted || []).length;
 const critSensor = twin.sensors.get("C_ACID_1100")?.severity;
 
+// VUE ECLATEE — la piece sort-elle, et revient-elle EXACTEMENT ?
+//
+// CE BLOC A DEJA MENTI UNE FOIS. Le mouvement vit dans la boucle de rendu, que
+// jsdom ne peut pas faire tourner faute de contexte graphique. J'avais donc
+// REECRIT ICI l'interpolation pour la mesurer : le banc validait sa propre
+// copie, et affichait « 32/32 » pendant que l'utilisateur ne voyait rien bouger
+// a l'ecran. Un controle qui teste sa reimplementation ne teste rien, et
+// celui-la a couvert le defaut au lieu de le reveler.
+//
+// L'animation a ete extraite dans `animerEclats(dt)`. La boucle de rendu
+// l'appelle a chaque image, ce banc l'appelle image par image : une seule
+// implementation, exercee par les deux.
+const posInitiale = twin.components.get("BUNDLE")[0].position.clone();
+const avancer = (secondes) => twin.animerEclats(secondes);
+for (let i = 0; i < 120; i += 1) avancer(1 / 60);
+const posEclatee = twin.components.get("BUNDLE")[0].position.clone();
+const distanceSortie = posEclatee.distanceTo(posInitiale);
+const dirBundle = twin._eclats.get("BUNDLE").dir.clone();
+
 twin.setState({});
 const faultedCleared = (twin.faulted || []).length;
+for (let i = 0; i < 240; i += 1) avancer(1 / 60);
+const posRevenue = twin.components.get("BUNDLE")[0].position.clone();
+const ecartAuRetour = posRevenue.distanceTo(posInitiale);
 
 const focusedSensor = twin.focus("T_ACID_OUT");
 const focusedComponent = twin.focus("BUNDLE");
 const unknown = twin.focus("N_EXISTE_PAS");
 
 twin.setValues({ T_ACID_OUT: 65.74, F_ACID: 56.3 });
+// LA COUPE SE MESURE SUR LE MATERIAU RENDU, PAS SUR LA PALETTE.
+//
+// Ce banc lisait `twin.mat.alloy.opacity`. Or `_register()` clone le materiau
+// pour chaque piece : la calandre n'utilise plus cet objet. La verification
+// passait donc pendant que le bouton « Coupe » ne produisait AUCUN effet — les
+// organes internes devenaient visibles mais restaient enfermes dans une
+// enveloppe opaque. Un controle vert sur une fonction morte.
+//
+// On interroge desormais les materiaux effectivement portes par les maillages
+// de l'enveloppe, reconnus a leur provenance.
+const materiauxEnveloppe = () => (twin.components.get("SHELL") || [])
+  .map((m) => m.material)
+  .filter((mt) => mt?.userData?.materiauSource === twin.mat.alloy
+               || mt?.userData?.materiauSource === twin.mat.cladding);
+
 twin.setCutaway(true);
-const cutOpacity = twin.mat.alloy.opacity;
+const cutOpacity = Math.max(...materiauxEnveloppe().map((m) => m.opacity));
+const internalsVisibles = twin.internals.visible;
+const nbEnveloppe = materiauxEnveloppe().length;
 twin.setCutaway(false);
+const opaciteRetablie = Math.min(...materiauxEnveloppe().map((m) => m.opacity));
+const internalsCaches = twin.internals.visible;
 
 // ── Accessibilite clavier ────────────────────────────────────────────────
 // Un <canvas> n'est pas focusable par defaut : sans traitement explicite, la
@@ -209,10 +256,42 @@ const checks = [
   ["un defaut colore des pieces", faultedAfter > 0],
   ["un defaut marque le capteur", critSensor === "CRITICAL"],
   ["le retour a la normale efface tout", faultedCleared === 0],
+
+  // La piece en defaut doit SORTIR de l'enveloppe — rayon 0,56 m — sinon elle
+  // reste invisible, ce qui est precisement le probleme que ce mouvement
+  // corrige pour le faisceau tubulaire.
+  // Le faisceau a 0,5 m de rayon et l'enveloppe 0,56 m : une amplitude de
+  // 1,15 m le faisait EFFLEURER le dessus de l'appareil. La distance est
+  // desormais calculee sur la taille de la piece, et le seuil verifie qu'elle
+  // se degage franchement au lieu de se poser dessus.
+  ["la piece en defaut se degage franchement", distanceSortie > 1.6],
+  ["elle franchit l'enveloppe (rayon 0,56 m)", distanceSortie > 0.56],
+  ["une piece centree sur l'axe monte", Math.abs(dirBundle.y - 1) < 1e-6],
+
+  // Le retour doit etre EXACT. Une derive de position a chaque cycle
+  // deplacerait lentement l'appareil au fil des pannes successives.
+  ["elle revient exactement a sa place", ecartAuRetour < 1e-3],
+
+  // L'INVARIANT QUI EMPECHE CE BANC DE REDEVENIR CREUX.
+  //
+  // Les deux verifications ci-dessus ne valent que si elles exercent le code
+  // reellement execute par le navigateur. Tant que le banc reimplementait
+  // l'animation, elles passaient au vert sur du code mort. On exige donc que
+  // la boucle de rendu DELEGUE, et qu'elle ne contienne aucune seconde
+  // implementation du deplacement.
+  ["la boucle de rendu delegue l'animation", /_loop\s*=[\s\S]*?animerEclats\(/.test(sourceTwin)],
+  ["le deplacement n'existe qu'en un exemplaire",
+    (sourceTwin.match(/etat\.avance\s*\+=/g) || []).length === 1],
+  ["le banc appelle bien la methode du twin", typeof twin.animerEclats === "function"],
+
   ["cadrage sur un capteur", focusedSensor === true],
   ["cadrage sur une piece", focusedComponent === true],
   ["cible inconnue ignoree", unknown === false],
+  ["l'enveloppe porte bien des materiaux propres", nbEnveloppe > 0],
   ["mode coupe rend la calandre translucide", cutOpacity < 0.3],
+  ["mode coupe revele les organes internes", internalsVisibles === true],
+  ["fermer la coupe rend l'enveloppe opaque", opaciteRetablie === 1],
+  ["fermer la coupe recache les organes internes", internalsCaches === false],
   ["etiquettes de capteur presentes", [...twin.sensors.values()].every((s) => s.label)],
 
   // ── Corrections d'audit ────────────────────────────────────────────────

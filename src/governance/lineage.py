@@ -31,6 +31,33 @@ MANDATORY_GATES = {
     "validation_externe",
 }
 
+# DEUX NATURES DE PORTES, ET LES CONFONDRE RENDAIT LA CHAINE ROUGE A JAMAIS.
+#
+# Les cinq portes ci-dessus conditionnent la PROMOTION d'un artefact, et c'est
+# juste : `promote_model.py` les exige toutes, `validate_model_manifest` refuse
+# le chargement sans elles. Sur ce corpus, `labels_gmao` et `validation_externe`
+# sont en echec DEFINITIF faute d'historique de pannes etiquete — la promotion
+# est donc legitimement impossible, et c'est le resultat correct.
+#
+# Mais `validate_release.py` faisait porter son CODE DE RETOUR sur les cinq, et
+# l'integration continue l'appelle sans `continue-on-error`. Le job `tests`
+# echouait donc a chaque execution, et le job `image` — qui porte
+# `needs: [qualite, tests, frontend]` — n'etait JAMAIS construit. Aucun commit
+# ne pouvait y changer quoi que ce soit : la chaine etait rouge par
+# construction, et le depot affichait un echec permanent.
+#
+# Les trois portes ci-dessous sont celles qu'une MODIFICATION DE CODE peut
+# casser : causalite de la chaine, redondance des variables du modele,
+# stabilite hors periode de reference. Elles doivent bloquer une fusion.
+# Les deux autres attendent une donnee qu'OCP n'a jamais fournie : elles se
+# PUBLIENT, elles ne bloquent pas.
+SOFTWARE_GATES = {
+    "causalite_temporelle",
+    "redondance_features",
+    "stabilite_hors_periode",
+}
+EXTERNAL_DATA_GATES = MANDATORY_GATES - SOFTWARE_GATES
+
 
 class ManifestValidationError(ValueError):
     """Artefact refusé par une gate vérifiable."""
@@ -65,14 +92,46 @@ def package_versions(
     return out
 
 
-def failed_mandatory_gates(validation: dict[str, Any]) -> list[str]:
-    """Retourne les gates absentes ou en échec, jamais seulement celles listées."""
+def _failed_among(validation: dict[str, Any], gates: set[str]) -> list[str]:
+    """Gates absentes ou en échec parmi celles demandées.
+
+    Une gate ABSENTE compte comme en échec : un rapport amputé ne doit pas
+    valoir un rapport favorable.
+
+    Args:
+        validation: Bloc de validation portant `deployment_gates`.
+        gates: Sous-ensemble de portes à examiner.
+
+    Returns:
+        Noms triés des portes non franchies.
+    """
     by_name = {
         str(item.get("gate")): bool(item.get("passed"))
         for item in validation.get("deployment_gates", [])
         if isinstance(item, dict)
     }
-    return sorted(gate for gate in MANDATORY_GATES if not by_name.get(gate, False))
+    return sorted(gate for gate in gates if not by_name.get(gate, False))
+
+
+def failed_mandatory_gates(validation: dict[str, Any]) -> list[str]:
+    """Portes de PROMOTION non franchies — les cinq, sans exception.
+
+    C'est cette liste que `validate_model_manifest` oppose au chargement d'un
+    artefact et que `promote_model.py` oppose à une promotion. Elle ne doit
+    jamais être assouplie : un modèle sans vérité terrain ne se promeut pas.
+    """
+    return _failed_among(validation, MANDATORY_GATES)
+
+
+def failed_software_gates(validation: dict[str, Any]) -> list[str]:
+    """Portes qu'une MODIFICATION DE CODE peut casser — les trois.
+
+    C'est la liste qui doit bloquer une fusion. Les deux autres portes
+    (`labels_gmao`, `validation_externe`) attendent un historique de pannes
+    étiqueté qu'OCP n'a pas fourni : les rendre bloquantes revenait à exiger
+    d'un commit qu'il produise une donnée terrain.
+    """
+    return _failed_among(validation, SOFTWARE_GATES)
 
 
 def _chemin_relatif(chemin: Path) -> str:

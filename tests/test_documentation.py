@@ -33,7 +33,28 @@ import re
 from pathlib import Path
 
 RACINE = Path(__file__).resolve().parents[1]
-DOCUMENTS = [*sorted((RACINE / "docs").rglob("*.md")), RACINE / "README.md"]
+
+# `docs/audits/` EST ECARTE, ET LA RAISON EST UN CONTRAT, PAS UNE COMMODITE.
+#
+# Ce fichier verifie que la documentation decrit LE SYSTEME QUI EXISTE. Un
+# journal d'audit decrit son HISTOIRE : il cite par construction des endpoints
+# supprimes (`/api/business/assumptions`), des tests qui n'existaient pas, des
+# montants retires — c'est precisement son objet, et c'est ce qui rend une
+# correction retracable.
+#
+# Les inclure obligerait a echapper chaque citation, donc a rendre le journal
+# illisible pour satisfaire un controle qui ne le vise pas. Le meme raisonnement
+# que `ABSENCES_ASSUMEES` ci-dessous, applique a un dossier entier plutot qu'a
+# une liste de noms.
+#
+# Contrepartie assumee : si de la documentation d'usage etait un jour ecrite
+# sous `docs/audits/`, elle echapperait a ces quatre controles. Elle n'y a pas
+# sa place.
+AUDITS = RACINE / "docs" / "audits"
+DOCUMENTS = [
+    *sorted(p for p in (RACINE / "docs").rglob("*.md") if AUDITS not in p.parents),
+    RACINE / "README.md",
+]
 
 # Noms de tests cites par la documentation POUR DIRE QU'ILS N'EXISTENT PAS.
 # Toute autre citation d'un test absent est une erreur.

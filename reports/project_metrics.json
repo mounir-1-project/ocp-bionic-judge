@@ -68,7 +68,7 @@
     "source": "data/raw/DATA.xlsx",
     "usable_timestamps": 10180
   },
-  "generated_at_utc": "2026-07-31T02:04:28.076531+00:00",
+  "generated_at_utc": "2026-07-31T23:19:21.051595+00:00",
   "industrial_validation": {
     "production_go": false,
     "software_tests_prove_industrial_validity": false
@@ -103,11 +103,11 @@
   },
   "schema_version": "1.0",
   "tests": {
-    "duration_s": 138.343,
+    "duration_s": 179.23,
     "errors": 0,
-    "failures": 0,
+    "failures": 2,
     "skipped": 1,
     "status": "measured",
-    "tests": 267
+    "tests": 277
   }
 }

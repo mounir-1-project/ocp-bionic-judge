@@ -20,6 +20,28 @@ import pytest
 # général en mode local pour éviter de masquer les contrats métier.
 os.environ.setdefault("AUTH_ENABLED", "false")
 
+# LA SUITE DECRIT UN ETAT, PAS LA MACHINE QUI LA FAIT TOURNER.
+#
+# `test_acces_local_et_notifications_desactivees` affirme qu'aucun courriel ne
+# part sans relais SMTP, et l'ecrit `enabled is False`. Or `EmailNotifier.enabled`
+# devient vrai des que `.env` porte un relais ET un destinataire — c'est-a-dire
+# sur toute machine CORRECTEMENT CONFIGUREE, celle que le runbook decrit. Le
+# test passait en integration continue, qui part d'un depot vierge sans `.env`,
+# et echouait sur le poste de l'exploitant.
+#
+# C'est exactement le piege que `scripts/dump_fixtures.py` documente pour
+# `AUTH_ENABLED` : « le defaut ne se voyait que la ou un registre existe ; ni en
+# integration continue, ni dans l'environnement d'audit ». La meme cause, sur
+# une autre variable.
+#
+# `setdefault` ne suffit pas ici : `load_dotenv()` n'ecrase pas une variable
+# deja posee, mais ces deux-la ne sont pas posees — elles viennent du fichier.
+# On les neutralise donc explicitement pour la duree de la suite. Les tests qui
+# ont besoin d'un canal actif construisent leur propre `EmailNotifier` avec un
+# hote explicite, et ne dependent pas de cette valeur.
+os.environ["SMTP_HOST"] = ""
+os.environ["ALERT_EMAIL_TO"] = ""
+
 from src.config import DCS_EXPORT
 from src.domain.knowledge import load_domain
 from src.ingest.dcs_loader import ingest

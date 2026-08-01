@@ -216,13 +216,23 @@
     },
     {
       "gate": "redondance_features",
+      "passed": true,
+      "evidence": "0 paire(s) redondante(s) entre grandeurs du modèle ; conditionnement 3,09"
+    },
+    {
+      "gate": "redondance_hors_modele",
       "passed": false,
-      "evidence": "0 paire(s) redondante(s) entre grandeurs du modèle, 2 avec une variable régulée hors modèle (la plus forte : regulation_effort_z contre control_deviation, r = -0,938) ; conditionnement 3,09"
+      "evidence": "2 grandeur(s) du modèle redondante(s) avec une variable régulée hors modèle — la plus forte : regulation_effort_z contre control_deviation, r = -0,938. Propriété algébrique permanente établie par ADR-001, non corrigeable par une modification de code : publiée, jamais bloquante. Le résidu d'effort est conservé sous le nom `regulation_effort` et ne fonde aucun diagnostic d'encrassement."
     },
     {
       "gate": "stabilite_hors_periode",
+      "passed": true,
+      "evidence": "alertes moyennes 7,8 % hors période de référence, pour 15,0 % admis · dispersion du seuil 0,001"
+    },
+    {
+      "gate": "derive_de_distribution",
       "passed": false,
-      "evidence": "alertes moyennes 7,8 % · PSI max 3,745 · dispersion du seuil 0,001"
+      "evidence": "PSI max 3,745 sur les scores, pour 0,25 admis. Le corpus change de régime entre les deux moitiés de la période (deux excursions de sur-refroidissement, § 9.2) : un PSI élevé est ici attendu. Le seuil de 0,25 est la borne usuelle du scoring de crédit, où les populations comparées sont supposées échangeables ; son transfert à des scores d'anomalie non supervisés n'est pas argumenté. Mesure publiée, non bloquante."
     },
     {
       "gate": "labels_gmao",

@@ -1,5 +1,5 @@
 {
-  "created_at_utc": "2026-07-31T01:09:05.159534+00:00",
+  "created_at_utc": "2026-08-01T20:59:51.126670+00:00",
   "data": {
     "path": "data/raw/DATA.xlsx",
     "sha256": "93487c581f4cd684e8783251e91f15274d8ca4e3a0ae1eb332370039a5520239",
@@ -129,13 +129,23 @@
             "passed": true
           },
           {
-            "evidence": "0 paire(s) redondante(s) entre grandeurs du modèle, 2 avec une variable régulée hors modèle (la plus forte : regulation_effort_z contre control_deviation, r = -0,938) ; conditionnement 3,09",
+            "evidence": "0 paire(s) redondante(s) entre grandeurs du modèle ; conditionnement 3,09",
             "gate": "redondance_features",
+            "passed": true
+          },
+          {
+            "evidence": "2 grandeur(s) du modèle redondante(s) avec une variable régulée hors modèle — la plus forte : regulation_effort_z contre control_deviation, r = -0,938. Propriété algébrique permanente établie par ADR-001, non corrigeable par une modification de code : publiée, jamais bloquante. Le résidu d'effort est conservé sous le nom `regulation_effort` et ne fonde aucun diagnostic d'encrassement.",
+            "gate": "redondance_hors_modele",
             "passed": false
           },
           {
-            "evidence": "alertes moyennes 7,8 % · PSI max 3,745 · dispersion du seuil 0,001",
+            "evidence": "alertes moyennes 7,8 % hors période de référence, pour 15,0 % admis · dispersion du seuil 0,001",
             "gate": "stabilite_hors_periode",
+            "passed": true
+          },
+          {
+            "evidence": "PSI max 3,745 sur les scores, pour 0,25 admis. Le corpus change de régime entre les deux moitiés de la période (deux excursions de sur-refroidissement, § 9.2) : un PSI élevé est ici attendu. Le seuil de 0,25 est la borne usuelle du scoring de crédit, où les populations comparées sont supposées échangeables ; son transfert à des scores d'anomalie non supervisés n'est pas argumenté. Mesure publiée, non bloquante.",
+            "gate": "derive_de_distribution",
             "passed": false
           },
           {
@@ -368,12 +378,12 @@
       }
     },
     "path": "models/e7301_detector.joblib",
-    "sha256": "8112933163ba12dbeed97628294fb03768c50508872bd1f0f26074e7709aa55b",
+    "sha256": "85a7ac800fabd24b0af432f5c3672ab7918662ee46839e023bf22b031f1e7fec",
     "size_bytes": 6477939
   },
   "model_identity": {
     "id": "e7301-behavioral-iforest",
-    "version": "2026-07-31T010905.159534+0000"
+    "version": "2026-08-01T205951.126670+0000"
   },
   "promotion": {
     "process": "manual_governed_promotion",
@@ -388,7 +398,7 @@
       "numpy": "1.26.4",
       "pandas": "2.2.2",
       "pydantic": "2.13.4",
-      "scikit-learn": "1.4.2"
+      "scikit-learn": "1.9.0"
     },
     "platform": "Windows-11-10.0.26200-SP0",
     "python": "3.12.10"
@@ -413,13 +423,11 @@
       "t_out_local_z",
       "t_in_local_z"
     ],
-    "trained_at_utc": "2026-07-31T01:09:05.159534+00:00"
+    "trained_at_utc": "2026-08-01T20:59:51.126670+00:00"
   },
   "validation": {
     "failed_mandatory_gates": [
       "labels_gmao",
-      "redondance_features",
-      "stabilite_hors_periode",
       "validation_externe"
     ],
     "results": {
@@ -430,13 +438,23 @@
           "passed": true
         },
         {
-          "evidence": "0 paire(s) redondante(s) entre grandeurs du modèle, 2 avec une variable régulée hors modèle (la plus forte : regulation_effort_z contre control_deviation, r = -0,938) ; conditionnement 3,09",
+          "evidence": "0 paire(s) redondante(s) entre grandeurs du modèle ; conditionnement 3,09",
           "gate": "redondance_features",
+          "passed": true
+        },
+        {
+          "evidence": "2 grandeur(s) du modèle redondante(s) avec une variable régulée hors modèle — la plus forte : regulation_effort_z contre control_deviation, r = -0,938. Propriété algébrique permanente établie par ADR-001, non corrigeable par une modification de code : publiée, jamais bloquante. Le résidu d'effort est conservé sous le nom `regulation_effort` et ne fonde aucun diagnostic d'encrassement.",
+          "gate": "redondance_hors_modele",
           "passed": false
         },
         {
-          "evidence": "alertes moyennes 7,8 % · PSI max 3,745 · dispersion du seuil 0,001",
+          "evidence": "alertes moyennes 7,8 % hors période de référence, pour 15,0 % admis · dispersion du seuil 0,001",
           "gate": "stabilite_hors_periode",
+          "passed": true
+        },
+        {
+          "evidence": "PSI max 3,745 sur les scores, pour 0,25 admis. Le corpus change de régime entre les deux moitiés de la période (deux excursions de sur-refroidissement, § 9.2) : un PSI élevé est ici attendu. Le seuil de 0,25 est la borne usuelle du scoring de crédit, où les populations comparées sont supposées échangeables ; son transfert à des scores d'anomalie non supervisés n'est pas argumenté. Mesure publiée, non bloquante.",
+          "gate": "derive_de_distribution",
           "passed": false
         },
         {

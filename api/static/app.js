@@ -263,6 +263,42 @@ function toast(message, tone = "info") {
 function showGate() {
   $("gate").hidden = false;
   document.body.dataset.boot = "gate";
+
+  // LA SCRUTATION DOIT MOURIR AVEC LA SESSION.
+  //
+  // Elle ne s'arretait pas. `pump()` tourne toutes les 1,6 s et emet deux a
+  // trois requetes par passage : une fois la session expiree, le poste
+  // continuait a marteler l'API a environ 75 requetes non authentifiees par
+  // minute, indefiniment, chacune repondue en 401. Mesure sur le poste de
+  // l'exploitant : la console n'affichait plus que cela.
+  //
+  // Trois consequences, par gravite croissante :
+  //
+  // 1. Le limiteur de debit voit un poste legitime se comporter comme une
+  //    attaque. Quand le technicien revient s'identifier, il peut se heurter
+  //    a un blocage que son propre poste a provoque.
+  // 2. Tout l'affichage — courbes, journal, ET LA SCENE 3D — reste fige sur
+  //    le dernier etat recu, sans que rien ne le signale. Une supervision qui
+  //    montre un etat perime sans le dire est pire qu'un ecran noir.
+  // 3. Le bandeau annoncait « Service injoignable ». C'est FAUX : le service
+  //    repond parfaitement, c'est la session qui a expire. Un diagnostic
+  //    errone envoie l'exploitant verifier le reseau au lieu de se
+  //    reconnecter.
+  if (S.timer) { clearInterval(S.timer); S.timer = null; }
+  setLink("down", "Session expirée — écran figé");
+}
+
+/**
+ * Relance la scrutation apres une identification reussie.
+ *
+ * `start()` ne peut pas servir : il est garde par `S.started` et reconstruit
+ * tout le poste. Apres une simple expiration de session, la page est intacte —
+ * seule la boucle est a redemarrer, et une seule fois.
+ */
+async function reprendreScrutation() {
+  if (S.timer) return;
+  await pump();
+  S.timer = setInterval(pump, TICK);
 }
 
 function applyOperator(auth) {
@@ -385,7 +421,11 @@ async function login(event) {
     applyOperator({ required: true, operator: auth.operator || auth });
     $("gate").hidden = true;
     document.body.dataset.boot = "ready";
+    // `S.started` reste vrai apres une expiration de session : sans cette
+    // branche, se reidentifier rendait la main sur un poste definitivement
+    // muet — la boucle arretee par `showGate` n'etait jamais relancee.
     if (!S.started) { S.started = true; await start(); }
+    else await reprendreScrutation();
   } catch (err) {
     $("loginError").textContent = err.message || "Identification refusee";
   }
@@ -433,9 +473,16 @@ function tickClock() {
 }
 
 function setLink(state, label) {
+  // L'INDICATEUR DE LIAISON NE DOIT JAMAIS FAIRE TOMBER CE QUI L'APPELLE.
+  // Il est pose depuis les chemins d'erreur — expiration de session, service
+  // injoignable. Si l'element manquait, la mise a jour du bandeau ferait
+  // echouer la gestion de l'erreur elle-meme : le poste perdrait a la fois la
+  // liaison ET le traitement de sa perte.
   const el = $("linkState");
+  if (!el) return;
   el.dataset.link = state;
-  el.querySelector("span").textContent = label;
+  const texte = el.querySelector("span");
+  if (texte) texte.textContent = label;
 }
 
 /* ═══ Jumeau 3D ═══════════════════════════════════════════════════════════ */
@@ -459,6 +506,15 @@ function initTwin(equipment = null) {
         else openComponent(hit.id);
       },
     });
+    // POIGNEE DE DIAGNOSTIC. La scene 3D vit dans une portee de module :
+    // inatteignable depuis la console. Quand l'affichage contredit l'etat
+    // annonce — une piece designee CRITIQUE qui ne bouge pas, un capteur muet —
+    // il n'existait aucun moyen de savoir, sur le poste concerne, si le defaut
+    // venait des donnees, du code charge, ou du rendu. On diagnostiquait a
+    // l'aveugle. Cette reference ne fait qu'exposer un objet deja construit :
+    // elle n'ouvre aucun acces que la page n'ait deja.
+    window.__twin = S.twin;
+
     const stats = S.twin.stats();
     $("stageLegal").innerHTML =
       `Géométrie construite sur <b>SIZE 1118-9754</b> de la fiche équipement — `

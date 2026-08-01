@@ -6,22 +6,19 @@ Author: Mounir Sanbouli — Stage OCP, Programme Bionic
 
 from __future__ import annotations
 
-import unicodedata
+# FMT-2 — CETTE FONCTION EXISTAIT DEUX FOIS, LIGNE POUR LIGNE.
+#
+# `src/formatting.sans_accents` et la copie qui vivait ici portaient le meme
+# corps — `NFKD`, filtrage des `combining`, `casefold` — et le meme argument :
+# « corriger la typographie ne doit jamais casser le test qui protege le fond ».
+#
+# Deux exemplaires d'une regle de normalisation finissent par diverger, et le
+# jour ou ils divergent c'est la suite de tests qui ment sur ce qu'elle compare.
+# ADR-011 exige d'ailleurs que la mise en forme soit centralisee : le test ne
+# peut pas s'en dispenser au motif qu'il est un test.
+#
+# On reexporte, on ne recopie pas. Les fichiers de tests continuent d'ecrire
+# `from tests.helpers import sans_accents` sans rien changer.
+from src.formatting import sans_accents
 
-
-def sans_accents(texte: str) -> str:
-    """Retire accents et casse, pour comparer un FOND et non une typographie.
-
-    Un test qui verifie qu'un message parle bien du coefficient d'echange doit
-    continuer de passer quand ce message gagne ses accents. Sans cette
-    normalisation, corriger la typographie casserait les tests, et l'equipe
-    apprendrait a ne plus la corriger.
-
-    Args:
-        texte: Chaine quelconque.
-
-    Returns:
-        La meme chaine, sans diacritiques et en minuscules.
-    """
-    decompose = unicodedata.normalize("NFKD", texte)
-    return "".join(c for c in decompose if not unicodedata.combining(c)).casefold()
+__all__ = ["sans_accents"]
