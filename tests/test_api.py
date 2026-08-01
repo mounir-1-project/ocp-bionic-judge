@@ -345,8 +345,17 @@ def test_series_temporelles(client):
     assert d["n_returned"] <= 300
     assert len(d["timestamps"]) == d["n_returned"]
     assert d["timestamps"][-1].startswith("2025-02-28")
+    # LE TEST VERROUILLAIT LE DEFAUT QU'IL AURAIT DU EMPECHER.
+    # Il exigeait `duty_kw` et `duty_expected` — la paire qu'ADR-001 refute —
+    # et n'exigeait AUCUNE grandeur de coefficient d'echange. La serie qui porte
+    # le diagnostic pouvait donc disparaitre sans qu'aucun test ne bronche.
     for col in ("T_ACID_IN", "T_ACID_OUT", "duty_kw", "duty_expected"):
         assert col in d and len(d[col]) == d["n_returned"]
+    for col in ("ua_kw_per_k", "ua_expected", "fouling_resistance"):
+        assert col in d and len(d[col]) == d["n_returned"], (
+            f"{col} absent de /api/timeseries : la courbe qui porte le "
+            f"diagnostic d'encrassement n'est pas exposee"
+        )
     aliases = {
         tag["alias"] for tag in client.get("/api/equipment").json()["tags"]
     }

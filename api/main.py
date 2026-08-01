@@ -854,9 +854,26 @@ def timeseries(
         df = df[df.index <= end_ts]
 
     raw_aliases = [tag.alias for tag in p.domain.tags.values()]
+    # API-2 — LA COURBE QUI PORTE LE DIAGNOSTIC N'ETAIT PAS EXPOSEE.
+    #
+    # Cette liste servait `duty_kw` et `duty_expected` — la paire qu'ADR-001
+    # demontre algebriquement circulaire, conservee sous le nom
+    # `regulation_effort` et qui « ne fonde jamais un diagnostic
+    # d'encrassement » — et n'exposait AUCUNE grandeur de coefficient
+    # d'echange. L'exploitant pouvait donc tracer l'indicateur sans valeur de
+    # preuve, et pas celui qui porte le diagnostic.
+    #
+    # Le menu Signaux du poste intitulait meme cette paire « Performance
+    # observee / attendue ».
+    #
+    # Les quatre grandeurs UA sont ajoutees. Le front les connaissait deja :
+    # `MESURE_LABEL` les nomme avec leur unite et leur precision, et la carte
+    # de lignage affiche la reference de conductance. Il ne manquait que la
+    # serie.
     cols = [*raw_aliases,
         "conc_min", "delta_t", "duty_kw", "duty_expected", "regulation_effort_z",
         "regulation_effort_trend_14d", "control_deviation",
+        "ua_kw_per_k", "ua_expected", "ua_residual_z", "fouling_resistance",
     ]
     cols = [c for c in cols if c in df.columns]
 

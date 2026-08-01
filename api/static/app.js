@@ -91,6 +91,20 @@ const ETAT_LABEL = {
 };
 const etatLisible = (code) => ETAT_LABEL[code] || code || "—";
 
+/**
+ * Rôle d'un tag dans le périmètre de surveillance.
+ *
+ * `primary`, `secondary`, `context`, `degraded` sont des codes du référentiel.
+ * Ils étaient rendus tels quels dans le tiroir capteur, à côté d'un champ
+ * `confidence` qui porte en réalité une liste de bases de détermination.
+ */
+const ROLE_LABEL = {
+  primary: "Capteur du périmètre",
+  secondary: "Capteur secondaire",
+  context: "Capteur de contexte",
+  degraded: "Capteur déclaré défaillant",
+};
+
 /** Délai de QUALIFICATION de la constatation, distinct de l'exécution. */
 const URGENCE_LABEL = {
   AUCUNE: "aucun délai",
@@ -572,9 +586,27 @@ async function openSensor(alias) {
   }
 
   const degraded = data.role === "degraded";
+  // DEUX IDENTIFIANTS MACHINE DANS LA MEME PHRASE, SUR LE GESTE PRINCIPAL.
+  //
+  // Ce tiroir s'ouvre a chaque clic sur un capteur du jumeau 3D — l'action
+  // centrale de la vue Salle. Il affichait « Capteur primary · confiance
+  // isa_5_1,process,data ».
+  //
+  // `role` est un code du referentiel. Et `confidence` a GARDE SON NOM EN
+  // CHANGEANT DE SENS : il ne porte plus un niveau de confiance mais la liste
+  // des bases ayant servi a etablir le sens du tag, jointes par des virgules.
+  // Le rapport promet encore `confirmed` / `inferred` / `unknown` : ces trois
+  // valeurs n'existent plus.
+  //
+  // Les deux tables de traduction existaient deja dans ce fichier — elles
+  // n'etaient simplement pas appelees ici.
+  const bases = String(data.confidence || "")
+    .split(",").filter(Boolean)
+    .map((b) => BASE_LABEL[b] || b);
   $("drawerRole").textContent = degraded
     ? "Capteur déclaré défaillant"
-    : `Capteur ${data.role} · confiance ${data.confidence}`;
+    : `${ROLE_LABEL[data.role] || data.role}${
+      bases.length ? ` · sens établi par ${bases.join(", ")}` : ""}`;
   $("drawerName").textContent = data.label;
   $("drawerTag").textContent = `${data.tag} · ${data.placement?.placement || "—"}`;
   $("drawerValue").textContent = fmt(data.stats.last, 2);
@@ -752,8 +784,29 @@ const TREND_SETS = {
     title: "Débit acide et allure de marche", unit: "m³/h",
     lines: [["F_ACID", "Débit acide"], ["LOAD_SULFUR", "Charge soufre (t/h)"]],
   },
+  // LA FAMILLE QUI PORTE LE DIAGNOSTIC, ET QUI MANQUAIT.
+  //
+  // Le menu offrait six familles, dont aucune ne traçait le coefficient
+  // d'échange. L'exploitant pouvait suivre le duty — dont ADR-001 démontre
+  // qu'il redit l'écart de consigne — et pas UA, qui est la seule grandeur
+  // construite sur ce que l'encrassement dégrade.
+  //
+  // Elle est placée EN TÊTE : c'est celle qu'on ouvre en premier quand on
+  // cherche une dérive du faisceau.
+  echange: {
+    title: "Coefficient d'échange global — observé contre attendu", unit: "kW/K",
+    lines: [["ua_kw_per_k", "UA observé"], ["ua_expected", "UA attendu"]],
+  },
+  encrassement: {
+    title: "Résistance d'encrassement", unit: "K/kW",
+    lines: [["fouling_resistance", "Rf = 1/UA − 1/UA attendu"]],
+    guide: ["Référence", 0],
+  },
   duty: {
-    title: "Puissance évacuée — observée contre attendue", unit: "kW",
+    // Le titre disait « Performance observée / attendue ». C'est ce que cette
+    // paire n'est pas : le résidu de duty vaut l'écart de consigne changé de
+    // signe. Le nom dit désormais ce que la courbe mesure.
+    title: "Effort de régulation — puissance évacuée contre attendue", unit: "kW",
     lines: [["duty_kw", "Observé"], ["duty_expected", "Référence semi-empirique"]],
   },
   absorption: {
