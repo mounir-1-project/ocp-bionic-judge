@@ -25,7 +25,6 @@ pytest-cov>=5.0
 # ── Analyse (notebooks) ──────────────────────────────────────────────────────
 matplotlib>=3.8
 jupyter>=1.0
-pypdf>=5.0             # extraction textuelle des gammes PDF lors de l'audit
 
 # ── Optionnel : redaction par modele de langage ──────────────────────────────
 # Le systeme fonctionne integralement sans ces paquets ni cle API. Les installer
@@ -49,5 +48,3 @@ mypy>=1.11
 # Non necessaires au poste ni aux tests, mais importes par deux scripts du
 # depot. Un fichier de dependances qui ne couvre pas son propre depot laisse un
 # ModuleNotFoundError a qui installe le projet et lance l'un d'eux.
-Pillow>=10.0          # scripts/make_contact_sheets.py — planches de contact
-python-docx>=1.1      # scripts/update_report_docx.py — export du rapport
