@@ -1,6 +1,6 @@
 # Architecture technique — surveillance E7301
 
-**Version active : 3.0 — état vérifié le 25 juillet 2026**
+**Version active : 3.0 — état vérifié le 2 août 2026**
 
 ## Finalité et périmètre
 
@@ -33,7 +33,7 @@ DATA.xlsx (10 180 h, 12 tags)
 src/ingest/        schéma, codes qualité, gels, saturations, états process
         |
         v
-src/features/      physique de l'échangeur, fenêtres temporelles, référence thermique
+src/features/      physique de l'échangeur, coefficient d'échange UA, trois références
         |
         v
 src/models/        règles AMDEC + Isolation Forest + attribution par occlusion
@@ -87,26 +87,64 @@ divergence entre démonstration et calcul hors ligne.
    échec LLM ouvre un coupe-circuit et le résultat par règles reste disponible.
 5. **Pas de métrique supervisée inventée.** En l'absence de panne étiquetée,
    AUC, rappel et F1 de détection ne sont pas revendiqués.
-6. **Aucune valorisation monétaire.** Ce principe énonçait que « le scénario
-   financier reste séparé des KPI mesurés » : il n'y a plus de scénario
-   financier du tout. La couche économique a été retirée du périmètre, et deux
-   tests interdisent son retour — l'un vérifie qu'aucun endpoint économique ne
-   répond, l'autre qu'aucun indicateur ne porte de montant. Un principe qui
-   décrit un sous-système supprimé donne au lecteur une carte fausse de ce
-   qu'il va trouver dans le code.
+6. **Aucune valorisation monétaire.** Aucun montant n'est calculé nulle part.
+   Deux tests interdisent le retour de la couche économique : l'un vérifie
+   qu'aucun endpoint économique ne répond, l'autre qu'aucun indicateur ne porte
+   de montant.
+
+*(Le point 6 était auparavant rédigé comme une note d'édition expliquant la
+suppression d'un principe antérieur. Un lecteur comptait six invariants là où il
+y en avait cinq et un commentaire.)*
 
 ## Modèles et reproductibilité
 
-La référence thermique semi-empirique estime le duty attendu à conditions comparables. Le résidu
-met en évidence un effort de refroidissement anormal sans confondre charge et
-dégradation. L'Isolation Forest est entraînée uniquement sur les heures de
-marche établie exploitables, avec graine fixe. Ses contributions sont calculées
-par occlusion exacte de chaque variable, pas par une explication générative.
+### L'indicateur d'encrassement est le coefficient d'échange global
 
-La période de référence est sélectionnée automatiquement dans l'historique
-disponible selon les critères de marche établie et de qualité. La variable
-`REFERENCE_END` permet de reproduire ou de déplacer cet ancrage sans modifier
-le code.
+**Ce paragraphe décrivait le résidu de duty comme la référence du système.**
+C'est l'approche qu'[ADR-001](decisions/ADR-001-indicateur-encrassement.md)
+démontre algébriquement circulaire : la cible est déjà une combinaison linéaire
+de deux régresseurs présents, R² = 0,968 contre 0,962 **sans aucun
+apprentissage**, et corr(résidu, écart de consigne) = −0,94. Le résidu a été
+renommé `regulation_effort` et ne fonde jamais un diagnostic d'encrassement.
+
+Le diagnostic repose sur le **coefficient d'échange global UA**, calculé par la
+méthode efficacité-NTU :
+
+```text
+ε   = (T_entrée − T_sortie) / (T_entrée − T_eau_de_mer)
+NTU = −ln(1 − ε)
+UA  = C_acide · NTU
+```
+
+La température d'eau de mer vient de la climatologie de Safi
+([ADR-002](decisions/ADR-002-temperature-eau-de-mer.md)) : c'est une grandeur
+extérieure à l'atelier, qu'aucune boucle de régulation ne contraint, et c'est ce
+qui rend l'indicateur interprétable. Une référence linéaire apprend
+`UA(F^0,8, T_moyenne, T_eau)` ; le résidu est l'indicateur, et
+`Rf = 1/UA − 1/UA_attendu` la grandeur suivie par le service fiabilité.
+
+**UA est un UA apparent** : le débit d'eau de mer n'est pas instrumenté, et
+c'est lui que la régulation manipule. La grandeur mesure donc l'état de la
+surface d'échange **multiplié par** l'action de la boucle froide. Tant que la
+vanne conserve de la marge, elle compense un début d'encrassement.
+
+L'Isolation Forest est entraînée uniquement sur les heures de marche établie
+exploitables, avec graine fixe. Ses contributions sont calculées par occlusion
+exacte de chaque variable, pas par une explication générative.
+
+### Période de référence
+
+Les trois références — conductance, effort de régulation, température d'entrée —
+partagent la **même fenêtre** : les 40 % premières heures de marche établie,
+constante `REFERENCE_FRACTION` définie une seule fois dans
+`src/features/thermal.py`. `REFERENCE_END = None` par défaut était une **fuite
+de données** : la conductance s'ajustait sur les quatorze mois, y compris la
+dégradation qu'elle doit détecter. Voir
+[ADR-009](decisions/ADR-009-periode-de-reference-commune.md).
+
+Le choix de 40 % reste arbitraire et il est traité comme tel :
+`src.governance.sensitivity` mesure ce que devient le diagnostic quand on
+déplace cette borne, et le résultat est publié sur l'onglet Contrôle.
 
 ## Exécution et déploiement
 
