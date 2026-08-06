@@ -222,9 +222,39 @@ for (let i = 0; i < 20; i += 1) twin._guardPerformance(0.1);
 const degraded = twin.quality === "reduced" || twin.quality === "minimal";
 
 // ── Collision d'etiquettes ───────────────────────────────────────────────
+//
+// CE CONTROLE EXIGEAIT QUE LE DEFAUT EXISTE.
+//
+// Il verifiait `opacities.some((o) => o < 0.99)` — donc qu'AU MOINS UNE
+// etiquette soit estompee. Ecarter correctement les capteurs, ce qui est
+// precisement la correction attendue, l'aurait fait echouer : le banc aurait
+// sanctionne une amelioration.
+//
+// La propriete qui compte n'est pas « quelque chose est estompe », c'est
+// « rien d'illisible ne subsiste » : apres resolution, AUCUNE PAIRE
+// D'ETIQUETTES PLEINEMENT VISIBLES NE DOIT SE RECOUVRIR A L'ECRAN. Elle est
+// vraie qu'il y ait des conflits ou non, et elle echoue si la resolution
+// cesse de fonctionner.
 twin._resolveLabelCollisions();
-const opacities = [...twin.sensors.values()].map((s) => s.label.material.opacity);
-const someFaded = opacities.some((o) => o < 0.99);
+const visibles = [...twin.sensors.values()]
+  .filter((s) => s.label.material.opacity > 0.5)
+  .map((s) => {
+    const p = s.group.position.clone();
+    p.y += s.group.rotation.z === Math.PI ? -0.42 : 0.42;
+    p.project(twin.camera);
+    return { x: p.x, y: p.y };
+  });
+const aspect = twin.camera.aspect || 1.6;
+const halfW = 0.085 * (1.6 / aspect);
+const halfH = 0.045;
+const recouvrements = [];
+for (let i = 0; i < visibles.length; i += 1) {
+  for (let j = i + 1; j < visibles.length; j += 1) {
+    if (Math.abs(visibles[i].x - visibles[j].x) < halfW * 2
+     && Math.abs(visibles[i].y - visibles[j].y) < halfH * 2) recouvrements.push([i, j]);
+  }
+}
+const aucunRecouvrement = recouvrements.length === 0;
 
 // Un capteur doit se trouver PRES de la piece qu'il mesure. Sans ce controle,
 // une erreur d'echelle dans topology.yaml place les etiquettes dans le vide
@@ -302,7 +332,7 @@ const checks = [
   ["tabulation parcourt les capteurs", cursorMoved],
   ["entree ouvre le capteur courant", openedByKeyboard],
   ["degradation automatique si le rendu rame", degraded],
-  ["etiquettes qui se recouvrent sont estompees", someFaded],
+  ["aucune etiquette lisible n'en recouvre une autre", aucunRecouvrement],
 ];
 
 console.log(`\nPieces dans la scene : ${componentsInScene.length}`);
