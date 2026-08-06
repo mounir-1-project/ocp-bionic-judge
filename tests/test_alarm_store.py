@@ -12,17 +12,31 @@ def _analysis(
     timestamp="2024-08-01 10:00:00",
     finding="DUTY_LOW",
     mode="FAISCEAU_BOUCHAGE",
+    autres=(),
+    lead=None,
 ):
+    """Analyse de test.
+
+    `autres` permet de porter PLUSIEURS constatations, ce que ce constructeur
+    ne savait pas faire : il en produisait toujours exactement une. Le defaut
+    AL-1 — l'alarme identifiee par `findings[0]`, donc par l'ordre d'ecriture
+    des regles — etait de ce fait structurellement hors de portee de la suite.
+
+    `lead` est la constatation que l'agent a retenue comme dominante. Par
+    defaut c'est `finding`, ce qui reproduit le cas nominal.
+    """
+    codes = ([finding] if finding else []) + list(autres)
     return SimpleNamespace(
         detection=SimpleNamespace(
             timestamp=timestamp,
-            findings=[SimpleNamespace(code=finding)] if finding else [],
+            findings=[SimpleNamespace(code=c) for c in codes],
         ),
         decision=SimpleNamespace(
             severity=severity,
             amdec_modes=[mode] if severity != "NORMAL" and mode else [],
             diagnosis="Déficit thermique persistant",
             recommended_action=SimpleNamespace(description="Inspecter le faisceau"),
+            lead_finding=lead if lead is not None else finding,
         ),
         verdict=SimpleNamespace(agreement=agreement),
     )
@@ -165,4 +179,73 @@ def test_observations_concurrentes_restent_atomiques(tmp_path):
     assert len(persisted) == 1
     assert persisted[0]["occurrence_count"] == 20
     assert len(store.get(persisted[0]["id"])["history"]) == 20
+    store.close()
+
+
+def test_l_alarme_porte_la_constatation_dominante_pas_la_premiere(tmp_path):
+    """AL-1 — LE REGISTRE NOMMAIT L'ALARME D'APRES LE CAPTEUR, PAS LE TUBE.
+
+    `RuleEngine.evaluate` appelle `_rule_sensor_health` EN PREMIER. Une analyse
+    qui porte a la fois un `SENSOR_FAULT` et un `CONC_DROP_SEVERE` — suspicion
+    de percement de tube — presentait donc `SENSOR_FAULT` en tete de
+    `findings`. `_key` prenait `findings[0]` : l'alarme persistee nommait
+    l'analyseur qui derive, pendant que le diagnostic affiche nommait le
+    faisceau.
+
+    L'agent tranche par `_priorite`, qui fait passer un defaut de mesure APRES
+    un diagnostic equipement. Le registre consomme desormais ce choix.
+    """
+    store = AlarmStore(tmp_path / "alarms.db")
+    store.observe(_analysis(
+        finding="SENSOR_FAULT",
+        autres=("CONC_DROP_SEVERE",),
+        lead="CONC_DROP_SEVERE",
+        mode="FAISCEAU_FUITE",
+    ))
+    alarme = store.list(active_only=True)[0]
+    assert alarme["trigger_rule"] == "CONC_DROP_SEVERE", (
+        "l'alarme est nommee d'apres la premiere constatation evaluee "
+        f"({alarme['trigger_rule']}) et non d'apres la dominante"
+    )
+    assert "CONC_DROP_SEVERE" in alarme["alarm_key"]
+    # La preuve conserve TOUTES les constatations : rien n'est perdu.
+    assert set(alarme["evidence"]["finding_codes"]) == {
+        "SENSOR_FAULT", "CONC_DROP_SEVERE"
+    }
+    store.close()
+
+
+def test_une_alarme_se_resout_meme_si_une_autre_constatation_disparait(tmp_path):
+    """LA CONSEQUENCE LA PLUS COUTEUSE : UNE ALARME QUI NE SE FERME JAMAIS.
+
+    `observe` cherche `WHERE alarm_key=?` avec la cle COURANTE. Tant que la cle
+    dependait de `findings[0]`, la disparition d'une constatation en tete
+    changeait la cle : la ligne existante n'etait plus retrouvee, une SECONDE
+    alarme naissait, et la premiere restait ACTIVE indefiniment.
+
+    La dominante etant stable, la meme condition retrouve sa propre alarme.
+    """
+    store = AlarmStore(tmp_path / "alarms.db")
+    store.observe(_analysis(
+        finding="SENSOR_FAULT", autres=("CONC_DROP_SEVERE",),
+        lead="CONC_DROP_SEVERE", mode="FAISCEAU_FUITE",
+    ))
+    # Heure suivante : le defaut capteur a disparu, la chute de titre persiste.
+    store.observe(_analysis(
+        timestamp="2024-08-01 11:00:00",
+        finding="CONC_DROP_SEVERE", lead="CONC_DROP_SEVERE", mode="FAISCEAU_FUITE",
+    ))
+    actives = store.list(active_only=True)
+    assert len(actives) == 1, (
+        f"{len(actives)} alarmes pour une seule condition : la cle a change "
+        "avec l'ordre des constatations"
+    )
+    assert actives[0]["occurrence_count"] == 2
+
+    # Retour a la normale : l'alarme doit se resoudre.
+    store.observe(_analysis(
+        severity="NORMAL", timestamp="2024-08-01 12:00:00",
+        finding="CONC_DROP_SEVERE", lead=None,
+    ))
+    assert store.list(active_only=True) == []
     store.close()

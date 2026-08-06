@@ -1276,22 +1276,58 @@ def _workflow_templates() -> dict[str, dict[str, Any]]:
             domain.checklists["INSPECTION_EXTERNE"]["points"], start=1
         )
     ]
+    # API-3 — QUATRE POINTS DE CONSIGNATION SUR SEPT N'ATTEIGNAIENT PAS L'ECRAN.
+    #
+    # Ces six prerequis etaient ecrits en dur alors que `amdec.yaml` porte la
+    # gamme `PS3-ABS-REFR` avec SEPT prerequis transcrits du fichier 7. Les
+    # deux listes avaient diverge, et pas d'un point :
+    #
+    #   absents de l'ecran : consignation du moteur de la pompe d'absorption,
+    #                        vidange des boites d'eau de mer, cadenas par
+    #                        intervenant, debranchement du courant sur les
+    #                        anodes (film-garde)
+    #   affiches sans etre des prerequis : les EPI (champ `epi`), la
+    #                        manutention au palan (champ `outillage`), et
+    #                        « couvercles ouverts » qui est l'operation
+    #                        elle-meme
+    #
+    # Les quatre absents sont TOUS des points de consignation. Un ecran de
+    # prerequis HSE ampute de la moitie de ses points de consignation est pire
+    # qu'un ecran sans prerequis : il se presente comme complet.
+    #
+    # La gamme est desormais lue. Les EPI et l'outillage restent affiches, mais
+    # apres les prerequis et sous leur propre nature : ce sont des conditions
+    # de realisation, pas des barrieres a lever avant d'ouvrir.
+    gamme = (domain.gammes or {}).get("PS3-ABS-REFR", {})
+    # Un point de consignation est dangereux au sens du workflow : il conditionne
+    # la suite et son omission expose l'intervenant.
     prerequisites = [
-        ("HSE-01", "Autorisation de travail officielle reçue", False),
-        ("HSE-02", "Circuits acide et eau de mer isolés et consignés", True),
-        ("HSE-03", "Calandre vidangée et pression intérieure vérifiée à 0 bar", True),
-        ("HSE-04", "EPI anti-acide complets contrôlés", True),
-        ("HSE-05", "Couvercles ouverts selon la gamme approuvée", True),
-        ("HSE-06", "Manutention au palan réalisée avec moyen contrôlé", True),
+        (f"HSE-{i:02d}", str(libelle), True)
+        for i, libelle in enumerate(gamme.get("prerequis") or [], start=1)
+    ]
+    prerequisites += [
+        (f"EPI-{i:02d}", f"EPI contrôlé : {epi}", True)
+        for i, epi in enumerate(gamme.get("epi") or [], start=1)
+    ]
+    prerequisites += [
+        (f"OUT-{i:02d}", f"Outillage disponible : {outil}", False)
+        for i, outil in enumerate(gamme.get("outillage") or [], start=1)
     ]
     internal = [
         {
             "code": code,
             "label": label,
             "dangerous": dangerous,
+            # La provenance vient du referentiel, pas d'une page devinee :
+            # `amdec.yaml/gammes/PS3-ABS-REFR` transcrit le fichier 7 et porte
+            # son intitule. Citer « page 1, phases 10 a 120 » pour des points
+            # qui, pour trois d'entre eux, ne figuraient pas dans cette gamme
+            # etait une provenance invérifiable.
             "source_ref": (
-                "7-Gamme PV Refroidisseur d'acide PS3.pdf - page 1, "
-                "phases 10 à 120"
+                f"amdec.yaml/gammes/PS3-ABS-REFR — {gamme.get('intitule', '')} "
+                f"(état requis : {gamme.get('etat_requis', '—')}"
+                + (f", durée {gamme['duree_min']} min)" if gamme.get("duree_min")
+                   else ")")
             ),
         }
         for code, label, dangerous in prerequisites

@@ -215,6 +215,20 @@ class AgentDecision(BaseModel):
     evidence_refs: list[str] = Field(default_factory=list)
     cited_values: dict[str, float] = Field(default_factory=dict)
     generated_by: Literal["llm", "rules"] = "rules"
+    # LA CONSTATATION DOMINANTE EST NOMMEE, PAS DEDUITE.
+    #
+    # `evidence_refs` porte TOUTES les constatations, dans l'ordre d'evaluation
+    # des regles. Un consommateur qui voulait savoir laquelle a fonde la
+    # decision n'avait que deux recours : reprendre `findings[0]` — ce que
+    # `AlarmStore._key` faisait, et qui donne l'ordre d'ecriture des regles et
+    # non la gravite — ou lire `reasoning` au motif qu'il contient la phrase
+    # « Constatation dominante : ... ».
+    #
+    # L'agent tranche deja par `_priorite` : severite, puis defaut de mesure
+    # apres diagnostic equipement, puis criticite AMDEC. Ce choix est publie
+    # ici plutot que recalcule ailleurs — deux baremes qui doivent coincider ne
+    # se recopient pas.
+    lead_finding: str | None = None
 
 
 class Check(BaseModel):

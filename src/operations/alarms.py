@@ -160,8 +160,52 @@ class AlarmStore:
 
     @staticmethod
     def _trigger(analysis: Analysis) -> str | None:
-        findings = getattr(analysis.detection, "findings", ())
-        return str(findings[0].code) if findings else None
+        """Constatation qui donne son identité à l'alarme.
+
+        AL-1 — CE CHOIX ETAIT `findings[0]`, C'EST-A-DIRE L'ORDRE D'ECRITURE
+        DES REGLES.
+
+        `RuleEngine.evaluate` appelle `_rule_sensor_health` EN PREMIER. Des
+        qu'un capteur derivait, `SENSOR_FAULT` devenait donc la cle de l'alarme
+        et son `trigger_rule` affiche — meme lorsqu'un `CONC_DROP_SEVERE`,
+        suspicion de percement de tube, figurait dans la meme analyse.
+
+        Trois consequences, mesurees sur le code :
+
+          1. Le registre nommait l'alarme d'apres le capteur qui derive, pas
+             d'apres le tube qui fuit. L'agent, lui, retenait correctement la
+             constatation dominante : le diagnostic affiche et l'alarme
+             persistee ne designaient pas la meme chose.
+          2. `observe` cherche `WHERE alarm_key=?` avec la cle COURANTE. Si la
+             constatation-cle disparaissait alors qu'une autre subsistait, la
+             ligne n'etait plus retrouvee : une SECONDE alarme naissait et la
+             premiere restait ACTIVE indefiniment. Personne ne l'aurait
+             resolue.
+          3. La severite stockee est celle de la decision : une alarme nommee
+             `SENSOR_FAULT` pouvait porter CRITICAL.
+
+        Le meme defaut avait ete corrige dans l'agent — `_priorite` — et pas
+        ici. On REUTILISE ce bareme au lieu d'en ecrire un second : deux regles
+        de priorite qui doivent coincider ne se recopient pas.
+
+        Args:
+            analysis: Analyse complete d'un instant.
+
+        Returns:
+            Code de la constatation dominante, ou `None` si aucune.
+        """
+        findings = list(getattr(analysis.detection, "findings", ()) or [])
+        if not findings:
+            return None
+        lead = getattr(analysis.decision, "lead_finding", None)
+        if lead:
+            return str(lead)
+        # Repli : une decision NOMINALE ne designe aucune dominante, et
+        # `observe` ne cree d'alarme que sur WARNING ou CRITICAL. Ce chemin ne
+        # sert donc qu'a RESOUDRE une alarme existante, ou une analyse
+        # anterieure au champ. L'ordre des regles y est sans consequence : la
+        # cle recherchee est celle deja enregistree.
+        return str(findings[0].code)
 
     @classmethod
     def _key(cls, analysis: Analysis) -> str | None:

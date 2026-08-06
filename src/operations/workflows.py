@@ -13,6 +13,9 @@ from typing import Any
 UTC = timezone.utc
 
 WORKFLOW_STATES = {"PLANNED", "IN_PROGRESS", "BLOCKED", "COMPLETED", "CANCELLED"}
+# Etats dont on ne revient pas. `update_step` s'en servait deja implicitement;
+# `complete` ne les consultait pas, d'ou WF-1.
+TERMINAL_STATES = {"COMPLETED", "CANCELLED"}
 STEP_STATES = {"TODO", "IN_PROGRESS", "BLOCKED", "COMPLETED", "NOT_APPLICABLE"}
 
 
@@ -161,7 +164,7 @@ class WorkflowStore:
                 ).fetchone()
                 if workflow is None or step is None:
                     raise KeyError(step_id)
-                if workflow["status"] in {"COMPLETED", "CANCELLED"}:
+                if workflow["status"] in TERMINAL_STATES:
                     raise ValueError("Workflow terminal: modification interdite")
                 if step["version"] != expected_version:
                     raise ValueError("Conflit de version: recharger le workflow")
@@ -245,6 +248,22 @@ class WorkflowStore:
                 ).fetchone()
                 if workflow is None:
                     raise KeyError(workflow_id)
+                # WF-1 — AUCUNE GARDE D'ETAT TERMINAL.
+                #
+                # `update_step` refuse d'agir sur une intervention close;
+                # `complete` ne verifiait rien. Clore deux fois reecrivait donc
+                # la signature, la date et la preuve de la premiere cloture,
+                # sans trace : le journal conservait deux evenements COMPLETED
+                # et l'enregistrement ne portait plus que le second signataire.
+                #
+                # Sur un document qui atteste qu'une consignation a ete levee
+                # et une ligne remise en service, l'identite du signataire est
+                # la seule chose qui compte.
+                if workflow["status"] in TERMINAL_STATES:
+                    raise ValueError(
+                        f"Intervention déjà en état {workflow['status']} : "
+                        f"une clôture ne se réécrit pas"
+                    )
                 open_count = self._db.execute(
                     """
                     SELECT COUNT(*) FROM workflow_steps WHERE workflow_id=?

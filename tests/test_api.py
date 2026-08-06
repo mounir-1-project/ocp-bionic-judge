@@ -271,6 +271,21 @@ def test_workflow_inspection_executable_et_trace(client):
     assert templates.status_code == 200
     assert "permis de travail" in templates.json()["INSPECTION_EXTERNE"]["warning"]
 
+    # API-3 — LES PREREQUIS DE CONSIGNATION VIENNENT DU REFERENTIEL.
+    # Six etaient ecrits en dur alors que la gamme en porte sept. Quatre points
+    # de consignation n'atteignaient pas l'ecran, dont le debranchement du
+    # courant sur les anodes — composant de criticite 112.
+    from src.domain.knowledge import load_domain
+    gamme = load_domain().gammes["PS3-ABS-REFR"]
+    libelles = {
+        etape["label"]
+        for etape in templates.json()["INSPECTION_INTERNE"]["steps"]
+    }
+    manquants = [p for p in gamme["prerequis"] if p not in libelles]
+    assert not manquants, (
+        f"prerequis gouvernes absents de l'ecran : {manquants}"
+    )
+
     created = client.post("/api/workflows", json={
         "template_id": "INSPECTION_EXTERNE",
         "owner": "Équipe mécanique PS III",

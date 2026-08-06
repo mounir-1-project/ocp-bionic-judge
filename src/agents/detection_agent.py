@@ -281,6 +281,7 @@ class RuleBasedComposer:
             recommended_action=action,
             confidence=confidence,
             evidence_refs=[f.code for f in result.findings],
+            lead_finding=lead.code,
             cited_values=cited,
             generated_by="rules",
         )
@@ -340,6 +341,7 @@ class RuleBasedComposer:
             ),
             confidence=_nominal_confidence(result),
             evidence_refs=[f.code for f in result.findings],
+            lead_finding=None,
             cited_values=cited,
             generated_by="rules",
         )
@@ -714,6 +716,11 @@ class DetectionAgent:
             recommended_action=action,
             confidence=float(data.get("confidence", baseline.confidence)),
             evidence_refs=[f.code for f in result.findings],
+            # La couche de redaction ne reclasse pas les constatations : elle
+            # herite du choix deterministe des regles. Le laisser a `None` ici
+            # aurait prive le registre d'alarmes de son identite des que le LLM
+            # est actif — c'est-a-dire exactement quand on l'observe le moins.
+            lead_finding=baseline.lead_finding,
             cited_values={k: float(v) for k, v in (data.get("cited_values") or {}).items()
                           if isinstance(v, (int, float)) and not isinstance(v, bool)},
             generated_by="llm",
