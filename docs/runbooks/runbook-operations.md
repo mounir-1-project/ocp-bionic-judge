@@ -2,9 +2,8 @@
 
 **Version active : 3.0 — 25 juillet 2026**
 
-Ce runbook concerne le service FastAPI local de la version 2. Le contenu de
-`legacy/` décrit une ancienne architecture et ne doit pas être utilisé pour
-l'exploitation.
+Ce runbook concerne le service FastAPI local de la version 3, seule
+architecture présente dans le dépôt.
 
 ## 1. Précontrôles
 

@@ -214,7 +214,7 @@ Le Judge de la version précédente recevait la décision de l'agent et demandai
 
 L'idée directrice du Judge — un second contrôle logique des conclusions d'un système automatique — est utile, sans constituer une validation industrielle indépendante. L'ossature technique du prototype (API FastAPI, structuration en modules, suite de tests, conteneurisation) a également été conservée. C'est le **domaine métier et le mécanisme de jugement** qui ont été refondus.
 
-Le code de la version 1 est conservé dans le répertoire `legacy/` afin de documenter l'évolution.
+La version 1 n'est pas conservée dans le dépôt : ce sont les décisions d'architecture (`docs/decisions/`) qui documentent l'évolution, en disant pourquoi chaque choix a été abandonné plutôt qu'en gardant le code qui le portait.
 
 \newpage
 

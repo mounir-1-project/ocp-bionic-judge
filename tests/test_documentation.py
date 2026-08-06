@@ -155,6 +155,77 @@ def test_aucun_script_ni_cible_make_documente_n_est_absent():
     assert not manquants, f"commandes documentees et inexistantes : {sorted(manquants)}"
 
 
+def test_aucun_chemin_cite_par_la_documentation_n_est_absent():
+    """UN DOSSIER FANTOME ETAIT AFFIRME PAR QUATRE DOCUMENTS.
+
+    `architecture.md`, `rapport_technique.md`, le runbook et le README
+    decrivaient tous un repertoire `legacy/` « conservant la version 1 ». Il
+    n'a jamais existe dans ce depot. Le README lui donnait meme une ligne dans
+    son tableau des modules, entre `api/` et le reste.
+
+    Les trois controles precedents couvraient les endpoints, les noms de tests
+    et les commandes. Un chemin de fichier ou de dossier n'entre dans aucune de
+    ces classes : c'est le trou par lequel `legacy/` est passe.
+    """
+    EXTENSIONS = "py|md|yaml|yml|json|toml|js|mjs|css|html|lock|txt|ipynb|xlsx|xls|pdf"
+    # Un chemin cite porte un separateur OU une extension connue.
+    motif = re.compile(rf"^(?:[\w.-]+/)+[\w.-]*$|^[\w-]+\.(?:{EXTENSIONS})$")
+    # UN NOM DE FICHIER SUFFIT, LE DOSSIER N'EST PAS TOUJOURS ECRIT.
+    # `amdec.yaml` est cite tel quel dans quatre documents et vit dans
+    # `src/domain/`. Exiger le chemin complet transformerait ce controle en
+    # generateur de faux positifs, et un controle bruyant finit desactive.
+    #
+    # Le balayage est BORNE aux dossiers du projet. Un `rglob("*")` depuis la
+    # racine traverse `.venv` et `node_modules` — des dizaines de milliers de
+    # fichiers — et rendait ce controle plus lent que toute la suite. Un test
+    # lent finit par ne plus etre lance, ce qui revient a ne pas l'ecrire.
+    SOURCES = ("src", "api", "tests", "scripts", "docs", "notebooks",
+               "data", "models", "reports", ".github")
+    presents = {p.name for racine in SOURCES for p in (RACINE / racine).rglob("*")
+                if "__pycache__" not in p.parts}
+    presents |= {p.name for p in RACINE.iterdir()}
+
+    def existe(chemin: str) -> bool:
+        chemin = chemin.strip().rstrip("/")
+        if (RACINE / chemin).exists():
+            return True
+        # `amdec.yaml/plan_maintenance`, `tags.yaml/equipment` : ce ne sont pas
+        # des chemins de fichier mais des chemins DANS un fichier de donnees.
+        # La question posee est alors l'existence du fichier porteur.
+        tete = chemin.split("/", 1)[0]
+        if re.search(rf"\.(?:{EXTENSIONS})$", tete):
+            return tete in presents
+        return "/" not in chemin and chemin in presents
+
+    fantomes = sorted({
+        f"{document.relative_to(RACINE)} : {chemin}"
+        for document in DOCUMENTS
+        for chemin in set(re.findall(r"`([^`\n]+)`", document.read_text(encoding="utf-8")))
+        if motif.match(chemin.strip()) and not existe(chemin)
+    })
+    assert not fantomes, f"chemins documentes et inexistants : {fantomes}"
+
+
+def test_aucun_lien_markdown_relatif_ne_pointe_dans_le_vide():
+    """UN LIEN MORT VERS UN ADR QUI N'A JAMAIS EXISTE.
+
+    `architecture.md` renvoyait a
+    `decisions/ADR-008-architecture-v2-locale-deterministe.md`. Le fichier reel
+    est `ADR-008-interface-isa-101.md`, et aucun ADR du depot ne porte le titre
+    cite. Un lecteur qui suit la reference pour verifier une affirmation tombe
+    sur rien — et conclut, a raison, que l'affirmation n'a pas ete verifiee.
+    """
+    morts = sorted({
+        f"{document.relative_to(RACINE)} : {cible}"
+        for document in DOCUMENTS
+        for cible in re.findall(
+            r"\]\(([^)#:]+\.md)(?:#[^)]*)?\)", document.read_text(encoding="utf-8")
+        )
+        if not (document.parent / cible).resolve().exists()
+    })
+    assert not morts, f"liens Markdown pointant dans le vide : {morts}"
+
+
 def test_aucun_montant_n_est_presente_comme_un_resultat():
     """LA COUCHE ECONOMIQUE A ETE RETIREE — LE RAPPORT LA CHIFFRAIT ENCORE.
 

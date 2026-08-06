@@ -49,7 +49,7 @@ un intitulé métier. Cela masque le problème au lieu de le traiter.
    frontend échoue si un code en capitales soulignées apparaît dans le
    diagnostic, ou si un nom de variable Python apparaît dans le bandeau.
 
-2. **La mise en forme des nombres est centralisée.** `src/formatting` fournit
+2. **La mise en forme des nombres est centralisée.** `src/formatting.py` fournit
    `nombre`, `pourcent`, `unite`, `heures` et `duree_pas`. Python formate en
    notation anglaise ; chaque f-string réintroduisait le point décimal. Un test
    parcourt les sorties du système et échoue sur tout `1.7` qui aurait dû

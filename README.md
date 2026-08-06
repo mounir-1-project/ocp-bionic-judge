@@ -174,7 +174,6 @@ référentiel à chaque changement.
 | `src/analytics/` | Indicateurs d'exploitation calculés sur les données mesurées |
 | `src/realtime/` | Rejeu accéléré du flux DCS |
 | `api/` | API FastAPI, poste de surveillance et jumeau 3D |
-| `legacy/` | Version 1 conservée pour documenter l'évolution |
 
 ---
 

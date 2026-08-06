@@ -19,8 +19,10 @@ La version active est volontairement compacte :
 - une authentification locale de démonstration désactivée sans configuration
   explicite ; l'IAM OIDC reste obligatoire avant tout profil production.
 
-`legacy/` conserve l'ancienne architecture à des fins historiques. Elle n'est
-ni importée, ni déployée, ni couverte par les procédures d'exploitation v2.
+La version 1 n'est pas conservée dans le dépôt. Les choix qu'elle portait et
+les raisons de leur abandon sont consignés dans les décisions d'architecture,
+qui sont la seule trace utile : un répertoire de code mort se lit moins bien
+qu'un ADR qui dit pourquoi il l'est.
 
 ## Chaîne de traitement
 
@@ -140,8 +142,8 @@ docker compose ps
 | Notification | destinataire de session, SMTP asynchrone, seuil et temporisation anti-rafale |
 | Déploiement | image multi-stage, utilisateur non-root, 1 worker |
 
-Voir [ADR-008](decisions/ADR-008-architecture-v2-locale-deterministe.md), qui
-remplace les choix v1 incompatibles avec ce runtime.
+Voir l'[index des décisions d'architecture](decisions/INDEX.md), qui recense
+les onze décisions structurantes et les choix v1 qu'elles remplacent.
 
 ## Frontière de la version démonstrateur
 

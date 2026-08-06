@@ -1,6 +1,6 @@
 # Matrice de traçabilité documentaire E7301
 
-Version 1.0 - 2026-07-25
+Version 1.1 - 2026-08-02
 
 | Information | Nature | Source et emplacement | Utilisation |
 |---|---|---|---|
@@ -15,11 +15,14 @@ Version 1.0 - 2026-07-25
 | Consignation, pression 0 bar, EPI, palan, couvercles | source OCP | Gamme PV page 1, phases 10-120 | barrières HSE du workflow interne |
 | Tamponnage et critère 30 % | source OCP | Gamme tamponnage ; plan préventif H | workflow tamponnage ; total de tubes non inventé |
 | 12 séries DCS et période | source | DATA.xlsx, Feuil1, B1:M10183 | ingestion et dictionnaire |
-| Tags, sens et unités | enrichissement inféré | nomenclature et analyse statistique | `tags.yaml`, statut `inferred/unknown` |
+| Tags, sens et unités | établi par recoupement | nomenclature ISA-5.1, physique du procédé, comportement des données, cohérence stœchiométrique | `tags.yaml`, champ `basis` — au moins deux bases indépendantes par tag, preuve publiée |
 | Duty, résidus, z-scores | calcul | code versionné `src/features/` | indicateurs comportementaux |
 | Score Isolation Forest | calcul non supervisé | `src/models/` et manifeste candidat | suspicion d'écart, jamais panne confirmée |
-| Valeur économique | hypothèse | `economics.yaml` avec niveaux de confiance | scénario non opposable |
+| Valeur économique | **retirée du périmètre** | aucune source, aucun fichier | aucun montant n'est produit ; deux tests interdisent le retour d'un endpoint économique et de la chaîne « MAD » |
 
-Les SHA-256 complets des neuf originaux et des copies sont consignés dans
-`reports/audit_initial_state_2026-07-25.md`.
+L'empreinte SHA-256 de l'export DCS est publiée par `tags.yaml`
+(`governance_defaults.source_sha256`) et recalculée à chaque exécution par
+`generate_project_metrics.py`, qui la compare au manifeste du modèle. Un
+document d'empreintes séparé avait été annoncé ici ; il n'a jamais été produit,
+et l'artefact vérifié à chaque passage vaut mieux qu'un relevé figé.
 
