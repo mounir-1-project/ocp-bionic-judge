@@ -44,6 +44,21 @@ const DECK_Y = -1.42;       // niveau du platelage
 
 // Orientation du capteur selon la face de l'appareil ou il est monte : le
 // doigt de gant doit pointer VERS la tuyauterie, pas dans le vide.
+// TAILLE D'ETIQUETTE — DEFINIE UNE FOIS, LUE PARTOUT.
+//
+// Les etiquettes mesuraient 1,25 x 0,625 unite de scene, et la camera se posait
+// a 19,5 m d'un appareil de 11 m. Calcul sur un canvas de 620 px de haut et un
+// champ de 34 degres : l'etiquette occupait 32 px, et la VALEUR — ecrite en
+// 62 px sur une texture de 256 — en occupait HUIT. Illisible a distance de
+// lecture normale, ce que la capture d'ecran confirmait : six etiquettes
+// tassees contre le chassis, deux plaques sans texte visible a droite.
+//
+// La demi-taille servant a resoudre les recouvrements en derive, plutot que
+// d'etre recopiee en constantes numeriques : c'est la meme grandeur, elle ne
+// doit exister qu'en un exemplaire.
+const LABEL_W = 1.8;
+const LABEL_H = 0.9;
+
 const ANCHOR_ROTATION = {
   up: 0,
   down: Math.PI,
@@ -395,7 +410,7 @@ export class CoolerTwin {
     // Orbite maison : les controles d'orbite officiels vivent dans le dossier
     // examples/ de three.js, non embarque ici. Coordonnees spheriques autour
     // du centre de l'appareil.
-    this.orbit = { theta: -0.72, phi: 1.16, radius: 19.5 };
+    this.orbit = { theta: -0.72, phi: 1.16, radius: 14 };
     this.orbitTarget = { ...this.orbit };
     this.center = new THREE.Vector3(0, -0.15, 0);
     this.centerTarget = this.center.clone();
@@ -1324,7 +1339,7 @@ export class CoolerTwin {
       const label = new THREE.Sprite(new THREE.SpriteMaterial({
         map: labelTex, transparent: true, depthTest: true, depthWrite: false,
       }));
-      label.scale.set(1.25, 0.625, 1);
+      label.scale.set(LABEL_W, LABEL_H, 1);
       label.position.set(0, 0.42, 0);
       label.userData.sensor = meta.alias;
       group.add(label);
@@ -1723,7 +1738,7 @@ export class CoolerTwin {
 
   resetView() {
     this.centerTarget.set(0, -0.15, 0);
-    this.orbitTarget = { theta: -0.72, phi: 1.16, radius: 19.5 };
+    this.orbitTarget = { theta: -0.72, phi: 1.16, radius: 14 };
   }
 
   /**
@@ -2087,9 +2102,7 @@ export class CoolerTwin {
 
     const kept = [];
     // Demi-taille d'etiquette en coordonnees normalisees, ajustee a l'aspect.
-    const aspect = this.camera.aspect || 1.6;
-    const halfW = 0.085 * (1.6 / aspect);
-    const halfH = 0.045;
+    const { halfW, halfH } = this.labelHalfNDC();
 
     for (const item of projected) {
       const faulted = item.entry.severity === "CRITICAL"
@@ -2115,6 +2128,24 @@ export class CoolerTwin {
         kept.push(item);
       }
     }
+  }
+
+  /**
+   * Demi-taille d'une etiquette en coordonnees normalisees.
+   *
+   * Elle etait ecrite en deux constantes numeriques — 0,085 et 0,045 — calees
+   * a la main sur une echelle d'etiquette de 1,25 x 0,625. Changer l'echelle
+   * sans les recalculer aurait fait sous-estimer les recouvrements : le
+   * resolveur aurait laisse passer des chevauchements qu'il croit traiter.
+   *
+   * @returns {{halfW: number, halfH: number}}
+   */
+  labelHalfNDC() {
+    const aspect = this.camera.aspect || 1.6;
+    return {
+      halfW: 0.085 * (LABEL_W / 1.25) * (1.6 / aspect),
+      halfH: 0.045 * (LABEL_H / 0.625),
+    };
   }
 
   /** Statistiques affichables sous le modele. */

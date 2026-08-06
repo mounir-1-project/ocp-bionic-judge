@@ -244,9 +244,10 @@ const visibles = [...twin.sensors.values()]
     p.project(twin.camera);
     return { x: p.x, y: p.y };
   });
-const aspect = twin.camera.aspect || 1.6;
-const halfW = 0.085 * (1.6 / aspect);
-const halfH = 0.045;
+// La demi-taille vient du twin lui-meme : recopier les constantes ici, c'est
+// reintroduire la duplication que `labelHalfNDC()` vient de supprimer — et le
+// banc validerait alors sa propre copie.
+const { halfW, halfH } = twin.labelHalfNDC();
 const recouvrements = [];
 for (let i = 0; i < visibles.length; i += 1) {
   for (let j = i + 1; j < visibles.length; j += 1) {
