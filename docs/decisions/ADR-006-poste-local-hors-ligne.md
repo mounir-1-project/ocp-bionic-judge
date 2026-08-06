@@ -23,7 +23,7 @@ uvicorn api.main:app --port 8000
 - Le moteur 3D, la bibliothèque de graphiques et les polices sont embarqués.
 - La carte d'environnement du rendu 3D est **générée en mémoire** au démarrage,
   pas téléchargée.
-- Aucune requête sortante à l'exécution.
+- Aucune requête sortante à l'exécution **en configuration par défaut**.
 
 Une politique de sécurité de contenu stricte (`default-src 'self'`) est servie
 avec chaque réponse, ce qui rend une régression sur ce point immédiatement

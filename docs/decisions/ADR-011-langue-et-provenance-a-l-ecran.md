@@ -76,7 +76,7 @@ frontend échoue si une seule ligne en est dépourvue. Le travail de traçabilit
 
 ## Conséquences
 
-Le banc frontend passe de 36 à 43 vérifications. Les six ajoutées ne sont pas
+Le banc frontend passe de 36 à 54 vérifications. Les ajoutées ne sont pas
 des hypothèses : **chacune correspond à un défaut qui a été vu sur une capture
 d'écran**. Un banc qui ne teste que ce qu'on a imaginé ne rattrape jamais ce
 qu'on a manqué.

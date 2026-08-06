@@ -29,6 +29,7 @@ Author: Mounir Sanbouli — Stage OCP, Programme Bionic
 from __future__ import annotations
 
 import ast
+import json
 import re
 from pathlib import Path
 
@@ -59,6 +60,13 @@ DOCUMENTS = [
 # Noms de tests cites par la documentation POUR DIRE QU'ILS N'EXISTENT PAS.
 # Toute autre citation d'un test absent est une erreur.
 ABSENCES_ASSUMEES = {"test_le_gain_ne_vient_pas_dune_baisse_de_frequence"}
+
+
+def _load_domain():
+    """Domaine charge a la demande : ce fichier ne doit pas payer l'import."""
+    from src.domain.knowledge import load_domain
+
+    return load_domain()
 
 
 def _texte() -> str:
@@ -224,6 +232,85 @@ def test_aucun_lien_markdown_relatif_ne_pointe_dans_le_vide():
         if not (document.parent / cible).resolve().exists()
     })
     assert not morts, f"liens Markdown pointant dans le vide : {morts}"
+
+
+def test_aucun_chiffre_cle_ne_contredit_les_artefacts():
+    """LE CONTROLE QUI MANQUAIT, ET QUI VALAIT HUIT CONSTATS.
+
+    `test_le_rapport_technique_cite_les_artefacts` verifiait `valeur not in
+    rapport` — une INCLUSION DE SOUS-CHAINE. Il exigeait que la bonne valeur
+    soit presente quelque part; il n'interdisait pas qu'une valeur fausse le
+    soit ailleurs. La valeur attendue pour les features est la chaine « 11 », et
+    « 11 » est satisfait par `1118-9754`, la taille Chemetics de l'appareil : le
+    controle serait reste vert si le rapport avait ecrit « dix features »
+    partout, ce qu'il faisait dans son annexe B.
+
+    Ce test-ci pose la question inverse et decisive : le terme etant nomme, une
+    AUTRE valeur le qualifie-t-elle quelque part ? Il a attrape, a son
+    ecriture :
+
+      - « 10 features » (annexe B du rapport, ADR-003)
+      - « 511 heures atypiques » a trois lignes de « 530 »
+      - « 22 % » et « ~80 % » de generalisation, quand l'artefact mesure 10 %
+      - « 48,8 % » de couverture, quand le code en calcule 30,2 %
+      - « 267 cas de test », « 84 verifications », « 62 episodes »
+
+    Un chiffre publie a la main, jamais confronte a l'artefact qui le produit,
+    finit par en differer. C'est le motif dominant de ce depot.
+    """
+    metrics = json.loads(
+        (RACINE / "reports/project_metrics.json").read_text(encoding="utf-8")
+    )
+    judge = json.loads(
+        (RACINE / "reports/judge_eval_summary.json").read_text(encoding="utf-8")
+    )
+    coverage = _load_domain().risk_coverage()
+
+    # terme -> (valeur exacte attendue, motif qui capture la valeur ecrite)
+    attendus: dict[str, tuple[str, str]] = {
+        "features du modèle": (
+            str(metrics["model"]["n_features"]),
+            r"(\d+)\s+features?\b",
+        ),
+        # LE MOTIF VISE LE TOTAL, PAS LA CHARGE MENSUELLE.
+        # `(\d+)\s+épisodes` attrapait « 5 épisodes/mois » — une autre
+        # grandeur, juste — et jusqu'au « 1 » de « § 9.1 Épisodes les plus
+        # marqués ». Un controle bruyant finit desactive : on exige donc le
+        # qualificatif qui designe le decompte sur les quatorze mois.
+        "épisodes agrégés": (
+            str(metrics["model"]["episodes"]),
+            r"(\d+)\s+épisodes\s+(?:candidats|agrégés)",
+        ),
+        "heures atypiques": (
+            str(metrics["model"]["alert_hours_historical"]),
+            r"([\d   ]+)\s+heures atypiques\b",
+        ),
+        "généralisation du contrôleur": (
+            f"{judge['blind_mutations']['flagged_rate'] * 100:.0f}",
+            r"\*\*(\d+)\s*%\*\*\s*\(n\s*=\s*\d+\)",
+        ),
+        "part du risque couverte": (
+            f"{coverage['part_couverte_pct']:.1f}".replace(".", ","),
+            r"part du risque réellement couverte\s*:\s*([\d,]+)\s*%",
+        ),
+    }
+
+    ecarts: list[str] = []
+    for document in DOCUMENTS:
+        texte = document.read_text(encoding="utf-8")
+        for terme, (attendu, motif) in attendus.items():
+            for trouve in re.finditer(motif, texte, re.I):
+                ecrit = trouve.group(1).strip()
+                normalise = re.sub(r"[   ]", "", ecrit)
+                if normalise != re.sub(r"[   ]", "", attendu):
+                    ligne = texte[: trouve.start()].count("\n") + 1
+                    ecarts.append(
+                        f"{document.relative_to(RACINE)}:{ligne} — {terme} : "
+                        f"« {ecrit} » écrit, « {attendu} » mesuré"
+                    )
+    assert not ecarts, (
+        "chiffres publiés qui contredisent les artefacts :\n  " + "\n  ".join(ecarts)
+    )
 
 
 def test_aucun_montant_n_est_presente_comme_un_resultat():

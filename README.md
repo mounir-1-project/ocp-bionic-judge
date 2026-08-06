@@ -23,8 +23,8 @@ La difficulté est que confier ce rôle à un modèle de langage à qui l'on mon
 Ici, **le contrôleur recalcule les faits** depuis la même chaîne de données et de règles, puis confronte chaque affirmation du diagnostic à ce recalcul. Huit contrôles logiques, déterministes et reproductibles. Le modèle de langage n'intervient qu'ensuite, pour la nuance et la rédaction, dans un corridor borné.
 
 Le banc d'évaluation distingue deux mesures : la **non-régression** des huit
-contrôles (96 %) et la **généralisation** face à des mutations non ciblées
-(**22 %**). C'est la seconde qui répond à la question « que détecte-t-il qu'il
+contrôles (95,8 %) et la **généralisation** face à des mutations non ciblées
+(**10 %**). C'est la seconde qui répond à la question « que détecte-t-il qu'il
 ne connaît pas déjà ? » — et c'est elle que ce projet met en avant, parce
 qu'un dispositif de gouvernance qui surestime sa portée est pire qu'aucun.
 
@@ -372,18 +372,18 @@ Le taux d'accord ne prouve rien : le Judge et l'agent raisonnent sur la même ba
 
 Le banc soumet au Judge des décisions **délibérément fausses**, construites à partir de cas réels en y injectant une faute connue. **Mais ce banc n'est pas une validation**, et le dire est important : chaque piège porte le code d'anomalie que le Judge implémente déjà. On fabrique une faute conçue pour déclencher V1, puis on mesure que V1 la détecte. C'est un **test de non-régression**.
 
-Pour répondre à la seule question qui compte — *que détecte-t-il qu'il ne connaît pas déjà ?* — le banc soumet **en plus des mutations non ciblées** : diagnostic et raisonnement intervertis, raisonnement tronqué, action d'un autre mode AMDEC pourtant valide, valeurs d'un instant voisin, valeurs citées retirées.
+Pour répondre à la seule question qui compte — *que détecte-t-il qu'il ne connaît pas déjà ?* — le banc soumet **en plus des mutations non ciblées** : diagnostic et raisonnement intervertis, raisonnement tronqué, action d'un autre mode AMDEC pourtant valide, service destinataire erroné, check-list d'intervention erronée.
 
 **Cette liste a été refaite.** Elle contenait auparavant « bruit sur les valeurs citées », « sévérité permutée » et « modes AMDEC permutés » — trois mutations qui déclenchent respectivement V1, V2 et V3 *par construction* : bruiter une valeur de 3 à 25 % franchit toujours la tolérance de 1 %. Le chiffre annoncé comme mesure de généralisation était donc, pour trois cinquièmes, un test de non-régression déguisé. Les cinq mutations retenues portent sur des propriétés qu'aucun des huit contrôles n'interroge, et un test le vérifie.
 
 | Mesure | Résultat | Ce qu'elle vaut |
 |---|---|---|
-| Pièges ciblés | **96 %** | non-régression des huit contrôles |
-| **Mutations non ciblées** | **22 %** (n = 50) | **généralisation réelle** |
+| Pièges ciblés | **95,8 %** | non-régression des huit contrôles |
+| **Mutations non ciblées** | **10 %** (n = 60) | **généralisation réelle** |
 | Écart de note piégés / sains | 4,1 points | discrimination |
 | Faux positifs sur cas sains | 0 % | le Judge ne rejette pas le correct |
 
-**22 %, et c'est le chiffre à retenir.** Le contrôleur attrape presque tout ce qu'il a été conçu pour attraper, et à peine un cinquième de ce qu'il n'a pas prévu. Une version antérieure de ce tableau annonçait « ~80 % » : cette valeur n'a jamais été mesurée, et les mutations qui la produisaient visaient en réalité trois contrôles nommés. Un dispositif de gouvernance qui surestime sa propre portée est plus dangereux que pas de dispositif du tout.
+**10 %, et c'est le chiffre à retenir.** Le contrôleur attrape presque tout ce qu'il a été conçu pour attraper, et un dixième de ce qu'il n'a pas prévu. Ce chiffre a baissé deux fois, et chaque baisse est une correction. « ~80 % » n'a jamais été mesuré : trois des cinq mutations visaient des contrôles nommés. « 22 % » reposait sur deux autres mutations qui déclenchaient elles aussi un contrôle par construction — vider `cited_values` fait exactement ce que fait le piège conçu pour cela. Les cinq mutations retenues portent sur des propriétés qu'aucun des huit contrôles ne lit, et un test le vérifie sur des instants réels. Un dispositif de gouvernance qui surestime sa propre portée est plus dangereux que pas de dispositif du tout.
 
 **Limite structurelle qui subsiste.** L'agent et le Judge partagent la même chaîne de données et le même référentiel. Si l'interprétation d'un tag est fausse, les deux se trompent ensemble et le Judge certifie l'erreur avec une note élevée. Aucun banc interne ne corrige cela — seule la confirmation OCP des tags le peut.
 
@@ -454,15 +454,15 @@ Un projet dont on ne peut pas retracer les corrections n'est pas vérifiable. Le
 
 Un système de surveillance qui ne déclare pas ses angles morts donne une fausse assurance. Ils sont exposés par l'API, affichés sur le poste, et le Judge sanctionne tout diagnostic qui prétendrait les avoir détectés.
 
-### La part du risque réellement couverte : 48,8 %
+### La part du risque réellement couverte : 30,2 %
 
 Déclarer les angles morts un par un ne suffisait pas — il manquait la fraction. Elle est désormais calculée et affichée (`/api/coverage`) :
 
 ```
 criticité AMDEC totale ......... 1052
-        couverte par les données  513   (48,8 %)
-        non couverte .............539   (51,2 %)
-modes aveugles : 8 sur 13
+        détectée .................318   (30,2 %)   3 modes
+        conditions surveillées ...195   (18,5 %)   2 modes, état non mesuré
+        non couverte .............539   (51,2 %)   8 modes
 ```
 
 | Mode non détectable | Criticité | Couverture préventive |
@@ -472,6 +472,11 @@ modes aveugles : 8 sur 13
 | Porte de visite — fuite | 90 | Tâche C (1 mois) |
 | Vanne d'acide — bouchage | 90 | Tâche F (4 ans) |
 | Vanne eau de mer — bouchage | 42 | Tâche G (6 ans) |
+
+**Trois degrés, pas deux.** `FAISCEAU_CORROSION` et `CALANDRE_FUITE` sont dans un
+état intermédiaire : le système observe les conditions qui les favorisent, jamais
+l'état de la pièce. Les compter comme couverts surévaluait la couverture de
+18 points — c'est ce que faisait le chiffre de 48,8 % publié ici auparavant.
 
 **Les deux modes les plus critiques de l'équipement sont hors de portée du système.** La conclusion à en tirer, et qui manquait : pour ce refroidisseur, **la maîtrise du risque reste majoritairement dans le plan préventif A→H et l'inspection**. La surveillance par données ne s'y substitue pas ; elle couvre l'autre moitié.
 
@@ -500,7 +505,7 @@ La période de référence n'est pas ancrée sur une date de révision. Sa sensi
 
 | Fichier | Contenu |
 |---|---|
-| `docs/decisions/` | Huit décisions d'architecture, du cœur analytique à l'interface |
+| `docs/decisions/` | Onze décisions d'architecture, du cœur analytique à l'interface |
 | `docs/rapport_technique.md` | Dossier technique complet |
 | `docs/architecture.md` | Vue d'ensemble des couches |
 | `notebooks/01_analyse_E7301.ipynb` | Analyse justifiant chaque choix de conception |

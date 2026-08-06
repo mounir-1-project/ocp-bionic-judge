@@ -31,7 +31,7 @@ une signature de mode de défaillance issue de l'AMDEC du 23/09/2019. Toute
 alerte se rattache à une ligne de ce document. Une règle ne peut pas halluciner :
 elle cite les valeurs qui l'ont déclenchée.
 
-**Étage 2 — Isolation Forest.** Dix features, choisies pour ne garder qu'une
+**Étage 2 — Isolation Forest.** Onze features, choisies pour ne garder qu'une
 représentation par mécanisme physique. Il capte ce que les règles n'anticipent
 pas.
 
@@ -63,8 +63,8 @@ lisible : « si UA avait été normal, le score serait tombé de 0,81 à 0,34 »
 
 ## Conséquences
 
-Taux horaire de signalement : 5,8 % des heures de marche, pour 62 épisodes
-agrégés sur quatorze mois, soit environ 4,4 par mois. Ce chiffre est publié à
+Taux horaire de signalement : 6,2 % des heures de marche, pour 58 épisodes
+agrégés sur quatorze mois, soit environ 4,1 par mois. Ce chiffre est publié à
 côté de la charge d'épisodes : l'agrégation ne doit pas masquer le volume réel.
 
 La contamination du détecteur reste un paramètre de réglage sans justification

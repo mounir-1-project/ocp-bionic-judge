@@ -54,9 +54,24 @@ confiance déplacée. Aucune ne vise un contrôle.
 
 | Mesure | Résultat | Ce qu'elle vaut |
 |---|---|---|
-| Pièges ciblés | ~97 % | non-régression des huit contrôles |
-| **Mutations non ciblées** | **~80 %** | **généralisation réelle** |
-| Faux positifs sur cas sains | 0 % | ne rejette pas le correct |
+| Pièges ciblés | **95,8 %** | non-régression des huit contrôles |
+| **Mutations non ciblées** | **10 %** (n = 60) | **généralisation réelle** |
+| Faux positifs sur cas sains | 0 % |
+
+**Le chiffre de généralisation a été corrigé deux fois, et il faut dire
+pourquoi.** Cette décision annonçait « ~80 % ». **Cette valeur n'a jamais été
+mesurée** : les mutations qui la produisaient visaient en réalité trois
+contrôles nommés — bruiter une valeur de 3 à 25 % franchit toujours la
+tolérance de 1 % du contrôle de fidélité. Deux autres ont été retirées au tour
+suivant, pour la même raison. Les cinq mutations retenues portent sur des
+propriétés qu'aucun des huit contrôles n'interroge, et
+`test_aucune_mutation_non_ciblee_ne_vise_un_controle` le vérifie
+empiriquement.
+
+**10 %, et c'est le chiffre à retenir.** Le contrôleur attrape presque tout ce
+qu'il a été conçu pour attraper, et un dixième de ce qu'il n'a pas prévu. Un
+dispositif de gouvernance qui surestime sa portée est plus dangereux que pas de
+dispositif du tout. ne rejette pas le correct |
 
 L'auto-surveillance du contrôleur est **suspendue** pendant l'exécution du
 banc : mélanger des décisions fausses par construction aux décisions réelles
