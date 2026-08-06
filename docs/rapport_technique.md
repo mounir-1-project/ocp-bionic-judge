@@ -24,13 +24,13 @@ indépendant du texte produit par l'agent, pas de la donnée ni du détecteur.
 Résultats mesurés :
 
 - **58 épisodes comportementaux candidats** identifiés sur 14 mois par l'artefact livré ; ils restent des hypothèses à qualifier, pas des pannes confirmées ;
-- **référence thermique semi-empirique** reconstruisant 96,8 % de la variance du proxy de duty sur sa période d'ajustement (R² = 0,968), sans constituer une validation physique externe ;
+- **coefficient d'échange global UA** comme indicateur d'encrassement, calculé par la méthode efficacité-NTU à partir de la climatologie d'eau de mer de Safi. Référence ajustée sur les 40 % premières heures de marche : R² = 0,924, écart-type résiduel 0,63 kW/K soit 3,5 % de UA. C'est un **UA apparent** — le débit d'eau de mer n'étant pas instrumenté, il mesure l'état de la surface multiplié par l'action de la boucle froide ;
 - **deux défaillances d'instrumentation majeures** caractérisées, jusqu'alors non tracées : un capteur saturé en butée d'échelle pendant sept mois, et un capteur figé pendant environ 1 900 heures ;
 - **aucun encrassement du faisceau** sur la période — la signature dominante est un **sur-refroidissement** installé pendant 28 % du temps de marche, avec une régulation hors bande jusqu'à 99 % du temps en octobre 2024 ;
 - **Judge éprouvé sur 118 cas piégés** : **100 % des fautes injectées détectées**, 95,8 % détectées ET suffisamment sanctionnées, 0 % de faux positifs, écart de 4,13 points entre décisions saines et décisions fautives. Le mot **« validé » a été retiré de cette ligne** : chaque piège du catalogue porte exactement le code d'anomalie que le Judge sait produire, si bien que ce taux mesure une **non-régression** des contrôles implémentés, jamais leur capacité face à une faute imprévue. `src/governance/judge_eval.py` le dit dans son en-tête — le présenter comme une validation serait une sur-vente. La mesure de généralisation est distincte, plus basse, et porte sur des mutations non ciblées ;
 - **aucun chiffrage économique** : la couche qui en produisait a été retirée du périmètre, et deux tests interdisent son retour (§ 10.5). Les indicateurs publiés portent chacun leur niveau de preuve et ne se convertissent pas en dirhams.
 
-Le cœur de détection fonctionne intégralement hors ligne et sans service externe obligatoire. L'authentification locale est désactivée par défaut et ne devient utilisable qu'avec une empreinte PBKDF2 et une liste d'e-mails autorisés explicitement configurées ; elle n'est pas une authentification industrielle de production. Le relais SMTP reste une intégration externe de déploiement. La campagne finale couvre **267 cas de test** côté Python — 262 fonctions, dont cinq paramétrées — et **84 vérifications** des bancs du poste, avec **87,15 %** de couverture de lignes.
+Le cœur de détection fonctionne intégralement hors ligne et sans service externe obligatoire. L'authentification locale est désactivée par défaut et ne devient utilisable qu'avec une empreinte PBKDF2 et une liste d'e-mails autorisés explicitement configurées ; elle n'est pas une authentification industrielle de production. Le relais SMTP reste une intégration externe de déploiement. La campagne finale couvre **277 cas de test** côté Python et **98 vérifications** des bancs du poste, avec **87,15 %** de couverture de lignes.
 
 Deux erreurs d'analyse commises en cours de projet ont été détectées et corrigées : une causalité apparente entre une panne de capteur et un changement de régime, invalidée par une analyse à granularité plus fine ; et une hypothèse de redondance entre deux analyseurs de titre, invalidée par leur corrélation réelle. Elles sont documentées dans le corps du rapport, parce qu'un projet dont on ne peut pas retracer les corrections n'est pas vérifiable.
 
@@ -117,7 +117,7 @@ Les tags sont nommés selon la convention `S_MC_SULF_<boucle>_B`. Aucun dictionn
 | `PHI_5306` | S_MC_SULF_PHI5306X-3_B | Non identifié | — | **Hors périmètre** |
 | `TI_5303` | S_MC_SULF_TI5303-4X_B | Non identifié | — | **Hors périmètre** |
 
-**Point de méthode important.** Ces interprétations sont *déduites*, non *confirmées*. Chaque tag porte dans le référentiel un champ `confidence` (`confirmed` / `inferred` / `unknown`) et un champ `rationale` documentant le raisonnement. Ce référentiel est un fichier YAML éditable : **une correction apportée par le tuteur OCP se répercute dans tout le système sans modification de code**. Le système fonctionne indépendamment de cette validation — les seuils sont dérivés statistiquement — mais la traçabilité métier l'exige.
+**Point de méthode important.** Ces interprétations sont *établies par recoupement*, non *confirmées par OCP*. Chaque tag porte dans le référentiel un champ `basis` citant **au moins deux bases indépendantes** — nomenclature ISA-5.1, physique du procédé, comportement des données, cohérence stœchiométrique, climatologie — et un champ `evidence` qui publie la preuve correspondante. Un test échoue si un tag repose sur une base unique. Ce référentiel est un fichier YAML éditable : **une correction apportée par le tuteur OCP se répercute dans tout le système sans modification de code**. Le système fonctionne indépendamment de cette validation — les seuils sont dérivés statistiquement — mais la traçabilité métier l'exige.
 
 Deux éléments corroborent l'interprétation de `LOAD_SULFUR` comme charge soufre : le préfixe `SULF`, et la cohérence stœchiométrique — 1 t de soufre donne 3,06 t de H₂SO₄, soit environ 1 370 t/j à 18,6 t/h, ce qui correspond à la capacité d'une ligne PS III.
 
@@ -275,7 +275,10 @@ Soit une amplitude de **moins de 3 °C sur 14 mois**. Cette signature est celle 
 
 La conséquence est fondamentale et invalide l'approche statistique classique : **l'encrassement du faisceau ne se lit pas sur la température de sortie**. Tant que la régulation tient, elle compense la dégradation en ouvrant davantage la vanne d'eau de mer. Un z-score sur ce signal ne détecte rien — et quand il détecte enfin quelque chose, la régulation a déjà décroché, c'est-à-dire qu'il est trop tard.
 
-L'encrassement ne se lit pas sur le **résultat**, mais sur l'**effort** fourni pour l'obtenir.
+L'encrassement ne se lit donc pas sur le **résultat**. Une première approche en
+concluait qu'il fallait lire l'**effort** — le résidu de puissance évacuée. Le
+§ 5.3 montre pourquoi cette conclusion était fausse, et sur quoi le diagnostic
+repose réellement.
 
 ## 5.2 Grandeurs physiques dérivées
 
@@ -308,24 +311,100 @@ Une corrélation faible assortie d'un biais constant désigne **deux circuits di
 
 La règle a été remplacée par une surveillance de la **stabilité du biais** : une alerte est levée lorsque l'écart s'éloigne de plus de 4 σ de sa valeur habituelle. Ce test détecte une dérive d'analyseur bien avant qu'un seuil absolu ne bouge.
 
-## 5.3 La référence thermique semi-empirique
+## 5.3 Pourquoi le résidu de puissance ne pouvait pas marcher
 
-Un modèle de référence apprend le **duty attendu** en fonction des conditions d'exploitation, sur une période réputée saine. Le résidu `duty_observé − duty_attendu` devient alors un indicateur de dégradation débarrassé de l'effet d'allure.
+Modéliser la puissance évacuée attendue puis suivre le résidu paraissait
+naturel. **Cette approche est fausse, et l'erreur est algébrique.**
+
+La puissance est calculée par définition :
 
 $$
-Q_{\text{attendu}} = \beta_0 + \beta_1 \cdot \text{charge} + \beta_2 \cdot \dot{V}_{\text{acide}} + \beta_3 \cdot T_{\text{entrée}} + \beta_4 \cdot \text{titre} + \beta_5 \cdot (\dot{V}_{\text{acide}} \times T_{\text{entrée}})
+Q = \rho c_p \dot{V} (T_{\text{entrée}} - T_{\text{sortie}})
 $$
 
-Le terme d'interaction $\dot{V} \times T$ traduit le terme dominant de la physique de l'échangeur, la puissance échangée étant proportionnelle au produit du débit par l'écart de température disponible.
+Le modèle de référence la régresse sur $\dot{V}$, $T_{\text{entrée}}$ et leur
+produit. Comme $T_{\text{sortie}}$ est régulée autour de 66 °C, la cible s'écrit
+déjà comme une combinaison linéaire de deux régresseurs présents. **La
+régression ne modélise pas l'échangeur : elle retrouve sa propre définition.**
+
+| Grandeur | Valeur |
+|---|---|
+| R² de la référence apprise | 0,968 |
+| R² d'une reconstruction **sans aucun apprentissage** | 0,962 |
+| **Apport réel du modèle** | **+0,006** |
+| Corrélation résidu ↔ écart de consigne | **−0,94** |
+| Variance partagée | 88 % |
+
+Le résidu de puissance **est** l'écart de consigne, changé de signe et pondéré
+par le débit. Il est conservé sous le nom `regulation_effort` — qui dit ce qu'il
+mesure — et il ne fonde jamais un diagnostic d'encrassement. Un test échoue si
+quelqu'un tente de le présenter comme indépendant.
+
+## 5.3 bis Ce qui débloque tout : la température d'eau de mer
+
+L'encrassement d'un échangeur se lit sur son **coefficient d'échange global
+UA**, et sur rien d'autre. Le calculer exige la température du fluide froid,
+absente de l'export DCS. C'est ce qui bloquait le raisonnement.
+
+Cette température n'est pourtant pas une inconnue. Le refroidisseur est refroidi
+à l'eau de mer, à **Safi**, où le courant des Canaries et l'upwelling côtier
+maintiennent une eau fraîche à faible amplitude : **17,0 °C en février-mars,
+22,0 °C en septembre**, moyenne annuelle 19,3 °C. C'est une donnée
+climatologique documentée, stable d'une année sur l'autre, et surtout
+**extérieure à l'atelier** — aucune boucle de régulation ne la contraint.
+
+$$
+\varepsilon = \frac{T_{\text{entrée}} - T_{\text{sortie}}}{T_{\text{entrée}} - T_{\text{eau de mer}}}
+\qquad
+\text{NTU} = -\ln(1 - \varepsilon)
+\qquad
+UA = C_{\text{acide}} \cdot \text{NTU}
+$$
+
+UA varie légitimement avec le régime — le débit gouverne la turbulence, la
+viscosité de l'acide chute avec la température. Une référence linéaire apprend
+$UA(\dot{V}^{0,8}, T_{\text{moy}}, T_{\text{eau}})$ sur la période de
+référence uniquement.
 
 | Paramètre | Valeur |
 |---|---|
 | Période de référence | 01/01/2024 → 13/07/2024 |
-| Heures d'apprentissage | 3 483 |
-| **R²** | **0,968** |
-| Écart-type du résidu (σ) | 24,7 kW |
+| Heures d'apprentissage | 3 505 |
+| **R²** | **0,924** |
+| Écart-type du résidu | 0,63 kW/K, soit 3,5 % de UA |
 
-**Le choix d'une régression linéaire sur termes physiques, plutôt qu'un modèle non linéaire plus performant, est délibéré.** Trois raisons : ses coefficients sont explicables devant un exploitant ; un modèle trop expressif apprendrait la dégradation elle-même et la masquerait dans ses prédictions ; ses paramètres sont vérifiables par le Judge.
+La résistance d'encrassement $R_f = 1/UA - 1/UA_{\text{attendu}}$, en K/kW, est
+la grandeur que suit le service fiabilité pour arbitrer la date du prochain
+nettoyage.
+
+### Ce que UA est, et ce qu'il n'est pas
+
+Le débit d'eau de mer n'est pas instrumenté, et c'est lui que la régulation
+manipule pour tenir 66 °C. La grandeur calculée est donc un **UA apparent** : le
+produit de l'état de la surface d'échange par l'action de la boucle froide.
+
+La conséquence doit être dite franchement — **tant que la vanne conserve de la
+marge, elle compense un début d'encrassement et UA apparent ne bouge pas.**
+L'indicateur devient sensible quand cette marge se consomme. C'est précisément
+pour chiffrer ce retard que le banc d'injection publie l'**avancement à la
+détection** plutôt qu'un taux.
+
+Indépendance mesurée vis-à-vis de l'écart de consigne, en marche établie :
+
+| Indicateur | r | Variance partagée | Rôle |
+|---|---|---|---|
+| `regulation_effort_z` | −0,94 | 88 % | conduite — jamais une preuve d'encrassement |
+| `ua_residual_z` | −0,54 | 29 % | **diagnostic** — partiellement confondu, le banc chiffre le retard |
+| `t_in_residual_z` | +0,03 | 0,1 % | contexte amont — indépendant, mais confondu côté procédé |
+
+Aucun de ces indicateurs n'est parfait, et le projet ne prétend pas le
+contraire. UA porte le diagnostic parce qu'il est le seul construit sur la
+grandeur que l'encrassement dégrade.
+
+**Validation croisée.** À charge constante, la température d'entrée acide monte
+de 89,4 °C en janvier à 96,8 °C en juillet. Une lecture naïve y voit une
+dégradation. C'est la climatologie de l'eau de mer — **le système a signalé une
+dérive, et c'était l'océan Atlantique.**
 
 ## 5.4 Le signe du résidu — un point critique
 
@@ -333,8 +412,8 @@ C'est le point technique le plus délicat du système, et une source d'erreur co
 
 | Configuration | Interprétation |
 |---|---|
-| Résidu **négatif** persistant **et** écart de consigne **positif** | L'échangeur évacue **moins** que prévu et ne parvient plus à refroidir → **encrassement** (`FAISCEAU_BOUCHAGE`) |
-| Résidu **positif** persistant **et** écart de consigne **négatif** | L'échangeur évacue **plus** que prévu et sur-refroidit → **ce n'est pas un encrassement** |
+| Déficit de **UA** persistant, au-delà de 3 σ | La surface d'échange transmet moins bien à conditions comparables → **encrassement** (`FAISCEAU_BOUCHAGE`) |
+| Excès d'**effort de régulation** et sortie sous consigne | La boucle froide travaille au-delà du nécessaire → **régime de conduite, pas une dégradation** |
 
 Confondre les deux conduirait à programmer un nettoyage haute pression du faisceau — donc un arrêt de ligne de plusieurs jours et une intervention en tenue anti-acide complète — alors que l'échangeur fonctionne mieux que sa référence.
 
@@ -385,7 +464,7 @@ Cette méthode a été retenue plutôt que SHAP pour trois raisons : elle est **
 
 ## 6.4 Des heures atypiques aux épisodes opérables
 
-Le runtime reconstruit localement signale **511 heures atypiques** sur les heures scorables. **Ce chiffre brut est inexploitable en salle de contrôle** : un opérateur ne traite pas 511 points d'alarme. Ce runtime est explicitement `runtime_trained_unpromoted` et ne peut pas être présenté comme un modèle approuvé.
+Le runtime reconstruit localement signale **530 heures atypiques** sur les heures scorables. **Ce chiffre brut est inexploitable en salle de contrôle** : un opérateur ne traite pas 511 points d'alarme. Ce runtime est explicitement `runtime_trained_unpromoted` et ne peut pas être présenté comme un modèle approuvé.
 
 Les heures atypiques sont agrégées en **épisodes** — regroupement des heures consécutives avec tolérance de 6 heures d'interruption, et rejet des épisodes de moins de 3 heures. L'artefact final produit **58 épisodes candidats** sur 14 mois. Ces valeurs sont recalculées avec le modèle livré et ne constituent pas 58 défaillances confirmées.
 
@@ -447,7 +526,7 @@ Trois asymétries traduisent des réalités d'exploitation :
 
 ## 7.4 Auto-surveillance
 
-Le Judge surveille sa propre distribution de notes et signale deux pathologies opposées : la **complaisance** (plus de 97 % de validations), la **sévérité systématique** (moins de 10 %), et l'**indifférenciation** (écart-type inférieur à 0,35 point).
+Le Judge surveille sa propre distribution de notes et signale trois pathologies : la **complaisance** (plus de 97 % de validations), la **sévérité systématique** (moins de 10 %), et l'**indifférenciation** (écart-type inférieur à 0,35 point).
 
 Un juge qui valide tout ne juge pas. Le système est conçu pour le dire.
 
@@ -517,7 +596,7 @@ Le banc d'évaluation n'a pas seulement mesuré le Judge : **il l'a corrigé**. 
 
 3. **État de marche erroné insuffisamment pénalisé.** Détecté à 100 %, mais avec un poids de 8 % la note restait à 9,08 / 10. Un plafond à 5,0 a été introduit : se tromper d'état invalide toute lecture des grandeurs de performance.
 
-Le taux de reconnaissance des catégories de faute est passé de 65 % à 100 %. Sur le banc élargi, deux cas sont reconnus mais restent insuffisamment sanctionnés : le succès complet est donc de 98,3 %. Cette itération mesure-corrige-remesure est, méthodologiquement, le résultat le plus significatif de ce travail.
+Le taux de reconnaissance des catégories de faute est passé de 65 % à 100 %. Sur le banc élargi, **cinq cas sur 118** sont reconnus mais restent insuffisamment sanctionnés — trois « action sous-dimensionnée », deux « sévérité sous-estimée » : le succès complet est donc de **95,8 %**, chiffre publié au § 8.3. Cette itération mesure-corrige-remesure est, méthodologiquement, le résultat le plus significatif de ce travail.
 
 ## 8.5 Une correction du Judge sur l'agent
 
@@ -675,8 +754,18 @@ C'est le livrable le plus directement exploitable par le service Méthodes, parc
 |---|---|---|---|---|---|---|---|
 | Faisceau — bouchage | 3 | 7 | 5 | 3 | 105 | **63** | −40 % |
 | Faisceau — fuite | 3 | 7 | 5 | 3 | 105 | **63** | −40 % |
-| Faisceau — corrosion | 3 | 7 | 5 | 3 | 105 | **63** | −40 % |
-| Calandre — fuite | 3 | 6 | 5 | 3 | 90 | **54** | −40 % |
+
+**Deux modes ont été retirés de ce tableau.** `FAISCEAU_CORROSION` et
+`CALANDRE_FUITE` y figuraient avec le même gain de 40 %. Le référentiel les
+déclare `observable: partial` : le système observe les **conditions** qui les
+favorisent — titre sous spécification, température excessive, perte de débit —
+jamais l'**état** de la pièce. L'amincissement d'un tube ne se mesure que par
+courant de Foucault, à l'arrêt.
+
+Les compter comme détectables ajoutait 195 points de criticité à la couverture
+revendiquée. `/api/coverage` les publie désormais en catégorie distincte :
+**30,2 % de la criticité détectée, 18,5 % en conditions surveillées sans mesure
+d'état**, le reste relevant du plan préventif.
 
 **Statut : à faire valider par le service Méthodes** avant toute mise à jour de l'AMDEC officielle.
 
@@ -758,7 +847,7 @@ Aucune mesure de potentiel ou de courant de protection anodique ne figure dans l
 
 ## 11.2 Limites du jeu de données
 
-**Absence de mesure côté eau de mer.** Ni le débit ni les températures d'entrée et de sortie de l'eau de mer ne figurent dans l'export. Le calcul d'un coefficient d'échange global U ou d'une DTLM rigoureuse est donc impossible. La référence semi-empirique contourne partiellement cette limite, mais un accès aux tags eau de mer permettrait un indicateur d'encrassement physiquement mieux fondé.
+**Absence de mesure côté eau de mer.** Ni le débit ni les températures d'entrée et de sortie de l'eau de mer ne figurent dans l'export. La température est reconstituée par la climatologie de Safi (§ 5.3 bis), ce qui rend UA calculable — mais le **débit** reste inconnu, et c'est lui que la régulation manipule. La grandeur obtenue est donc un **UA apparent**, dont la limite est énoncée au § 5.3 bis : tant que la vanne conserve de la marge, elle compense un début d'encrassement. Un accès aux tags eau de mer donnerait un UA vrai et supprimerait ce retard.
 
 **Interprétation des tags non confirmée.** Les correspondances tag / grandeur physique sont déduites, non validées par OCP.
 
@@ -798,8 +887,8 @@ Lorsque l'administrateur active explicitement le profil local de démonstration,
 
 | Élément | Valeur |
 |---|---|
-| Tests automatisés (Python) | 267 cas, 262 fonctions |
-| Vérifications des bancs du poste (jsdom) | 84 — câblage, scène 3D, écran de démarrage |
+| Tests automatisés (Python) | 277 cas |
+| Vérifications des bancs du poste (jsdom) | 98 — câblage, scène 3D, écran de démarrage |
 | Couverture de lignes | 87,15 % (seuil bloquant en intégration continue : 85 %) |
 | Fonctionnement hors ligne | Intégral pour la détection et le Judge |
 | Graine aléatoire fixée | Oui (42) |
@@ -818,14 +907,14 @@ Le mode déterministe n'est pas un pis-aller : il fournit au Judge un point de c
 
 Le travail a produit un système de surveillance du refroidisseur E7301 opérationnel sur données réelles, dont chaque alerte se rattache à un mode de défaillance de l'AMDEC de 2019 et à une tâche du plan de maintenance préventive.
 
-Trois résultats méritent d'être retenus :
+Quatre résultats méritent d'être retenus :
 
 1. **Deux défaillances d'instrumentation non tracées ont été caractérisées** — TI5303-4X saturé depuis août 2024, PHI5306X-3 figé environ 1 900 heures — ainsi qu'une interruption d'acquisition de sept tags en juin 2024. Ces constats ont une valeur opérationnelle immédiate, indépendamment du reste du système.
 
 2. **Une erreur d'analyse a été détectée et corrigée par le projet lui-même.** Une première lecture attribuait le changement de régime à la panne du capteur TI5303-4X ; l'analyse par décades a montré que le phénomène commençait 100 jours plus tôt. L'hypothèse a été abandonnée. Un projet qui ne documente pas ses corrections n'est pas vérifiable.
 
 3. **Le Judge a été rendu testable.** En le dotant d'un recalcul déterministe
-et en le soumettant à un banc de 119 mutations ciblées, sa capacité à détecter
+et en le soumettant à un banc de 118 pièges ciblés, sa capacité à détecter
 les incohérences couvertes par ses règles est mesurée. Ce résultat ne constitue
 pas une validation indépendante sur décisions terrain.
 
@@ -842,7 +931,7 @@ pas une validation indépendante sur décisions terrain.
 
 **À moyen terme**
 
-- Intégrer les tags eau de mer pour calculer un coefficient d'échange global exact ;
+- Intégrer les tags eau de mer — débit et températures — pour passer du UA apparent à un UA vrai, et supprimer le retard de détection lié à la marge de vanne ;
 - Réduire le pas d'échantillonnage à la minute pour la détection d'événements rapides ;
 - Instrumenter la protection anodique afin de couvrir le mode de criticité 112 ;
 - Étendre la démarche aux autres refroidisseurs de PS II et PS III, le référentiel étant conçu pour être dupliqué par fichier YAML.
@@ -857,7 +946,7 @@ Le banc d'injection de fautes constitue un patron réutilisable pour tout systè
 
 | Mode | Criticité | Indicateurs de détection |
 |---|---|---|
-| `FAISCEAU_BOUCHAGE` | 105 | Dérive du résidu de duty, écart à la consigne, débit acide faible |
+| `FAISCEAU_BOUCHAGE` | 105 | Dérive du coefficient d'échange (`ua_residual_trend_14d`), résistance d'encrassement (`fouling_resistance`), perte de contrôle sur la sortie acide au stade terminal |
 | `FAISCEAU_FUITE` | 105 | Chute soutenue de titre, divergence des analyseurs |
 | `FAISCEAU_CORROSION` | 105 | Titre sous spécification, température d'entrée excessive, exposition cumulée |
 | `CALANDRE_FUITE` | 90 | Perte de débit non expliquée par la charge |
@@ -868,18 +957,31 @@ Le banc d'injection de fautes constitue un patron réutilisable pour tout systè
 | `VANNE_ACIDE_BOUCHAGE` | 90 | **Aucun — angle mort déclaré** |
 | `VANNE_EM_BOUCHAGE` | 42 | **Aucun — angle mort déclaré** |
 
-# Annexe B — Les 10 features contractuelles du modèle
+# Annexe B — Les 11 features contractuelles du modèle
+
+Liste et ordre repris de `MODEL_FEATURES` dans `src/features/e7301_features.py`.
+L'ordre est contractuel : le manifeste du modèle le consigne et
+`validate_model_manifest` refuse le chargement d'un artefact dont le schéma
+ordonné diffère.
 
 | Feature | Nature |
 |---|---|
-| `duty_residual_z` | Résidu standardisé |
-| `duty_residual_trend_14d` | Tendance 14 jours du résidu |
-| `conc_min` | Titre acide, minimum des analyseurs |
-| `conc_bias_drift_z` | Dérive standardisée du biais de titre |
+| `ua_residual_z` | Écart standardisé du coefficient d'échange — **porte le diagnostic d'encrassement** |
+| `regulation_effort_z` | Effort de régulation standardisé — conduite, jamais une preuve d'encrassement (§ 5.3) |
+| `t_in_residual_z` | Résidu de température d'entrée — contexte amont |
+| `conc_min` | Titre acide, minimum des deux analyseurs |
+| `conc_bias_drift_z` | Dérive standardisée du biais entre analyseurs |
 | `conc_drop_24h` | Variation de titre sur 24 h |
-| `flow_per_load` | Débit acide normalisé |
-| `d_t_out`, `d_conc` | Variations instantanées |
-| `t_out_local_z`, `t_in_local_z` | Déviations locales glissantes |
+| `flow_per_load` | Débit acide normalisé par la charge |
+| `d_t_out` | Variation instantanée de la température de sortie |
+| `d_conc` | Variation instantanée du titre |
+| `t_out_local_z` | Déviation locale glissante de la sortie |
+| `t_in_local_z` | Déviation locale glissante de l'entrée |
+
+*Une version précédente de cette annexe annonçait dix features et citait
+`duty_residual_z` et `duty_residual_trend_14d`, qui n'existent pas — vestiges
+de l'approche réfutée au § 5.3. Elle omettait les trois grandeurs qui portent
+la physique de l'échangeur.*
 
 # Annexe C — Sources documentaires
 
