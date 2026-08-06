@@ -10,6 +10,7 @@ Author: Mounir Sanbouli — Stage OCP, Programme Bionic
 
 from __future__ import annotations
 
+import json
 import time
 
 import pytest
@@ -743,3 +744,144 @@ def test_le_canal_explique_pourquoi_il_est_inactif(client):
     assert "reason" in status
     if not status["enabled"]:
         assert status["reason"], "un canal inactif doit dire pourquoi"
+
+
+# ── API-6 · les cinq routes sans aucun test HTTP ─────────────────────────────
+#
+# `/api/alarms`, `/api/alarms/{id}/transition`, `/api/config`, `/api/auth/audit`
+# et `/api/auth/refresh` n'etaient exercees par aucun test, quand les gammes en
+# avaient neuf. Deux d'entre elles portent pourtant une decision de securite :
+# `auth/audit` expose le journal d'authentification, `auth/refresh` fait tourner
+# le cookie de session.
+
+
+def test_le_registre_d_alarmes_repond_et_reste_borne(client):
+    """Le registre est la seule memoire du poste entre deux redemarrages."""
+    r = client.get("/api/alarms")
+    assert r.status_code == 200
+    assert isinstance(r.json(), list)
+    # La borne est appliquee cote serveur : un client ne decide pas du volume.
+    assert client.get("/api/alarms?limit=501").status_code == 422
+    assert client.get("/api/alarms?limit=0").status_code == 422
+    assert client.get("/api/alarms?active_only=false").status_code == 200
+
+
+def test_une_transition_d_alarme_inconnue_est_refusee(client):
+    """Agir sur une alarme inexistante doit echouer explicitement."""
+    r = client.post(
+        "/api/alarms/999999/transition",
+        json={"action": "acknowledge", "comment": "Test"},
+    )
+    assert r.status_code == 404
+
+    # Une action inventee ne doit pas atteindre le registre.
+    assert client.post(
+        "/api/alarms/1/transition",
+        json={"action": "supprimer", "comment": "Test"},
+    ).status_code in (404, 422)
+
+
+def test_la_configuration_effective_n_expose_aucun_secret(client):
+    """CETTE ROUTE EST UN OUTIL DE DIAGNOSTIC, PAS UNE FUITE.
+
+    Elle sert a expliquer un ecart de comportement entre deux postes. Elle
+    traverse donc la configuration entiere — y compris la cle du modele de
+    langage, les identifiants SMTP et l'empreinte d'authentification.
+    """
+    d = client.get("/api/config").json()
+    rendu = json.dumps(d, ensure_ascii=False).lower()
+    for secret in ("gemini_api_key", "smtp_password", "auth_password_hash"):
+        valeur = d.get(secret)
+        assert valeur in (None, "", True, False, "configure", "absent"), (
+            f"{secret} expose une valeur : {valeur!r}"
+        )
+    for motif in ("aiza", "pbkdf2_sha256$"):
+        assert motif not in rendu, f"la configuration expose « {motif} »"
+
+
+def test_le_journal_d_authentification_est_reserve_a_l_administrateur(client, monkeypatch):
+    """Un journal qui dit qui s'est connecte ne se lit pas par n'importe qui."""
+    import api.main as api_main
+    from src import config
+    from src.security import AuthManager, hash_password
+
+    monkeypatch.setattr(config, "AUTH_ENABLED", True)
+    monkeypatch.setattr(api_main, "AUTH_MANAGER", AuthManager(
+        password_hash=hash_password("phrase secrete industrielle 2026"),
+        allowed_emails={"lecture@example.test", "chef@example.test"},
+        user_roles={"lecture@example.test": "reader",
+                    "chef@example.test": "administrator"},
+    ))
+
+    def ouvrir(email):
+        return client.post("/api/auth/login", json={
+            "email": email, "password": "phrase secrete industrielle 2026",
+        })
+
+    assert ouvrir("lecture@example.test").status_code == 200
+    assert client.get("/api/auth/audit").status_code == 403
+    client.post("/api/auth/logout")
+
+    assert ouvrir("chef@example.test").status_code == 200
+    journal = client.get("/api/auth/audit")
+    assert journal.status_code == 200
+    evenements = journal.json()
+    assert evenements, "le journal ne retient aucune connexion"
+    assert {"event", "email"} <= set(evenements[0])
+    # Le journal nomme les techniciens, jamais leur secret.
+    assert "password" not in json.dumps(evenements).lower()
+    client.post("/api/auth/logout")
+
+
+def test_la_rotation_de_session_invalide_l_ancien_jeton(client, monkeypatch):
+    """UNE ROTATION QUI LAISSE VIVRE L'ANCIEN JETON N'EST PAS UNE ROTATION.
+
+    Elle existe pour reduire la fenetre d'exploitation d'un cookie derobe. Si
+    le jeton precedent reste accepte, l'operation ne fait qu'en creer un
+    second.
+    """
+    import api.main as api_main
+    from src import config
+    from src.security import AuthManager, hash_password
+
+    monkeypatch.setattr(config, "AUTH_ENABLED", True)
+    monkeypatch.setattr(api_main, "AUTH_MANAGER", AuthManager(
+        password_hash=hash_password("phrase secrete industrielle 2026"),
+        allowed_emails={"tech@example.test"},
+        user_roles={"tech@example.test": "operator"},
+    ))
+    login = client.post("/api/auth/login", json={
+        "email": "tech@example.test", "password": "phrase secrete industrielle 2026",
+    })
+    assert login.status_code == 200
+    ancien = client.cookies.get("e7301_session")
+    ancien_csrf = login.json()["operator"]["csrf_token"]
+    assert ancien and ancien_csrf, "la session protegee n'a pas ete ouverte"
+
+    # LA ROTATION EST ELLE-MEME PROTEGEE PAR CSRF, ET C'EST NORMAL.
+    # C'est une mutation : sans jeton, le middleware refuse. Ecrire ce test
+    # sans l'en-tete m'a fait prendre un 403 pour une rotation cassee — le
+    # controle faisait exactement son travail.
+    assert client.post("/api/auth/refresh").status_code == 403
+
+    rotation = client.post(
+        "/api/auth/refresh", headers={"X-CSRF-Token": ancien_csrf}
+    )
+    assert rotation.status_code == 200
+    nouveau = client.cookies.get("e7301_session")
+    assert nouveau and nouveau != ancien, "le jeton de session n'a pas tourne"
+    assert rotation.json()["operator"]["csrf_token"] != ancien_csrf, (
+        "le jeton CSRF survit a la rotation"
+    )
+
+    # L'ancien jeton ne doit plus ouvrir aucune porte.
+    client.cookies.set("e7301_session", ancien)
+    assert client.get("/api/equipment").status_code == 401
+    client.cookies.set("e7301_session", nouveau)
+    assert client.post("/api/auth/logout").status_code == 200
+    client.cookies.clear()
+
+
+def test_la_rotation_sans_session_est_refusee(client):
+    """Sans acces protege, la rotation n'a rien a faire tourner."""
+    assert client.post("/api/auth/refresh").status_code in (401, 409)

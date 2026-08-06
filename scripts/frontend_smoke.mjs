@@ -62,6 +62,8 @@ const ROUTE = (path) => {
     "/api/timeseries": fx.timeseries,
     "/api/coverage": fx.coverage,
     "/api/sensitivity": fx.sensitivity,
+    "/api/alarms": fx.alarms,
+    "/api/workflows/templates": fx.workflow_templates,
     "/api/detection/fouling-bench": fx.fouling_bench,
   }[clean];
 };
@@ -301,6 +303,19 @@ const checks = [
   ["provenance AMDEC visible ligne a ligne",
     doc.querySelectorAll("#amdecRows .prov").length
       === doc.querySelectorAll("#amdecRows tr").length],
+
+  // ── B1 · les deux surfaces qui n'avaient aucune interface ──────────────
+  //
+  // 849 lignes de code teste, six routes API, et rien a l'ecran — pendant que
+  // le rapport annoncait « le cycle de vie des alarmes et les gammes de
+  // maintenance ». Ces trois controles verrouillent leur presence.
+  ["registre d'alarmes rendu", doc.querySelectorAll("#alarmRows tr").length > 0],
+  ["etats d'alarme traduits",
+    !doc.querySelector("#alarmRows")?.textContent
+      .match(/ACTIVE|SHELVED|RETURNED_NORMAL|ACKNOWLEDGED/)],
+  ["gammes d'intervention rendues",
+    doc.querySelectorAll("#templateSteps .plan-item").length > 0
+    && doc.querySelectorAll("#templatePick option").length >= 3],
 
   // Les episodes affichaient tous « 1,000 » : la colonne de tri du tableau
   // « les plus severes » etait constante.

@@ -361,6 +361,43 @@
         </article>
       </div>
 
+      <!-- ══ Registre d'alarmes ═══════════════════════════════════════════
+           849 lignes de code testé, six routes, et aucune interface : le
+           rapport annonçait « le cycle de vie des alarmes et les gammes de
+           maintenance » que rien n'affichait. C'est pourtant le seul état du
+           poste qui survive à un redémarrage. -->
+      <article class="panel">
+        <header class="panel-head">
+          <div><span class="micro">Cycle de vie ISA-18.2</span><h2>Registre d'alarmes</h2></div>
+          <div class="seg" role="group" aria-label="Filtre du registre">
+            <button class="is-on" data-alarms="open">Ouvertes</button>
+            <button data-alarms="all">Toutes</button>
+          </div>
+        </header>
+        <p class="panel-note">Le registre persiste entre deux démarrages. Il trace
+           apparition, répétition, acquittement, inhibition et retour à la normale —
+           il ne remplace ni l'alarme DCS ni la GMAO.</p>
+        <div class="tbl"><table>
+          <thead><tr>
+            <th>Apparition</th><th>Règle</th><th>Mode AMDEC</th>
+            <th>Occ.</th><th>État</th><th>Propriétaire</th><th></th>
+          </tr></thead>
+          <tbody id="alarmRows"></tbody>
+        </table></div>
+      </article>
+
+      <!-- ══ Gammes d'intervention ════════════════════════════════════════ -->
+      <article class="panel">
+        <header class="panel-head">
+          <div><span class="micro">Gammes et check-lists OCP</span>
+               <h2>Modèles d'intervention</h2></div>
+          <label class="pick"><span>Modèle</span>
+            <select id="templatePick"></select></label>
+        </header>
+        <p class="panel-note" id="templateWarning"></p>
+        <div class="plan" id="templateSteps"></div>
+      </article>
+
       <article class="panel">
         <header class="panel-head">
           <div><span class="micro">Plan préventif OCP</span><h2>Cadence A → H</h2></div>

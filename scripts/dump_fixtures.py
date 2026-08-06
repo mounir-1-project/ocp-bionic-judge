@@ -58,6 +58,11 @@ ROUTES: dict[str, str] = {
     "sensor_T_ACID_OUT": "/api/sensor/T_ACID_OUT?window_h=504",
     "coverage": "/api/coverage",
     "sensitivity": "/api/sensitivity",
+    # Les deux surfaces que la vue Integrite expose desormais. Sans fixture,
+    # `frontend_smoke` recevrait 404 et les panneaux resteraient vides sans
+    # qu'aucun controle ne le signale.
+    "alarms": "/api/alarms?active_only=false&limit=100",
+    "workflow_templates": "/api/workflows/templates",
     "fouling_bench": "/api/detection/fouling-bench?severities=0.05,0.10,0.20,0.30&duration_days=60",
 }
 

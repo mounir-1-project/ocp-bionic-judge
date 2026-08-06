@@ -22,6 +22,9 @@ const TICK = 1600;
 const S = {
   view: "salle",
   feed: "stream",
+  alarmFilter: "open",
+  alarms: [],
+  templates: null,
   twin: null,
   charts: {},
   topology: null,
@@ -1383,6 +1386,122 @@ function renderAmdec(filter = "") {
   }).join("");
 }
 
+/* ═══ Registre d'alarmes ══════════════════════════════════════════════════ */
+
+/**
+ * Etats du cycle de vie, cote exploitant.
+ *
+ * `ACTIVE`, `SHELVED`, `RETURNED_NORMAL` sont des codes de la base. Les
+ * afficher bruts aurait reproduit ici le defaut du tiroir capteur.
+ */
+const ALARM_STATE = {
+  ACTIVE: { mot: "Active", ton: "fault" },
+  ACKNOWLEDGED: { mot: "Acquittée", ton: "warn" },
+  SHELVED: { mot: "Inhibée", ton: "warn" },
+  RETURNED_NORMAL: { mot: "Revenue à la normale", ton: "ok" },
+  CLOSED: { mot: "Clôturée", ton: "" },
+};
+
+/** Actions proposées selon l'état — la table du serveur, côté écran. */
+const ALARM_ACTIONS = {
+  ACTIVE: [["acknowledge", "Acquitter"], ["shelve", "Inhiber"]],
+  ACKNOWLEDGED: [["shelve", "Inhiber"]],
+  SHELVED: [["unshelve", "Désinhiber"]],
+  RETURNED_NORMAL: [["close", "Clôturer"]],
+  CLOSED: [],
+};
+
+function renderAlarms(alarms) {
+  S.alarms = alarms;
+  if (!alarms.length) {
+    $("alarmRows").innerHTML =
+      '<tr><td colspan="7"><p class="void">Aucune alarme enregistrée. '
+      + 'Le registre se remplit pendant le rejeu, à chaque décision de sévérité '
+      + 'WARNING ou CRITICAL retenue par le contrôleur.</p></td></tr>';
+    return;
+  }
+  $("alarmRows").innerHTML = alarms.map((a, i) => {
+    const etat = ALARM_STATE[a.status] || { mot: a.status, ton: "" };
+    const actions = ALARM_ACTIONS[a.status] || [];
+    return `<tr>
+      <td class="num">${esc(stamp(a.first_seen))}</td>
+      <td><b>${esc(a.trigger_rule || "—")}</b><br>
+        <small style="color:var(--ink-4)">${esc(ellipse(a.diagnosis || "", 64))}</small></td>
+      <td>${a.failure_mode
+        ? `<span class="mode-tag">${esc(a.failure_mode)}</span>`
+        : '<span style="color:var(--ink-4)">hors mode</span>'}</td>
+      <td class="num">${a.occurrence_count}</td>
+      <td><span class="chip" data-tone="${etat.ton}">${esc(etat.mot)}</span></td>
+      <td>${esc(a.acknowledged_by || a.owner || "—")}</td>
+      <td>${actions.map(([action, mot]) =>
+        `<button class="table-btn" data-alarm="${i}" data-action="${action}">${mot}</button>`
+      ).join(" ") || `<button class="table-btn" data-alarm="${i}" data-action="">Journal</button>`}</td>
+    </tr>`;
+  }).join("");
+}
+
+/** Journal d'une alarme : c'est lui qui rend le registre opposable. */
+function openAlarm(alarm) {
+  $("modalTitle").textContent = `Alarme ${alarm.trigger_rule || ""} — ${stamp(alarm.first_seen)}`;
+  const etat = ALARM_STATE[alarm.status] || { mot: alarm.status };
+  $("modalBody").innerHTML = `
+    <dl>
+      <div><dt>État</dt><dd>${esc(etat.mot)}</dd></div>
+      <div><dt>Sévérité</dt><dd>${esc(SEV_LABEL[alarm.severity] || alarm.severity)}</dd></div>
+      <div><dt>Occurrences</dt><dd>${alarm.occurrence_count}</dd></div>
+      <div><dt>Dernière</dt><dd>${esc(stamp(alarm.last_seen))}</dd></div>
+    </dl>
+    <p style="color:var(--ink-2);font-size:13px;line-height:1.65">${esc(alarm.diagnosis)}</p>
+    <p style="color:var(--ink-3);font-size:13px;line-height:1.65"><b>Action :</b> ${esc(alarm.action)}</p>
+    <h3 style="font:400 15px var(--disp);margin:22px 0 10px">Journal des transitions</h3>
+    <p class="modal-note">La colonne nomme l'ACTION, pas l'état d'arrivée : « Active »
+       ne distinguerait pas une désinhibition d'une réapparition.</p>
+    <div class="tbl"><table>
+      <thead><tr><th>Quand</th><th>Qui</th><th>Transition</th><th>Commentaire</th></tr></thead>
+      <tbody>${(alarm.history || []).map((h) => `<tr>
+        <td class="num">${esc(stamp(h.changed_at))}</td>
+        <td>${esc(h.actor)}</td>
+        <td><b>${esc(h.transition)}</b></td>
+        <td>${esc(h.comment || "—")}</td></tr>`).join("")}
+      </tbody></table></div>`;
+  $("modal").showModal();
+}
+
+async function loadAlarms() {
+  const tout = S.alarmFilter === "all";
+  try {
+    renderAlarms(await api(`/api/alarms?active_only=${!tout}&limit=100`));
+  } catch { /* le panneau garde son état précédent */ }
+}
+
+/* ═══ Gammes d'intervention ═══════════════════════════════════════════════ */
+
+function renderTemplates(templates) {
+  S.templates = templates;
+  const cles = Object.keys(templates || {});
+  if (!cles.length) return;
+  $("templatePick").innerHTML = cles
+    .map((k) => `<option value="${esc(k)}">${esc(templates[k].title)}</option>`).join("");
+  drawTemplate(cles[0]);
+}
+
+function drawTemplate(cle) {
+  const modele = S.templates?.[cle];
+  if (!modele) return;
+  $("templateWarning").textContent = `${modele.frequency} — ${modele.warning}`;
+  // Une étape dangereuse porte un glyphe ET un mot, jamais la seule couleur.
+  $("templateSteps").innerHTML = modele.steps.map((e) => `
+    <div class="plan-item">
+      <span class="plan-key">${esc(e.code.split("-")[0])}</span>
+      <div>
+        <strong>${esc(e.label)}</strong>
+        <small>${e.dangerous
+          ? '<span style="color:var(--warn)">⚠ point de consignation</span> · '
+          : ""}${esc(e.source_ref)}</small>
+      </div>
+    </div>`).join("");
+}
+
 /* ═══ Vue Controle ════════════════════════════════════════════════════════ */
 
 const CHECKS = [
@@ -1965,6 +2084,8 @@ async function start() {
   api("/api/judge/evaluation").then(renderBench).catch(() => { $("benchScore").textContent = "—"; });
   api("/api/judge/audit").then(renderAudit).catch(() => {});
   api("/api/coverage").then(renderCoverage).catch(() => {});
+  api("/api/alarms?active_only=true&limit=100").then(renderAlarms).catch(() => {});
+  api("/api/workflows/templates").then(renderTemplates).catch(() => {});
   api("/api/notifications/status").then(renderMail).catch(() => {});
   api("/api/sensitivity").then(renderSensitivity).catch(() => {
     $("sensBox").innerHTML = '<p class="void">Analyse indisponible.</p>';
@@ -2160,6 +2281,37 @@ function wire() {
   $("mailTest").addEventListener("click", sendMail("/api/notifications/test", "E-mail de test"));
   $("mailGov").addEventListener("click",
     sendMail("/api/notifications/governance", "Synthèse de gouvernance"));
+
+  $$("[data-alarms]").forEach((b) => b.addEventListener("click", () => {
+    $$("[data-alarms]").forEach((o) => o.classList.toggle("is-on", o === b));
+    S.alarmFilter = b.dataset.alarms;
+    loadAlarms();
+  }));
+
+  $("alarmRows").addEventListener("click", async (e) => {
+    const cible = e.target.closest("[data-alarm]");
+    if (!cible) return;
+    const alarme = S.alarms?.[Number(cible.dataset.alarm)];
+    if (!alarme) return;
+    const action = cible.dataset.action;
+    if (!action) { openAlarm(alarme); return; }
+    // L'INHIBITION EXIGE UN MOTIF, ET LE SERVEUR LE REFUSE SANS. On le demande
+    // ici plutôt que de laisser partir une requête vouée au 422.
+    let comment = "";
+    if (action === "shelve") {
+      comment = (window.prompt("Motif de l'inhibition (obligatoire)") || "").trim();
+      if (!comment) { toast("Inhibition annulée : motif obligatoire", "warn"); return; }
+    }
+    try {
+      await api(`/api/alarms/${alarme.id}/transition`, {
+        method: "POST", body: JSON.stringify({ action, comment }),
+      });
+      toast("Alarme mise à jour", "ok");
+      loadAlarms();
+    } catch (err) { toast(err.message, "fault"); }
+  });
+
+  $("templatePick").addEventListener("change", (e) => drawTemplate(e.target.value));
 
   $("modalClose").addEventListener("click", () => $("modal").close());
 }
