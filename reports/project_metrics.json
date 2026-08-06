@@ -68,7 +68,7 @@
     "source": "data/raw/DATA.xlsx",
     "usable_timestamps": 10180
   },
-  "generated_at_utc": "2026-07-31T23:19:21.051595+00:00",
+  "generated_at_utc": "2026-08-06T17:58:56.964429+00:00",
   "industrial_validation": {
     "production_go": false,
     "software_tests_prove_industrial_validity": false
@@ -77,8 +77,6 @@
     "alert_hours_historical": 530,
     "artifact_failed_gates": [
       "labels_gmao",
-      "redondance_features",
-      "stabilite_hors_periode",
       "validation_externe"
     ],
     "artifact_promotion_status": "candidate",
@@ -103,11 +101,11 @@
   },
   "schema_version": "1.0",
   "tests": {
-    "duration_s": 179.23,
+    "duration_s": 126.049,
     "errors": 0,
-    "failures": 2,
+    "failures": 0,
     "skipped": 1,
     "status": "measured",
-    "tests": 277
+    "tests": 290
   }
 }

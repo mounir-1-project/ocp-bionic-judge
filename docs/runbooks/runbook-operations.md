@@ -37,9 +37,13 @@ disponibilité est `/api/health/ready`**, qui répond 200 ou 503.
 
 N'attendez pas `status: ok` sur `/api/health` : ce statut est **inatteignable
 par construction**. Il vaut `degraded` tant qu'aucun modèle n'est promu, et
-aucun ne peut l'être — quatre portes de déploiement sur cinq sont en échec,
-dont deux définitivement faute d'historique de pannes étiqueté. `degraded` est
-donc l'état nominal du démonstrateur, et non un incident.
+aucun ne peut l'être : **`labels_gmao` et `validation_externe` sont en échec
+définitif**, faute d'historique de pannes étiqueté et de validation hors site.
+Aucun commit ne les franchira. `degraded` est donc l'état nominal du
+démonstrateur, et non un incident.
+
+Les trois portes que le code décide — causalité temporelle, redondance des
+grandeurs du modèle, taux d'alertes hors période — sont, elles, **franchies**.
 
 La promotion du modèle et la disponibilité du service sont deux questions
 distinctes : `/api/health/model` répond à la première, `/api/health/ready` à la

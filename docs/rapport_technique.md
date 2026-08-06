@@ -30,7 +30,7 @@ Résultats mesurés :
 - **Judge éprouvé sur 118 cas piégés** : **100 % des fautes injectées détectées**, 95,8 % détectées ET suffisamment sanctionnées, 0 % de faux positifs, écart de 4,13 points entre décisions saines et décisions fautives. Le mot **« validé » a été retiré de cette ligne** : chaque piège du catalogue porte exactement le code d'anomalie que le Judge sait produire, si bien que ce taux mesure une **non-régression** des contrôles implémentés, jamais leur capacité face à une faute imprévue. `src/governance/judge_eval.py` le dit dans son en-tête — le présenter comme une validation serait une sur-vente. La mesure de généralisation est distincte, plus basse, et porte sur des mutations non ciblées ;
 - **aucun chiffrage économique** : la couche qui en produisait a été retirée du périmètre, et deux tests interdisent son retour (§ 10.5). Les indicateurs publiés portent chacun leur niveau de preuve et ne se convertissent pas en dirhams.
 
-Le cœur de détection fonctionne intégralement hors ligne et sans service externe obligatoire. L'authentification locale est désactivée par défaut et ne devient utilisable qu'avec une empreinte PBKDF2 et une liste d'e-mails autorisés explicitement configurées ; elle n'est pas une authentification industrielle de production. Le relais SMTP reste une intégration externe de déploiement. La campagne finale couvre **277 cas de test** côté Python et **98 vérifications** des bancs du poste, avec **87,15 %** de couverture de lignes.
+Le cœur de détection fonctionne intégralement hors ligne et sans service externe obligatoire. L'authentification locale est désactivée par défaut et ne devient utilisable qu'avec une empreinte PBKDF2 et une liste d'e-mails autorisés explicitement configurées ; elle n'est pas une authentification industrielle de production. Le relais SMTP reste une intégration externe de déploiement. La campagne finale couvre **290 cas de test** côté Python et **98 vérifications** des bancs du poste, avec **87,15 %** de couverture de lignes.
 
 Deux erreurs d'analyse commises en cours de projet ont été détectées et corrigées : une causalité apparente entre une panne de capteur et un changement de régime, invalidée par une analyse à granularité plus fine ; et une hypothèse de redondance entre deux analyseurs de titre, invalidée par leur corrélation réelle. Elles sont documentées dans le corps du rapport, parce qu'un projet dont on ne peut pas retracer les corrections n'est pas vérifiable.
 
@@ -887,7 +887,7 @@ Lorsque l'administrateur active explicitement le profil local de démonstration,
 
 | Élément | Valeur |
 |---|---|
-| Tests automatisés (Python) | 277 cas |
+| Tests automatisés (Python) | 290 cas |
 | Vérifications des bancs du poste (jsdom) | 98 — câblage, scène 3D, écran de démarrage |
 | Couverture de lignes | 87,15 % (seuil bloquant en intégration continue : 85 %) |
 | Fonctionnement hors ligne | Intégral pour la détection et le Judge |
