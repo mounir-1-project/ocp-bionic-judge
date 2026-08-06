@@ -29,7 +29,7 @@ jobs:
           node-version: "22"
 
       - name: Installer les outils qualite
-        run: pip install ruff bandit
+        run: pip install ruff bandit mypy
 
       - name: Analyse statique
         run: |
@@ -38,74 +38,38 @@ jobs:
           node --check api/static/app.js
           node --check api/static/twin.js
 
-      - name: Verifier la coherence du referentiel metier
-        # Le referentiel YAML est la source de verite du systeme. Une erreur de
-        # saisie (criticite qui ne vaut pas F x G x N, seuils desordonnes, tache
-        # preventive inexistante) doit bloquer la fusion, pas etre decouverte
-        # en exploitation.
-        run: |
-          pip install pyyaml
-          python - <<'PY'
-          import sys, yaml, pathlib
-          amdec = yaml.safe_load(pathlib.Path("src/domain/amdec.yaml").read_text(encoding="utf-8"))
-          tags  = yaml.safe_load(pathlib.Path("src/domain/tags.yaml").read_text(encoding="utf-8"))
-          topo  = yaml.safe_load(pathlib.Path("src/domain/topology.yaml").read_text(encoding="utf-8"))
-          erreurs = []
-          for code, m in amdec["modes"].items():
-              if m["C"] != m["F"] * m["G"] * m["N"]:
-                  erreurs.append(f"{code}: C={m['C']} mais FxGxN={m['F']*m['G']*m['N']}")
-              for ref in (m.get("plan_maintenance_ref") or []):
-                  if ref not in amdec["plan_maintenance"]:
-                      erreurs.append(f"{code}: tache preventive inconnue '{ref}'")
-              provenance = m.get("provenance") or {}
-              for field in ("category","source_file","source_location","original_values",
-                            "transformations","validation_status","validation_owner"):
-                  if field not in provenance:
-                      erreurs.append(f"{code}: provenance.{field} manquant")
-          # Aucune fiche d'instrumentation n'accompagne l'export DCS : le sens de
-          # chaque tag est ETABLI par recoupement, jamais declare. On exige donc
-          # au moins deux bases independantes et la preuve correspondante.
-          bases_admises = {"isa_5_1", "process", "data", "stoichio", "climatology"}
-          for tag, spec in tags["tags"].items():
-              if not (spec.get("evidence") or spec.get("rationale")):
-                  erreurs.append(f"{tag}: preuve d'interpretation manquante")
-              bases = set(spec.get("basis") or [])
-              inconnues = bases - bases_admises
-              if inconnues:
-                  erreurs.append(f"{tag}: base de determination inconnue {sorted(inconnues)}")
-              if len(bases) < 2:
-                  erreurs.append(
-                      f"{tag}: {len(bases)} base(s) de determination, deux au minimum"
-                  )
-          # La topologie relie les codes du detecteur aux pieces reelles. Une
-          # piece inexistante ou un capteur non declare dans tags.yaml ferait
-          # designer la mauvaise partie de l'equipement a l'exploitant.
-          composants = set(topo.get("components") or {})
-          alias = {spec["alias"] for spec in tags["tags"].values()}
-          for code, spec in (topo.get("sensors") or {}).items():
-              if code not in alias:
-                  erreurs.append(f"topology: capteur '{code}' absent de tags.yaml")
-              if spec.get("attaches_to") not in composants:
-                  erreurs.append(f"topology: '{code}' rattache a une piece inconnue")
-              if len(spec.get("at") or []) != 3:
-                  erreurs.append(f"topology: '{code}' sans position 3D valide")
-          for code, spec in (topo.get("components") or {}).items():
-              for mode in (spec.get("amdec_modes") or []):
-                  if mode not in amdec["modes"]:
-                      erreurs.append(f"topology: '{code}' cite un mode AMDEC inconnu '{mode}'")
-          for code, spec in (topo.get("finding_map") or {}).items():
-              for c in (spec.get("components") or []):
-                  if c not in composants:
-                      erreurs.append(f"topology: finding_map '{code}' -> piece inconnue '{c}'")
-              for s in (spec.get("sensors") or []):
-                  if s not in alias:
-                      erreurs.append(f"topology: finding_map '{code}' -> capteur inconnu '{s}'")
-          if erreurs:
-              print("Referentiel incoherent :")
-              for e in erreurs: print("  -", e)
-              sys.exit(1)
-          print("Referentiel metier coherent.")
-          PY
+      # CI-1 — MYPY ETAIT CONFIGURE, INSTALLE, DOTE D'UNE CIBLE `make types`,
+      # ET ABSENT DE LA CHAINE. Le seul endroit du depot qui le mentionnait
+      # etait `make clean`, pour effacer un cache que rien ne produisait.
+      #
+      # Il est NON BLOQUANT, exactement comme le declare `make types`. Le
+      # rendre bloquant sur une base non annotee produirait des centaines
+      # d'erreurs et la seule reaction possible serait de le desactiver.
+      # Visible et informatif vaut mieux qu'inerte et declare.
+      - name: Typage statique (informatif)
+        continue-on-error: true
+        run: mypy src api
+
+      # LES SEPT CONTROLES DE REFERENTIEL QUI VIVAIENT ICI ONT ETE RETIRES.
+      #
+      # Soixante lignes de Python etaient inserees dans ce YAML pour verifier
+      # C = F x G x N, l'existence des taches preventives citees, la completude
+      # des blocs `provenance`, la presence d'une preuve par tag, les deux bases
+      # de determination minimum, et la coherence de la topologie.
+      #
+      # Les SEPT existaient deja en pytest :
+      #   test_domain.py   : criticite_est_le_produit_fgn, taches_preventives_
+      #                      referencees_existent, provenance_amdec_source_et_
+      #                      enrichissements_separes, chaque_tag_declare_sur_
+      #                      quoi_repose_son_sens, la_base_de_determination_est_
+      #                      publiee
+      #   test_topology.py : chaque_capteur_situe_existe_dans_le_registre,
+      #                      chaque_piece_cite_des_modes_amdec_existants,
+      #                      le_rattachement_des_codes_ne_cite_rien_d_inconnu
+      #
+      # Le code inline n'etait ni linte par ruff, ni type, ni couvert, ni
+      # executable en local : il ne pouvait que diverger de son jumeau, et
+      # personne ne l'aurait vu. Le job `tests` execute la suite complete.
 
   tests:
     name: Tests (Python ${{ matrix.python }})

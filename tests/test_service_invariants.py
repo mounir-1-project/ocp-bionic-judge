@@ -22,6 +22,7 @@ Author: Mounir Sanbouli — Stage OCP, Programme Bionic
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 RACINE = Path(__file__).resolve().parents[1]
@@ -330,6 +331,21 @@ def test_aucun_outil_de_qualite_declare_n_est_inerte():
     makefile = (RACINE / "Makefile").read_text(encoding="utf-8")
     assert declare, "mypy est configure mais n'est pas une dependance declaree"
     assert "\tmypy " in makefile, "mypy est configure mais aucune cible ne l'execute"
+
+    # CE TEST NE VERIFIAIT QUE DEUX TIERS DE SON PROPRE ENONCE.
+    #
+    # Sa docstring nomme trois manques — « absent des dependances, absent du
+    # Makefile, ABSENT DE L'INTEGRATION CONTINUE » — et il n'en controlait que
+    # deux. Le troisieme, celui qui compte le plus, survivait donc sous le test
+    # ecrit pour l'empecher : `mypy` avait une cible que personne n'appelait.
+    #
+    # La chaine l'execute desormais en mode informatif, comme `make types` le
+    # declare. Ce controle exige qu'il y figure, pas qu'il bloque.
+    ci = (RACINE / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert re.search(r"^\s*run:\s*mypy ", ci, re.M), (
+        "mypy est configure et dote d'une cible, mais l'integration continue "
+        "ne l'execute pas : le seul endroit ou son absence se verrait"
+    )
 
 
 def test_les_bancs_du_poste_sont_executes_par_l_integration_continue():

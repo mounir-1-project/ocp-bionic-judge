@@ -98,4 +98,4 @@ ignore = [
 python_version = "3.10"
 ignore_missing_imports = true
 warn_return_any = false
-exclude = ["legacy/", "notebooks/"]
+exclude = ["notebooks/"]
