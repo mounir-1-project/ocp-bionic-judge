@@ -11,16 +11,8 @@
 *.pdf binary
 *.joblib binary
 
-# Le notebook porte 519 Ko de sorties encodees en base64 sur 567 Ko de fichier.
-# Il apparait modifie des qu'on l'ouvre, et toute revue de diff s'en trouve
-# polluee.
+# Le notebook ne se committe pas avec ses sorties : 519 Ko de figures encodees
+# en base64 sur 567 Ko de fichier, et un diff pollue des qu'on l'ouvre.
 #
-# LE FILTRE EST DECLARE, PAS ACTIVE. Le dépouiller aujourd'hui laisserait un
-# fichier qui NE S'EXECUTE PAS — `Tag.confidence` a change de sens et
-# `duty_residual_trend_14d` n'est plus produite. On refait d'abord ses sections
-# 3 et 4 sur UA, on le reexecute, on verifie qu'il produit ses figures, PUIS on
-# decommente la ligne ci-dessous et on enregistre le filtre :
-#
-#   git config filter.nboutput.clean "python -c \"import sys,json;n=json.load(sys.stdin);[c.update(outputs=[],execution_count=None) for c in n['cells'] if c['cell_type']=='code'];json.dump(n,sys.stdout,indent=1,ensure_ascii=False)\""
-#
-# *.ipynb filter=nboutput
+# `make notebook-clean` les retire. La cible est explicite plutot qu'un filtre
+# git `clean`, dont l'echappement sous PowerShell est un piege.

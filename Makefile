@@ -2,7 +2,7 @@
 # Surveillance du refroidisseur E7301 — commandes courantes
 # =============================================================================
 .DEFAULT_GOAL := help
-.PHONY: help install check test test-front eval-judge bench-fouling sensitivity operator operators train release release-runtime lock-runtime promote serve dev replay analyse notebook docker docker-run clean
+.PHONY: help install check types test test-front notebook-run notebook-clean eval-judge bench-fouling sensitivity operator operators train release release-runtime lock-runtime promote serve dev replay analyse notebook docker docker-run clean
 
 help:  ## Affiche cette aide
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -103,6 +103,23 @@ analyse:  ## Analyse de bout en bout des instants notables
 
 notebook:  ## Ouvre le notebook d'analyse
 	jupyter notebook notebooks/01_analyse_E7301.ipynb
+
+# LE NOTEBOOK NE SE COMMITTE PAS AVEC SES SORTIES.
+# Il pesait 567 Ko dont 519 de figures encodees en base64 — 92 % du fichier,
+# cinquieme fichier suivi le plus lourd du depot, et il apparaissait modifie
+# des qu'on l'ouvrait. Toute revue de diff s'en trouvait polluee.
+#
+# Un filtre git `clean` ferait cela automatiquement, mais son echappement sous
+# PowerShell est un piege : un outil qu'on n'arrive pas a installer n'est pas
+# un outil. Une cible explicite, appelee avant de committer, est plus sure.
+notebook-run:  ## Execute le notebook et verifie qu'il tourne de bout en bout
+	jupyter nbconvert --to notebook --execute --inplace notebooks/01_analyse_E7301.ipynb
+
+notebook-clean:  ## Retire les sorties du notebook avant commit
+	python -c "import json,pathlib;p=pathlib.Path('notebooks/01_analyse_E7301.ipynb');\
+n=json.loads(p.read_text(encoding='utf-8'));\
+[c.update(outputs=[],execution_count=None) for c in n['cells'] if c['cell_type']=='code'];\
+p.write_text(json.dumps(n,indent=1,ensure_ascii=False)+chr(10),encoding='utf-8')"
 
 # ── Deploiement ──────────────────────────────────────────────────────────────
 docker:  ## Construit l'image de production

@@ -1,6 +1,6 @@
 # Runbook opérationnel — E7301
 
-**Version active : 3.0 — 25 juillet 2026**
+**Version active : 3.0 — 2 août 2026**
 
 Ce runbook concerne le service FastAPI local de la version 3, seule
 architecture présente dans le dépôt.
@@ -32,8 +32,18 @@ Invoke-RestMethod http://localhost:8000/api/health
 Invoke-RestMethod http://localhost:8000/api/config
 ```
 
-Le dashboard est disponible sur `http://localhost:8000`. L'API est prête
-seulement lorsque `/api/health` retourne `status: ok`.
+Le dashboard est disponible sur `http://localhost:8000`. **La sonde de
+disponibilité est `/api/health/ready`**, qui répond 200 ou 503.
+
+N'attendez pas `status: ok` sur `/api/health` : ce statut est **inatteignable
+par construction**. Il vaut `degraded` tant qu'aucun modèle n'est promu, et
+aucun ne peut l'être — quatre portes de déploiement sur cinq sont en échec,
+dont deux définitivement faute d'historique de pannes étiqueté. `degraded` est
+donc l'état nominal du démonstrateur, et non un incident.
+
+La promotion du modèle et la disponibilité du service sont deux questions
+distinctes : `/api/health/model` répond à la première, `/api/health/ready` à la
+seconde.
 
 Le registre d'alarmes est conservé dans `data/runtime/alarms.db`. Il trace
 apparition, dernière occurrence, acquittement, shelving, propriétaire,
@@ -42,26 +52,42 @@ ne pas le confondre avec une historisation DCS ou GMAO.
 
 ### Identification technicien
 
-Le dépôt ne contient aucun mot de passe ni hash partagé par défaut. Pour une
-démonstration locale, générer une empreinte hors du dépôt, puis configurer une
-allowlist stricte et un rôle serveur :
+Le dépôt ne contient aucun mot de passe ni empreinte. **Chaque technicien a son
+propre compte**, enregistré par la commande dédiée :
 
 ```powershell
-.\.venv\Scripts\python.exe -c "from src.security import hash_password; print(hash_password('une phrase secrete longue'))"
+.\.venv\Scripts\python.exe scripts\manage_operators.py add      # crée un compte
+.\.venv\Scripts\python.exe scripts\manage_operators.py list     # liste les techniciens
+.\.venv\Scripts\python.exe scripts\manage_operators.py passwd   # change un mot de passe
+.\.venv\Scripts\python.exe scripts\manage_operators.py remove   # retire un technicien
 ```
 
-Copier l'empreinte produite dans `.env`, puis définir :
+Le mot de passe est saisi masqué et confirmé, jamais passé en argument : il
+apparaîtrait dans l'historique du terminal et dans la liste des processus. Le
+registre vit dans `data/runtime/operators.json`, ignoré par git, en droits 600,
+et ne stocke que des empreintes PBKDF2-SHA256 à 600 000 itérations avec un sel
+distinct par technicien.
+
+**L'accès protégé s'active de lui-même** dès qu'un compte existe : aucune
+variable d'environnement à positionner, donc aucun oubli possible. Tant
+qu'aucun compte n'est enregistré, le poste s'ouvre sur une prise de quart
+déclarative, et l'écran le dit explicitement.
 
 ```dotenv
-AUTH_ENABLED=true
-AUTH_PASSWORD_HASH=pbkdf2_sha256$600000$...
-AUTH_ALLOWED_EMAILS=maintenance@exemple.test
-AUTH_USER_ROLES_JSON={"maintenance@exemple.test":"maintenance"}
+AUTH_IDLE_MINUTES=30
+AUTH_ABSOLUTE_HOURS=8
 AUTH_SECURE_COOKIE=true
 ```
 
 `AUTH_SECURE_COOKIE=true` exige un accès HTTPS. Les sessions expirent côté
-serveur après 30 minutes d'inactivité et 8 heures au maximum par défaut.
+serveur après 30 minutes d'inactivité et 8 heures au maximum.
+
+> **Le mode à empreinte partagée — `AUTH_ENABLED` et `AUTH_PASSWORD_HASH` —
+> reste supporté pour les déploiements existants, mais ne doit pas être utilisé
+> pour une nouvelle installation.** L'adresse de session détermine le
+> destinataire des états critiques : un secret partagé ne permet ni de savoir
+> qui a ouvert la session, ni de révoquer un départ individuellement. Voir
+> [ADR-007](../decisions/ADR-007-identification-technicien.md).
 
 ### Activer les notifications
 
@@ -176,7 +202,7 @@ Ne pas augmenter arbitrairement le seuil. Vérifier d'abord :
 
 - l'état de marche et les arrêts ;
 - la qualité des tags ;
-- l'ancrage de `REFERENCE_END` ;
+- la fenêtre de référence — 40 % des heures de marche par défaut, dont l'analyse de sensibilité publie l'influence sur `/api/sensitivity` ;
 - un changement réel de régime opératoire.
 
 Tout changement de seuil doit être tracé, évalué sur l'historique complet et
