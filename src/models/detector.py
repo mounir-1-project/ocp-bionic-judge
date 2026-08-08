@@ -261,9 +261,9 @@ class RuleEngine:
             return [Finding(
                 code="CONTROL_LOSS_CRITICAL", source="RULE", severity="CRITICAL",
                 amdec_mode="FAISCEAU_BOUCHAGE",
-                message=f"Température de sortie acide à {t_out:.1f} °C, au-dessus du "
-                        f"seuil HH ({hh:g} °C). L'échangeur ne tient plus sa consigne "
-                        f"de {tag.setpoint:g} °C : la boucle froide a consommé toute "
+                message=f"Température de sortie acide à {_n(t_out)} °C, au-dessus du "
+                        f"seuil HH ({_n(hh)} °C). L'échangeur ne tient plus sa consigne "
+                        f"de {_n(tag.setpoint)} °C : la boucle froide a consommé toute "
                         f"sa marge, la capacité d'échange est insuffisante.",
                 evidence={"T_ACID_OUT": t_out, "seuil_HH": hh,
                           "consigne": tag.setpoint,
@@ -273,8 +273,8 @@ class RuleEngine:
             return [Finding(
                 code="CONTROL_LOSS", source="RULE", severity="WARNING",
                 amdec_mode="FAISCEAU_BOUCHAGE",
-                message=f"Température de sortie acide à {t_out:.1f} °C, hors bande de "
-                        f"régulation [{band[0]:g}, {band[1]:g}] °C. Début de perte "
+                message=f"Température de sortie acide à {_n(t_out)} °C, hors bande de "
+                        f"régulation [{_n(band[0])}, {_n(band[1])}] °C. Début de perte "
                         f"de contrôle à surveiller.",
                 evidence={"T_ACID_OUT": t_out, "seuil_H": h,
                           "control_deviation": _f(row.get("control_deviation"))},
@@ -288,12 +288,28 @@ class RuleEngine:
         FAISCEAU_BOUCHAGE : c'est une donnee de gouvernance, modifiable par le
         service fiabilite sans qu'une ligne de code change.
 
+        M-1 — LE SEUL ENDROIT DU DEPOT QUI ENFREIGNAIT SA PROPRE REGLE.
+
+        Cette methode ecrivait `(...) or 3.0`, et nommait le resultat `seuil`.
+        Deux fautes superposees, sur six lignes.
+
+        L'idiome `or` est precisement celui que `src.domain.knowledge.seuil`
+        existe pour abolir : sa docstring dit « le repli teste l'absence, pas
+        la faussete » et cite les douze endroits ou il avait ete remplace. Ici
+        un `warning_sigma: 0` gouverne dans `amdec.yaml` — reglage parfaitement
+        legitime signifiant « toute perte de coefficient d'echange persistante
+        passe en WARNING » — serait devenu 3.0 sans le moindre avertissement.
+
+        Et la variable locale s'appelait `seuil`, donc masquait la fonction
+        importee ligne 49 : dans cette portee, la fonction qui corrige le
+        defaut etait inaccessible sous son propre nom.
+
         Returns:
             Seuil en ecarts-types, toujours superieur au seuil de declenchement.
         """
         mode = self.domain.modes.get("FAISCEAU_BOUCHAGE")
-        seuil = (mode.signature.get("warning_sigma") if mode else None) or 3.0
-        return max(float(seuil), DRIFT_Z_THRESHOLD)
+        gouverne = mode.signature.get("warning_sigma") if mode else None
+        return max(seuil(gouverne, 3.0), DRIFT_Z_THRESHOLD)
 
     def _rule_thermal_drift(self, row: pd.Series, history: pd.DataFrame) -> list[Finding]:
         """Derives thermiques lentes — degradation et conduite.
@@ -373,17 +389,17 @@ class RuleEngine:
                         amdec_mode="FAISCEAU_BOUCHAGE",
                         message=(
                             f"Coefficient d'échange global inférieur de "
-                            f"{abs(ua_z):.2f} sigma à sa référence sur 14 jours, "
+                            f"{_n(abs(ua_z), 2)} sigma à sa référence sur 14 jours, "
                             f"à débit, température et eau de mer donnés, maintenu "
                             f"depuis plus de {DRIFT_PERSISTENCE_H} h. "
-                            f"UA mesuré {_f(row.get('ua_kw_per_k')) or float('nan'):.1f} kW/K "
-                            f"pour {_f(row.get('ua_expected')) or float('nan'):.1f} attendu"
+                            f"UA mesuré {_n(row.get('ua_kw_per_k'))} kW/K "
+                            f"pour {_n(row.get('ua_expected'))} attendu"
                             + (f", soit une résistance d'encrassement de "
-                               f"{fouling:+.4f} K/kW. " if fouling is not None else ". ")
+                               f"{_n(fouling, 4, signe=True)} K/kW. " if fouling is not None else ". ")
                             + "La surface d'échange transmet moins bien qu'à l'état "
                               "de référence : signature d'un dépôt sur le faisceau."
                             + (f" Déficit au-delà de "
-                               f"{self._fouling_warning_sigma():.1f} sigma : à "
+                               f"{_n(self._fouling_warning_sigma())} sigma : à "
                                f"qualifier par le service fiabilité."
                                if grave else
                                " Déficit encore modéré : à surveiller, pas à traiter.")
@@ -397,7 +413,28 @@ class RuleEngine:
                             "fouling_resistance": fouling,
                             "T_SEAWATER": _f(row.get("T_SEAWATER")),
                             "regulation_effort_trend_14d": effort,
-                            "persistance_h": len(recent),
+                            # LA CORRECTION DE LA FENETRE N'AVAIT PAS ETE
+                            # PORTEE JUSQU'A LA PREUVE PUBLIEE.
+                            #
+                            # Le commentaire trente lignes plus haut dit que
+                            # `persistance_h` « publiait un nombre de lignes
+                            # sous un nom d'heures », et la fenetre est bien
+                            # devenue calendaire. Mais le champ continuait de
+                            # valoir `len(recent)`, c'est-a-dire le nombre
+                            # d'heures OU LA TENDANCE ETAIT CALCULABLE dans la
+                            # fenetre — donc toujours un compte de lignes, avec
+                            # toujours le meme nom.
+                            #
+                            # Les deux grandeurs sont maintenant distinctes et
+                            # nommees pour ce qu'elles sont : la profondeur de
+                            # la fenetre est une constante calendaire, le
+                            # nombre d'heures mesurees est ce que la base de
+                            # donnee a fourni a l'interieur.
+                            "fenetre_h": DRIFT_PERSISTENCE_H,
+                            "heures_mesurees_dans_la_fenetre": len(recent),
+                            "part_sous_le_seuil": round(
+                                float((recent <= -DRIFT_Z_THRESHOLD).mean()), 3
+                            ),
                             "corrobore": corroborated,
                         },
                     ))
@@ -419,7 +456,7 @@ class RuleEngine:
                 # l'analyse au lieu de la degrader.
                 rappel = (
                     f"Rappel de lecture — cet indicateur est une réécriture de "
-                    f"l'écart de consigne ({dev:+.2f} °C), pas une preuve "
+                    f"l'écart de consigne ({_n(dev, 2, signe=True)} °C), pas une preuve "
                     f"indépendante. " if dev is not None else
                     "Rappel de lecture — cet indicateur est une réécriture de "
                     "l'écart de consigne, indisponible à cet instant, pas une "
@@ -430,7 +467,7 @@ class RuleEngine:
                     amdec_mode=None,
                     message=(
                         f"Effort de régulation durablement excédentaire "
-                        f"({effort:+.2f} sigma sur 14 jours) : la ligne sur-refroidit. "
+                        f"({_n(effort, 2, signe=True)} sigma sur 14 jours) : la ligne sur-refroidit. "
                         + rappel
                         + "Ce n'est pas une dégradation de l'appareil "
                           "mais un régime de conduite."
@@ -464,7 +501,7 @@ class RuleEngine:
                 out.append(Finding(
                     code="CONC_LOW_LOW", source="RULE", severity="CRITICAL",
                     amdec_mode="FAISCEAU_FUITE",
-                    message=f"Titre acide à {c:.2f} %, sous le seuil LL ({ll:g} %). "
+                    message=f"Titre acide à {_n(c, 2)} %, sous le seuil LL ({_n(ll)} %). "
                             f"Dilution majeure — suspicion d'entrée d'eau de mer par "
                             f"percement de tube jusqu'à preuve du contraire.",
                     evidence={"conc_min": c, "seuil_LL": ll, "conc_drop_24h": drop},
@@ -473,7 +510,7 @@ class RuleEngine:
                 out.append(Finding(
                     code="CONC_LOW", source="RULE", severity="WARNING",
                     amdec_mode="FAISCEAU_CORROSION",
-                    message=f"Titre acide à {c:.2f} %, sous spécification ({lo:g} %). "
+                    message=f"Titre acide à {_n(c, 2)} %, sous spécification ({_n(lo)} %). "
                             f"Conditions favorisant la corrosion des tubes 904L — "
                             f"l'exposition cumulée réduit la durée de vie du faisceau.",
                     evidence={"conc_min": c, "seuil_L": lo},
@@ -483,7 +520,7 @@ class RuleEngine:
             out.append(Finding(
                 code="CONC_DROP_SEVERE", source="RULE", severity="CRITICAL",
                 amdec_mode="FAISCEAU_FUITE",
-                message=f"Chute de titre de {abs(drop):.2f} point(s) en 24 h. Cinétique "
+                message=f"Chute de titre de {_n(abs(drop), 2)} point(s) en 24 h. Cinétique "
                         f"incompatible avec une dérive d'analyseur : traiter comme "
                         f"une suspicion de fuite tube.",
                 evidence={"conc_drop_24h": drop, "conc_min": c},
@@ -492,7 +529,7 @@ class RuleEngine:
             out.append(Finding(
                 code="CONC_DROP", source="RULE", severity="WARNING",
                 amdec_mode="FAISCEAU_FUITE",
-                message=f"Baisse de titre de {abs(drop):.2f} point(s) en 24 h. À "
+                message=f"Baisse de titre de {_n(abs(drop), 2)} point(s) en 24 h. À "
                         f"confirmer par prélèvement laboratoire avant conclusion.",
                 evidence={"conc_drop_24h": drop, "conc_min": c},
             ))
@@ -517,8 +554,8 @@ class RuleEngine:
                 code="CONC_BIAS_DRIFT", source="RULE", severity="WARNING",
                 amdec_mode="CAPTEUR_DEFAILLANT",
                 message=f"L'écart entre les deux analyseurs de titre s'éloigne de "
-                        f"{abs(drift_z):.1f} écarts-types de sa valeur habituelle "
-                        f"({bias:+.3f} point). Écart mesuré : {spread:+.3f} point. "
+                        f"{_n(abs(drift_z))} écarts-types de sa valeur habituelle "
+                        f"({_n(bias, 3, signe=True)} point). Écart mesuré : {_n(spread, 3, signe=True)} point. "
                         f"Un des deux analyseurs dérive — le diagnostic sur le titre "
                         f"acide doit être confirmé par prélèvement laboratoire.",
                 evidence={"conc_spread": spread, "conc_bias_drift_z": drift_z,
@@ -540,7 +577,7 @@ class RuleEngine:
             return [Finding(
                 code="T_IN_HIGH_HIGH", source="RULE", severity="CRITICAL",
                 amdec_mode="FAISCEAU_CORROSION",
-                message=f"Température d'entrée acide à {t:.1f} °C (seuil HH {hh:g} °C). "
+                message=f"Température d'entrée acide à {_n(t)} °C (seuil HH {_n(hh)} °C). "
                         f"La vitesse de corrosion du 904L croît fortement dans cette "
                         f"plage : risque direct de perte d'épaisseur des tubes.",
                 evidence={"T_ACID_IN": t, "seuil_HH": hh},
@@ -549,7 +586,7 @@ class RuleEngine:
             return [Finding(
                 code="T_IN_HIGH", source="RULE", severity="WARNING",
                 amdec_mode="FAISCEAU_CORROSION",
-                message=f"Température d'entrée acide à {t:.1f} °C (seuil H {h:g} °C). "
+                message=f"Température d'entrée acide à {_n(t)} °C (seuil H {_n(h)} °C). "
                         f"Exposition thermique au-delà du domaine nominal.",
                 evidence={"T_ACID_IN": t, "seuil_H": h},
             )]
@@ -574,7 +611,7 @@ class RuleEngine:
             return [Finding(
                 code="FLOW_LOW_LOW", source="RULE", severity="CRITICAL",
                 amdec_mode="CALANDRE_FUITE",
-                message=f"Débit acide à {f:.1f} m3/h (seuil LL {ll:g} m3/h) alors que "
+                message=f"Débit acide à {_n(f)} m³/h (seuil LL {_n(ll)} m³/h) alors que "
                         f"la ligne est en marche. Perte de circulation avérée : "
                         f"pompe, vanne de régulation ou fuite calandre. Le "
                         f"refroidisseur ne peut plus évacuer sa charge.",
@@ -584,7 +621,7 @@ class RuleEngine:
             return [Finding(
                 code="FLOW_LOW", source="RULE", severity="WARNING",
                 amdec_mode="CALANDRE_FUITE",
-                message=f"Débit acide à {f:.1f} m3/h (seuil L {lo:g} m3/h). Une vitesse "
+                message=f"Débit acide à {_n(f)} m³/h (seuil L {_n(lo)} m³/h). Une vitesse "
                         f"de circulation réduite favorise en outre le dépôt de "
                         f"sulfates dans les tubes.",
                 evidence={"F_ACID": f, "seuil_L": lo},
@@ -606,7 +643,7 @@ _FEATURE_LABELS: dict[str, tuple[str, str, int]] = {
     "conc_min": ("le titre acide", " %", 2),
     "conc_bias_drift_z": ("l'écart entre analyseurs de titre", " sigma", 1),
     "conc_drop_24h": ("la variation de titre sur 24 h", " point", 2),
-    "flow_per_load": ("le débit acide rapporté à la charge", " m3/h par t/h", 2),
+    "flow_per_load": ("le débit acide rapporté à la charge", " m³/h par t/h", 2),
     "d_t_out": ("la variation horaire de sortie acide", " degC", 2),
     "d_conc": ("la variation horaire de titre", " point", 3),
     "t_out_local_z": ("la sortie acide face à ses 24 h", " sigma", 2),
@@ -620,12 +657,56 @@ def _label(feature: str) -> str:
 
 
 def _pretty(feature: str, value: Any) -> str:
-    """Formate une valeur de feature avec son unite et sa precision utile."""
+    """Formate une valeur de feature avec son unite et sa precision utile.
+
+    Meme correction que `_n` : cette fonction rendait « -2.41 sigma » et
+    « 98.36 % » dans le message MODEL_ANOMALY et dans le raisonnement de
+    l'agent. Elle passe par la mise en forme centralisee.
+    """
     x = _f(value)
     if x is None:
         return "valeur absente"
     _, unit, digits = _FEATURE_LABELS.get(feature, (feature, "", 3))
-    return f"{x:+.{digits}f}{unit}" if unit == " sigma" else f"{x:.{digits}f}{unit}"
+    return _n(x, digits, signe=(unit == " sigma")) + unit
+
+
+def _n(valeur: Any, decimales: int = 1, signe: bool = False) -> str:
+    """Nombre destine a un message d'exploitant, en notation francaise.
+
+    LE PLUS GROS ANGLE MORT TYPOGRAPHIQUE DU DEPOT.
+
+    `src/formatting.py` s'ouvre sur cette phrase : « un test parcourt les
+    sorties du systeme pour verifier qu'aucun nombre n'echappe a la regle ».
+    Elle etait fausse pour la plus grande surface de texte du projet.
+
+    Chaque message de regle formatait ses valeurs par f-string —
+    `f"...{t_out:.1f} °C"` — et rendait donc « 66.3 °C », point decimal
+    anglais compris, dans une interface entierement francaise. Ces messages
+    sont le premier texte que l'exploitant lit : ils remplissent le journal du
+    rejeu, la carte de diagnostic, le registre d'alarmes et les courriels
+    d'escalade.
+
+    POURQUOI LE CONTROLE NE L'A PAS VU. Deux tests se partagent la
+    typographie. `test_les_messages_de_detection_sont_accentues` regarde bien
+    ces messages, mais ne cherche que des accents. `test_aucun_point_decimal_
+    dans_les_textes_affiches` cherche bien le point decimal, mais
+    n'echantillonne que les indicateurs, l'analyse de sensibilite et le
+    backtest — jamais une constatation. Chaque test couvrait la moitie du
+    probleme, et l'intersection etait vide.
+
+    Args:
+        valeur: Grandeur a formater. `None` et NaN donnent un tiret cadratin.
+        decimales: Decimales conservees.
+        signe: Forcer le signe explicite, pour les ecarts et les residus.
+
+    Returns:
+        Chaine en notation francaise, virgule decimale.
+    """
+    from src.formatting import nombre
+
+    x = _f(valeur)
+    texte = nombre(x, decimales)
+    return f"+{texte}" if signe and x is not None and x >= 0 else texte
 
 
 def _f(v: Any) -> float | None:
@@ -858,7 +939,10 @@ class CoolerAnomalyDetector:
         domain: Connaissance domaine.
         rules: Moteur de regles.
         stat: Detecteur statistique.
-        twin: Jumeau thermique associe (conserve pour l'audit).
+        references: Les trois references thermiques ajustees — conductance,
+            effort de regulation, entree. Elles sont transportees avec le
+            detecteur parce qu'un artefact serialise doit pouvoir rejouer
+            exactement les residus sur lesquels il a appris.
     """
 
     def __init__(
@@ -872,7 +956,10 @@ class CoolerAnomalyDetector:
         Args:
             domain: Connaissance domaine (chargee par defaut).
             stat: Detecteur statistique (cree par defaut).
-            twin: Jumeau thermique deja ajuste.
+            references: References thermiques deja ajustees. Ce parametre
+                s'appelait `twin` dans la documentation de cette classe, nom
+                d'un objet qui n'existe plus : la signature documentait donc un
+                argument absent et taisait celui qui est reellement accepte.
         """
         self.domain = domain or load_domain()
         self.rules = RuleEngine(self.domain)
@@ -884,9 +971,9 @@ class CoolerAnomalyDetector:
         # appel. Sans ce cache, analyser un instant coutait 38 ms dont 27 ms
         # de rescorage redondant (persistance + attribution).
         self._scores: pd.Series | None = None
-        self._scores_key: tuple[int, Any, Any] | None = None
+        self._scores_key: tuple[int, Any, Any, float] | None = None
         self._margins: pd.Series | None = None
-        self._margins_key: tuple[int, Any, Any] | None = None
+        self._margins_key: tuple[int, Any, Any, float] | None = None
 
     def fit(self, features: pd.DataFrame, reference_end: str | None = None) -> CoolerAnomalyDetector:
         """Ajuste l'etage statistique sur la periode de reference.
@@ -1082,7 +1169,7 @@ class CoolerAnomalyDetector:
         """
         from src.features.e7301_features import model_matrix
 
-        key = (len(features), features.index[0], features.index[-1]) if len(features) else (0, None, None)
+        key = self._cache_key(features)
         if self._scores is not None and self._scores_key == key:
             return self._scores
 
@@ -1090,6 +1177,43 @@ class CoolerAnomalyDetector:
         self._scores = pd.Series(self.stat.score(X), index=X.index, name="anomaly_score")
         self._scores_key = key
         return self._scores
+
+    def _cache_key(self, features: pd.DataFrame) -> tuple[int, Any, Any, float]:
+        """Empreinte d'une table de features, pour la memorisation des scores.
+
+        UNE CLE QUI NE DECRIT QUE L'INDEX NE DISTINGUE PAS DEUX TABLES.
+
+        La cle valait `(longueur, premier horodatage, dernier horodatage)`.
+        Deux tables construites sur la MEME periode avec le MEME nombre de
+        lignes mais des valeurs differentes — c'est exactement ce que produit
+        le banc d'injection d'encrassement, qui superpose une rampe aux
+        donnees reelles sans toucher a l'index — recevaient donc la meme cle,
+        et la seconde se voyait servir les scores de la premiere.
+
+        Le banc n'exploite pas ce chemin aujourd'hui : il evalue le predicat de
+        la regle deterministe et ne sollicite jamais l'etage statistique. Rien
+        ne garantit qu'il en restera ainsi, et un piege qui ne se declenche pas
+        encore reste un piege — d'autant qu'il rendrait un resultat FAUX sans
+        rien signaler.
+
+        La somme des features du modele suffit a separer deux contenus. Elle
+        coute une milliseconde sur dix mille lignes, contre plusieurs dizaines
+        pour la foret que le cache evite.
+
+        Args:
+            features: Table de features complete.
+
+        Returns:
+            Tuple hachable decrivant l'index ET le contenu.
+        """
+        if not len(features):
+            return (0, None, None, 0.0)
+        colonnes = [c for c in self.stat.features if c in features.columns]
+        empreinte = (
+            float(np.nansum(features[colonnes].to_numpy(dtype=float)))
+            if colonnes else 0.0
+        )
+        return (len(features), features.index[0], features.index[-1], empreinte)
 
     def invalidate_cache(self) -> None:
         """Force le recalcul des scores au prochain appel.
@@ -1109,8 +1233,8 @@ class CoolerAnomalyDetector:
     ) -> pd.DataFrame:
         """Agrege les heures atypiques en episodes exploitables.
 
-        Un exploitant ne traite pas 2 000 points d'alarme : il traite une
-        dizaine d'evenements. Cette agregation est ce qui rend le systeme
+        Un exploitant ne traite pas 530 points d'alarme : il traite 58
+        episodes. Cette agregation est ce qui rend le systeme
         utilisable en salle de controle. Les episodes trop brefs sont ecartes.
 
         Args:
@@ -1167,7 +1291,7 @@ class CoolerAnomalyDetector:
         """
         from src.features.e7301_features import model_matrix
 
-        key = (len(features), features.index[0], features.index[-1]) if len(features) else (0, None, None)
+        key = self._cache_key(features)
         if self._margins is not None and self._margins_key == key:
             return self._margins
 
@@ -1211,13 +1335,40 @@ class CoolerAnomalyDetector:
         "ua_residual_z": ("FAISCEAU_BOUCHAGE", 1.5),
         "conc_bias_drift_z": ("CAPTEUR_DEFAILLANT", 4.0),
     }
+    # M-3 — LA CORRECTION CI-DESSUS N'AVAIT PAS ETE PORTEE A LA TABLE JUMELLE.
+    #
+    # `_MODE_BY_THRESHOLD` portait quatre entrees, dont trois avec un tag et un
+    # seuil VIDES :
+    #
+    #     "conc_drop_24h": ("FAISCEAU_FUITE",  "", "")
+    #     "d_conc":        ("FAISCEAU_FUITE",  "", "")
+    #     "flow_per_load": ("CALANDRE_FUITE",  "", "")
+    #
+    # `_mode_for_feature` sort sur `if not tag_name: return None` : trois entrees
+    # sur quatre rendaient invariablement `None`. La table paraissait rattacher
+    # quatre grandeurs a trois modes de defaillance, et n'en rattachait qu'une —
+    # exactement la « couverture illusoire » que le commentaire condamne quinze
+    # lignes plus haut, dans la table d'a cote.
+    #
+    # LE COMPORTEMENT ETAIT JUSTE, C'EST LA FORME QUI MENTAIT. Ces trois
+    # grandeurs sont des variations, et la regle deterministe correspondante
+    # porte deja son seuil de materialite : le modele ne doit pas la doubler.
+    # Les supprimer aurait efface cette DECISION et laisse croire a un oubli —
+    # un futur relecteur les aurait rattachees. Elles sont donc declarees pour
+    # ce qu'elles sont, dans un ensemble qui porte son nom, et la table ne
+    # contient plus que ce qui peut reellement accuser.
     _MODE_BY_THRESHOLD: ClassVar[dict[str, tuple[str, str, str]]] = {
         # feature -> (mode, tag du referentiel, seuil a franchir)
         "conc_min": ("FAISCEAU_CORROSION", "C_ACID_1100", "alarm_low"),
-        "conc_drop_24h": ("FAISCEAU_FUITE", "", ""),
-        "d_conc": ("FAISCEAU_FUITE", "", ""),
-        "flow_per_load": ("CALANDRE_FUITE", "", ""),
     }
+
+    # Grandeurs de variation qui ne portent DELIBEREMENT aucune accusation : la
+    # regle deterministe correspondante porte deja son seuil de materialite.
+    _FEATURES_SANS_ACCUSATION: ClassVar[frozenset[str]] = frozenset({
+        "conc_drop_24h",
+        "d_conc",
+        "flow_per_load",
+    })
 
     def _mode_for_feature(self, feature: str, row: pd.Series) -> str | None:
         """Rattache une feature dominante a un mode AMDEC, si c'est justifie.
@@ -1236,12 +1387,13 @@ class CoolerAnomalyDetector:
                 return None
             return mode if abs(value) >= min_sigma else None
 
+        if feature in self._FEATURES_SANS_ACCUSATION:
+            # Grandeur de variation : la regle deterministe correspondante porte
+            # deja son propre seuil de materialite. Voir M-3.
+            return None
+
         if feature in self._MODE_BY_THRESHOLD:
             mode, tag_name, threshold_name = self._MODE_BY_THRESHOLD[feature]
-            if not tag_name:
-                # Grandeur de variation : la regle deterministe correspondante
-                # porte deja son propre seuil de materialite.
-                return None
             value = _f(row.get(feature))
             limit = self.domain.get(tag_name).threshold(threshold_name)
             if value is None or limit is None:

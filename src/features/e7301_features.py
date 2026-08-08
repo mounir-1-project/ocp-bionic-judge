@@ -1,5 +1,5 @@
 """
-Features physiques du refroidisseur E7301 — jumeau numerique thermique.
+Features physiques du refroidisseur E7301 — grandeurs thermiques du procede.
 
 Pourquoi pas de features generiques ?
 ----------------------------------------------------------------------------
@@ -229,13 +229,21 @@ def add_physics_features(df: pd.DataFrame, domain: DomainKnowledge) -> pd.DataFr
     out["rho_cp"] = rho_cp(t_mean).where(running)
     out["duty_kw"] = (out["rho_cp"] * flow * out["delta_t"]).where(running)
 
-    # Duty ramene a la charge de la ligne : neutralise l'effet d'allure.
-    # Sans cette normalisation, une montee en cadence ressemble a une derive.
-    out["duty_per_load"] = (out["duty_kw"] / load.replace(0, np.nan)).where(running)
-
-    # Ratio d'approche : part de la chaleur disponible reellement extraite.
-    # Proxy sans mesure d'eau de mer, mais monotone avec l'efficacite reelle.
-    out["approach_ratio"] = (out["delta_t"] / t_in.replace(0, np.nan)).where(running)
+    # DEUX COLONNES RETIREES ICI, ET POURQUOI.
+    #
+    # `duty_per_load` (duty / charge) et `approach_ratio` (delta_t / T_entree)
+    # etaient calculees a chaque heure et n'etaient lues NULLE PART : ni par le
+    # moteur de regles, ni par le modele, ni par l'API, ni par le poste. La
+    # seconde etait de surcroit presentee comme un « proxy sans mesure d'eau de
+    # mer » — c'est exactement ce que la climatologie de Safi a rendu inutile,
+    # puisque UA est desormais calcule avec la temperature du fluide froid.
+    # La normalisation a l'allure survit sous `flow_per_load`, qui entre bien
+    # dans le modele.
+    #
+    # Une colonne calculee que personne ne lit n'est pas neutre : elle donne a
+    # la table de features une largeur qui laisse croire a une richesse
+    # d'analyse inexistante, et chaque relecture doit redemontrer qu'elle ne
+    # sert a rien.
 
     # Ecart a la consigne de regulation — signal de perte de controle.
     sp = seuil(domain.get("T_ACID_OUT").setpoint, 66.0)
@@ -592,7 +600,8 @@ def add_dynamic_features(df: pd.DataFrame) -> pd.DataFrame:
     """Ajoute variations instantanees et deviations locales.
 
     Ces features captent les evenements RAPIDES (a-coup, fuite, decrochage de
-    regulation), la ou le jumeau capte les derives LENTES.
+    regulation), la ou les references de conductance et d'entree captent les
+    derives LENTES.
 
     Args:
         df: DataFrame enrichi.

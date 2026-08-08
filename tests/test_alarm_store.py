@@ -3,7 +3,18 @@
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
+import pytest
+
 from src.operations import AlarmStore
+
+# LE SENTINELLE DU CONSTRUCTEUR ENTRAIT EN COLLISION AVEC UNE VALEUR REELLE.
+# `lead=None` signifiait « prends `finding` », si bien qu'aucun appel ne
+# pouvait produire une decision dont `lead_finding` vaut VRAIMENT `None`.
+# Or c'est le cas NOMINAL en production : `detection_agent` emet
+# `lead_finding=None` avec des constatations non vides (INFO, severite basse).
+# Le repli de `_trigger` — nommer l'alarme d'apres `findings[0]` — est donc le
+# chemin le plus frequent du systeme, et il etait hors de portee de la suite.
+_DEFAUT = object()
 
 
 def _analysis(
@@ -13,7 +24,7 @@ def _analysis(
     finding="DUTY_LOW",
     mode="FAISCEAU_BOUCHAGE",
     autres=(),
-    lead=None,
+    lead=_DEFAUT,
 ):
     """Analyse de test.
 
@@ -36,7 +47,7 @@ def _analysis(
             amdec_modes=[mode] if severity != "NORMAL" and mode else [],
             diagnosis="Déficit thermique persistant",
             recommended_action=SimpleNamespace(description="Inspecter le faisceau"),
-            lead_finding=lead if lead is not None else finding,
+            lead_finding=finding if lead is _DEFAUT else lead,
         ),
         verdict=SimpleNamespace(agreement=agreement),
     )
@@ -90,7 +101,7 @@ def test_shelving_et_validation_des_transitions(tmp_path):
     assert store.transition(
         alarm_id, action="unshelve", operator="poste-local"
     )["status"] == "ACTIVE"
-    with __import__("pytest").raises(ValueError):
+    with pytest.raises(ValueError):
         store.transition(alarm_id, action="unshelve", operator="poste-local")
     store.close()
 
@@ -129,8 +140,6 @@ def test_shelved_ne_revient_pas_silencieusement_a_la_normale(tmp_path):
 
 
 def test_repetition_reactivation_cloture_et_idempotence(tmp_path):
-    import pytest
-
     store = AlarmStore(tmp_path / "alarms.db")
     alarm = store.observe(_analysis())
     repeated = store.observe(_analysis(timestamp="2024-08-01 10:05:00"))
@@ -248,4 +257,79 @@ def test_une_alarme_se_resout_meme_si_une_autre_constatation_disparait(tmp_path)
         finding="CONC_DROP_SEVERE", lead=None,
     ))
     assert store.list(active_only=True) == []
+    store.close()
+
+
+def test_un_desaccord_du_juge_ne_resout_pas_une_alarme(tmp_path):
+    """Le Judge conteste une rédaction, il ne dit rien du procédé.
+
+    AL-2 — Le test valait `sévérité alarmante ET accord du Judge`. Sa négation
+    partait donc vers la résolution dans deux cas de natures opposées : la
+    condition a cessé (légitime), et la condition PERSISTE mais le Judge a
+    rejeté la décision (absurde).
+
+    Mesuré : une alarme CRITICAL levée, réobservée avec la même constatation et
+    `agreement=False`, passait à `RETURNED_NORMAL` — alors que le percement
+    suspecté était toujours là. C'est ce que l'en-tête du module interdit.
+    """
+    store = AlarmStore(tmp_path / "desaccord.db")
+    store.observe(_analysis(severity="CRITICAL", finding="CONC_DROP_SEVERE"))
+    assert store.list()[0]["status"] == "ACTIVE"
+
+    # La condition persiste, le Judge conteste : rien ne doit bouger.
+    assert store.observe(
+        _analysis(
+            severity="CRITICAL", finding="CONC_DROP_SEVERE",
+            agreement=False, timestamp="2024-08-01 11:00:00",
+        )
+    ) is None
+    assert store.list()[0]["status"] == "ACTIVE", (
+        "un désaccord de gouvernance a résolu une alarme dont la condition "
+        "était toujours observée"
+    )
+
+    # Et la voie de résolution légitime fonctionne toujours.
+    store.observe(
+        _analysis(
+            severity="NORMAL", finding="CONC_DROP_SEVERE",
+            timestamp="2024-08-01 12:00:00",
+        )
+    )
+    assert store.list()[0]["status"] == "RETURNED_NORMAL"
+    store.close()
+
+
+def test_sans_dominante_l_alarme_retombe_sur_l_ordre_des_regles(tmp_path):
+    """AL-4 — LE CHEMIN LE PLUS FRÉQUENT DU SYSTÈME N'ÉTAIT PAS TESTÉ.
+
+    AL-1 a fait consommer par le registre la constatation dominante choisie par
+    l'agent. Mais `detection_agent` n'en désigne une que sur le chemin
+    diagnostique : le chemin nominal émet `lead_finding=None` **avec des
+    constatations non vides** (`evidence_refs=[f.code for f in
+    result.findings]`). `_trigger` retombe alors sur `findings[0]`, c'est-à-dire
+    sur l'ORDRE D'ÉVALUATION DES RÈGLES — le défaut exact qu'AL-1 corrige.
+
+    Ce test ne prétend pas que ce comportement est bon. Il établit qu'il est
+    **atteignable et déterministe**, ce que la suite ne pouvait pas dire : le
+    sentinelle du constructeur rendait `lead_finding=None` inexprimable.
+
+    Reste ouvert (AL-4) : faut-il que le chemin nominal désigne lui aussi une
+    dominante ? Ce n'est pas une décision de test, et je ne la prends pas ici.
+    """
+    store = AlarmStore(tmp_path / "sans_dominante.db")
+    alarme = store.observe(_analysis(
+        finding="SENSOR_FAULT",
+        autres=("CONC_DROP_SEVERE",),
+        lead=None,                      # exprimable seulement depuis S42
+        mode="FAISCEAU_FUITE",
+    ))
+    assert alarme is not None, "aucune alarme alors que deux constatations sont là"
+    assert alarme["trigger_rule"] == "SENSOR_FAULT", (
+        "sans dominante, le repli doit nommer la PREMIÈRE constatation évaluée ; "
+        f"il a nommé {alarme['trigger_rule']}"
+    )
+    # Et la preuve reste complète : le repli choisit un nom, il ne perd rien.
+    assert set(alarme["evidence"]["finding_codes"]) == {
+        "SENSOR_FAULT", "CONC_DROP_SEVERE"
+    }
     store.close()

@@ -99,10 +99,12 @@
         ],
         "n_train": 1055,
         "n_test": 1786,
-        "gap_calendar_hours": 24,
+        "gap_calendar_hours": 25.0,
         "threshold": 0.9661,
         "test_alert_rate": 0.1607,
         "score_psi": 1.9885,
+        "score_psi_empty_deciles": 0,
+        "seasonal_extrapolation": 0.7648,
         "score_p95": 0.9812,
         "causal_pipeline_refit": true
       },
@@ -122,10 +124,12 @@
         ],
         "n_train": 2841,
         "n_test": 1837,
-        "gap_calendar_hours": 24,
+        "gap_calendar_hours": 25.0,
         "threshold": 0.9656,
         "test_alert_rate": 0.0441,
-        "score_psi": 3.7446,
+        "score_psi": 3.1826,
+        "score_psi_empty_deciles": 1,
+        "seasonal_extrapolation": 1.0,
         "score_p95": 0.9591,
         "causal_pipeline_refit": true
       },
@@ -145,10 +149,12 @@
         ],
         "n_train": 4702,
         "n_test": 1873,
-        "gap_calendar_hours": 24,
+        "gap_calendar_hours": 25.0,
         "threshold": 0.9647,
         "test_alert_rate": 0.0726,
         "score_psi": 0.5796,
+        "score_psi_empty_deciles": 0,
+        "seasonal_extrapolation": 0.0523,
         "score_p95": 0.9774,
         "causal_pipeline_refit": true
       },
@@ -168,17 +174,21 @@
         ],
         "n_train": 6551,
         "n_test": 1908,
-        "gap_calendar_hours": 24,
+        "gap_calendar_hours": 25.0,
         "threshold": 0.9653,
         "test_alert_rate": 0.0346,
         "score_psi": 0.0681,
+        "score_psi_empty_deciles": 0,
+        "seasonal_extrapolation": 0.1279,
         "score_p95": 0.9446,
         "causal_pipeline_refit": true
       }
     ],
     "mean_test_alert_rate": 0.078,
     "std_test_alert_rate": 0.0498,
-    "max_score_psi": 3.7446,
+    "max_score_psi": 3.1826,
+    "max_score_psi_seasonally_covered": null,
+    "n_seasonally_covered_folds": 0,
     "threshold_spread": 0.0014,
     "regime_diagnostics": [
       {
@@ -206,13 +216,13 @@
         "score_median": 0.5913
       }
     ],
-    "interpretation": "Les taux, le PSI et les régimes mesurent stabilité et charge d'alerte, jamais une performance de détection de panne."
+    "interpretation": "Les taux, le PSI et les régimes mesurent stabilité et charge d'alerte, jamais une performance de détection de panne. Le PSI d'un pli dont la fenêtre de test sort de la plage d'eau de mer apprise ne mesure aucune dérive : il mesure que la fenêtre croissante n'a pas encore vu une année complète."
   },
   "deployment_gates": [
     {
       "gate": "causalite_temporelle",
       "passed": true,
-      "evidence": "aucun décalage négatif ni fenêtre centrée dans l'ingestion et les features ; chaîne reconstruite et vérifiée sur trois troncatures du corpus (40, 60, 80 %)"
+      "evidence": "aucun décalage négatif ni fenêtre centrée dans le code exécutable de `src`, gouvernance comprise ; chaîne reconstruite et vérifiée sur trois troncatures du corpus (40, 60, 80 %)"
     },
     {
       "gate": "redondance_features",
@@ -232,7 +242,7 @@
     {
       "gate": "derive_de_distribution",
       "passed": false,
-      "evidence": "PSI max 3,745 sur les scores, pour 0,25 admis. Le corpus change de régime entre les deux moitiés de la période (deux excursions de sur-refroidissement, § 9.2) : un PSI élevé est ici attendu. Le seuil de 0,25 est la borne usuelle du scoring de crédit, où les populations comparées sont supposées échangeables ; son transfert à des scores d'anomalie non supervisés n'est pas argumenté. Mesure publiée, non bloquante."
+      "evidence": "aucun des 4 plis n'est mesurable. Seuls comptent les plis dont la fenêtre de test reste dans la plage d'eau de mer vue à l'apprentissage : ailleurs le PSI mesure l'année incomplète de la fenêtre croissante, non une dérive du modèle — il vaut 3,183 sur le pli qui extrapole le plus, et le plus tardif, qui n'extrapole pas, est le plus stable. Le seuil vient du scoring de crédit, où les populations comparées sont supposées échangeables ; son transfert à des scores d'anomalie non supervisés n'est pas argumenté. Mesure publiée, non bloquante."
     },
     {
       "gate": "labels_gmao",
@@ -250,6 +260,7 @@
     "La période saine ne peut pas être ancrée sur une révision confirmée.",
     "Les mesures eau de mer, vibration, pression différentielle et corrosion manquent.",
     "Le modèle thermique reconstruit un proxy calculé; son R² n'est pas une preuve d'état.",
-    "Le rejeu historique n'est pas une connexion DCS/PI temps réel."
+    "Le rejeu historique n'est pas une connexion DCS/PI temps réel.",
+    "Le corpus couvre quatorze mois pour un cycle d'eau de mer de douze : un backtest à fenêtre croissante n'offre qu'un seul pli dont la fenêtre de test reste dans la plage de température apprise. La dérive de distribution n'est donc mesurable que sur ce pli."
   ]
 }

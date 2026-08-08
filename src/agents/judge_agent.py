@@ -284,7 +284,7 @@ class VerificationLayer:
             checked += 1
             tol = max(abs(actual) * VALUE_REL_TOL, VALUE_ABS_TOL)
             if abs(float(claimed) - float(actual)) > tol:
-                wrong.append(f"{name}: annonce {claimed:g}, mesure {actual:g}")
+                wrong.append(f"{name} : annoncé {nombre(claimed, 2)}, mesuré {nombre(actual, 2)}")
 
         # Verification du texte : tout nombre present dans le diagnostic doit
         # appartenir a l'univers des nombres legitimes (mesures, preuves, seuils
@@ -303,36 +303,36 @@ class VerificationLayer:
         if wrong:
             return Check(
                 id="V1_NUMERIC_FIDELITY",
-                label="Les valeurs citees correspondent-elles aux mesures reelles ?",
+                label="Les valeurs citées correspondent-elles aux mesures réelles ?",
                 passed=False, weight=self.WEIGHTS["V1_NUMERIC_FIDELITY"], score=0.0,
-                detail=f"{len(wrong)} valeur(s) fausse(s) sur {checked} verifiee(s) : "
+                detail=f"{len(wrong)} valeur(s) fausse(s) sur {checked} vérifiée(s) : "
                        + " ; ".join(wrong[:4]),
                 issue_codes=["HALLUCINATED_VALUE"],
             )
         if unmatched:
             return Check(
                 id="V1_NUMERIC_FIDELITY",
-                label="Les valeurs citees correspondent-elles aux mesures reelles ?",
+                label="Les valeurs citées correspondent-elles aux mesures réelles ?",
                 passed=False, weight=self.WEIGHTS["V1_NUMERIC_FIDELITY"], score=5.0,
-                detail=f"{checked} valeur(s) declaree(s) exacte(s), mais le texte contient "
+                detail=f"{checked} valeur(s) déclarée(s) exacte(s), mais le texte contient "
                        f"des nombres non rattachables aux mesures : "
-                       f"{', '.join(f'{n:g}' for n in unmatched[:4])}.",
+                       f"{', '.join(nombre(n, 2) for n in unmatched[:4])}.",
                 issue_codes=["UNVERIFIABLE_VALUE"],
             )
         if checked == 0:
             return Check(
                 id="V1_NUMERIC_FIDELITY",
-                label="Les valeurs citees correspondent-elles aux mesures reelles ?",
+                label="Les valeurs citées correspondent-elles aux mesures réelles ?",
                 passed=False, weight=self.WEIGHTS["V1_NUMERIC_FIDELITY"], score=1.5,
-                detail="Aucune valeur mesuree n'est citee : le diagnostic n'est pas "
-                       "rattachable aux donnees et ne peut pas etre verifie.",
+                detail="Aucune valeur mesurée n'est citée : le diagnostic n'est pas "
+                       "rattachable aux données et ne peut pas être vérifié.",
                 issue_codes=["NO_QUANTITATIVE_EVIDENCE"],
             )
         return Check(
             id="V1_NUMERIC_FIDELITY",
-            label="Les valeurs citees correspondent-elles aux mesures reelles ?",
+            label="Les valeurs citées correspondent-elles aux mesures réelles ?",
             passed=True, weight=self.WEIGHTS["V1_NUMERIC_FIDELITY"], score=10.0,
-            detail=f"{checked} valeur(s) confrontee(s) aux mesures recalculees, toutes exactes.",
+            detail=f"{checked} valeur(s) confrontée(s) aux mesures recalculées, toutes exactes.",
         )
 
     # -- V2 -------------------------------------------------------------------
@@ -360,7 +360,7 @@ class VerificationLayer:
                 passed=False, weight=self.WEIGHTS["V2_SEVERITY"], score=score,
                 detail=f"Sévérité SOUS-ESTIMÉE : l'agent annonce {d.severity} alors que "
                        f"le recalcul donne {f.rule_severity} "
-                       f"(constatations reelles : {', '.join(f.rule_codes) or 'aucune'}).",
+                       f"(constatations réelles : {', '.join(f.rule_codes) or 'aucune'}).",
                 issue_codes=["SEVERITY_UNDERESTIMATED"],
             )
         return Check(
@@ -368,7 +368,7 @@ class VerificationLayer:
             passed=False, weight=self.WEIGHTS["V2_SEVERITY"], score=max(4.0, 8.0 - 2.0 * gap),
             detail=f"Sévérité SUR-ESTIMÉE : l'agent annonce {d.severity} contre "
                    f"{f.rule_severity} au recalcul. Sur-alerter use la confiance "
-                   f"des equipes et finit par faire ignorer les vraies alarmes.",
+                   f"des équipes et finit par faire ignorer les vraies alarmes.",
             issue_codes=["SEVERITY_OVERESTIMATED"],
         )
 
@@ -385,25 +385,25 @@ class VerificationLayer:
         if not d.amdec_modes:
             if f.amdec_modes:
                 return Check(
-                    id="V3_AMDEC_GROUNDING", label="Les modes AMDEC invoques sont-ils fondes ?",
+                    id="V3_AMDEC_GROUNDING", label="Les modes AMDEC invoqués sont-ils fondés ?",
                     passed=False, weight=self.WEIGHTS["V3_AMDEC_GROUNDING"], score=4.0,
                     detail=f"Aucun mode AMDEC rattache alors que les faits en designent "
                            f"{', '.join(f.amdec_modes)}. Le diagnostic n'est pas raccorde "
-                           f"a l'analyse de criticite de l'equipement.",
+                           f"à l'analyse de criticité de l'équipement.",
                     issue_codes=["NO_AMDEC_LINK"],
                 )
             return Check(
-                id="V3_AMDEC_GROUNDING", label="Les modes AMDEC invoques sont-ils fondes ?",
+                id="V3_AMDEC_GROUNDING", label="Les modes AMDEC invoqués sont-ils fondés ?",
                 passed=True, weight=self.WEIGHTS["V3_AMDEC_GROUNDING"], score=10.0,
-                detail="Aucun mode invoque, aucun mode attendu — coherent.",
+                detail="Aucun mode invoqué, aucun mode attendu — cohérent.",
             )
 
         unknown = [m for m in d.amdec_modes if m not in self.domain.modes]
         if unknown:
             return Check(
-                id="V3_AMDEC_GROUNDING", label="Les modes AMDEC invoques sont-ils fondes ?",
+                id="V3_AMDEC_GROUNDING", label="Les modes AMDEC invoqués sont-ils fondés ?",
                 passed=False, weight=self.WEIGHTS["V3_AMDEC_GROUNDING"], score=0.0,
-                detail=f"Mode(s) inexistant(s) dans l'AMDEC de l'equipement : "
+                detail=f"Mode(s) inexistant(s) dans l'AMDEC de l'équipement : "
                        f"{', '.join(unknown)}. Invention pure.",
                 issue_codes=["INVENTED_AMDEC_MODE"],
             )
@@ -427,27 +427,27 @@ class VerificationLayer:
         ]
         if blind:
             return Check(
-                id="V3_AMDEC_GROUNDING", label="Les modes AMDEC invoques sont-ils fondes ?",
+                id="V3_AMDEC_GROUNDING", label="Les modes AMDEC invoqués sont-ils fondés ?",
                 passed=False, weight=self.WEIGHTS["V3_AMDEC_GROUNDING"], score=1.0,
-                detail=f"Mode(s) NON detectable(s) avec l'instrumentation disponible : "
-                       f"{', '.join(blind)}. Affirmer les avoir detectes donne une fausse "
+                detail=f"Mode(s) NON détectable(s) avec l'instrumentation disponible : "
+                       f"{', '.join(blind)}. Affirmer les avoir détectés donne une fausse "
                        f"assurance sur un composant que seule une inspection physique "
-                       f"peut controler.",
+                       f"peut contrôler.",
                 issue_codes=["BLIND_SPOT_CLAIM"],
             )
 
         unsupported = [m for m in d.amdec_modes if m not in f.amdec_modes]
         if unsupported:
             return Check(
-                id="V3_AMDEC_GROUNDING", label="Les modes AMDEC invoques sont-ils fondes ?",
+                id="V3_AMDEC_GROUNDING", label="Les modes AMDEC invoqués sont-ils fondés ?",
                 passed=False, weight=self.WEIGHTS["V3_AMDEC_GROUNDING"], score=5.0,
-                detail=f"Mode(s) invoque(s) sans constatation correspondante : "
-                       f"{', '.join(unsupported)}. Attendus d'apres les faits : "
+                detail=f"Mode(s) invoqué(s) sans constatation correspondante : "
+                       f"{', '.join(unsupported)}. Attendus d'après les faits : "
                        f"{', '.join(f.amdec_modes) or 'aucun'}.",
                 issue_codes=["UNSUPPORTED_AMDEC_MODE"],
             )
         return Check(
-            id="V3_AMDEC_GROUNDING", label="Les modes AMDEC invoques sont-ils fondes ?",
+            id="V3_AMDEC_GROUNDING", label="Les modes AMDEC invoqués sont-ils fondés ?",
             passed=True, weight=self.WEIGHTS["V3_AMDEC_GROUNDING"], score=10.0,
             detail=f"Mode(s) {', '.join(d.amdec_modes)} : existant(s), observable(s), "
                    f"et soutenu(s) par les constatations.",
@@ -612,37 +612,37 @@ class VerificationLayer:
         # certitude qu'aucune combinaison de preuves ne justifie.
         if d.confidence > CONFIANCE_MAX:
             return Check(
-                id="V5_CONFIDENCE", label="La confiance est-elle calibree sur les preuves ?",
+                id="V5_CONFIDENCE", label="La confiance est-elle calibrée sur les preuves ?",
                 passed=False, weight=self.WEIGHTS["V5_CONFIDENCE"],
                 score=max(0.0, 5.0 - 20.0 * (d.confidence - CONFIANCE_MAX)),
-                detail=f"Sur-confiance : {d.confidence:.2f} annoncé alors que le barème "
-                       f"des preuves plafonne à {CONFIANCE_MAX:.2f}. Aucune combinaison "
+                detail=f"Sur-confiance : {nombre(d.confidence, 2)} annoncé alors que le barème "
+                       f"des preuves plafonne à {nombre(CONFIANCE_MAX, 2)}. Aucune combinaison "
                        f"de constatations ne justifie une certitude supérieure.",
                 issue_codes=["OVERCONFIDENCE"],
             )
         if gap > 0.12:
             return Check(
-                id="V5_CONFIDENCE", label="La confiance est-elle calibree sur les preuves ?",
+                id="V5_CONFIDENCE", label="La confiance est-elle calibrée sur les preuves ?",
                 passed=False, weight=self.WEIGHTS["V5_CONFIDENCE"],
                 score=max(0.0, 5.0 - 20.0 * (gap - 0.12)),
-                detail=f"Sur-confiance : {d.confidence:.2f} annonce contre {expected:.2f} "
+                detail=f"Sur-confiance : {nombre(d.confidence, 2)} annoncé contre {nombre(expected, 2)} "
                        f"justifiable par les preuves ({f.n_invalid_tags} capteur(s) en défaut, "
                        f"modèle {'applicable' if f.model_applicable else 'inapplicable'}).",
                 issue_codes=["OVERCONFIDENCE"],
             )
         if gap < -0.30:
             return Check(
-                id="V5_CONFIDENCE", label="La confiance est-elle calibree sur les preuves ?",
+                id="V5_CONFIDENCE", label="La confiance est-elle calibrée sur les preuves ?",
                 passed=False, weight=self.WEIGHTS["V5_CONFIDENCE"], score=6.0,
-                detail=f"Sous-confiance : {d.confidence:.2f} annonce contre {expected:.2f} "
+                detail=f"Sous-confiance : {nombre(d.confidence, 2)} annoncé contre {nombre(expected, 2)} "
                        f"justifiable. Une prudence excessive fait ignorer des signaux valides.",
                 issue_codes=["UNDERCONFIDENCE"],
             )
         return Check(
-            id="V5_CONFIDENCE", label="La confiance est-elle calibree sur les preuves ?",
+            id="V5_CONFIDENCE", label="La confiance est-elle calibrée sur les preuves ?",
             passed=True, weight=self.WEIGHTS["V5_CONFIDENCE"],
             score=round(10.0 - 8.0 * abs(gap), 2),
-            detail=f"Confiance {d.confidence:.2f} coherente avec les {expected:.2f} "
+            detail=f"Confiance {nombre(d.confidence, 2)} cohérente avec les {nombre(expected, 2)} "
                    f"justifiables par les preuves disponibles.",
         )
 
@@ -696,25 +696,25 @@ class VerificationLayer:
         """
         if not f.rule_codes:
             return Check(
-                id="V7_EVIDENCE_COVERAGE", label="Le fait le plus grave est-il traite ?",
+                id="V7_EVIDENCE_COVERAGE", label="Le fait le plus grave est-il traité ?",
                 passed=True, weight=self.WEIGHTS["V7_EVIDENCE_COVERAGE"], score=10.0,
-                detail="Aucune constatation a couvrir.",
+                detail="Aucune constatation à couvrir.",
             )
         covered = set(d.evidence_refs or [])
         missing = [c for c in f.rule_codes if c not in covered]
         ratio = 1.0 - len(missing) / len(f.rule_codes)
         if missing:
             return Check(
-                id="V7_EVIDENCE_COVERAGE", label="Le fait le plus grave est-il traite ?",
+                id="V7_EVIDENCE_COVERAGE", label="Le fait le plus grave est-il traité ?",
                 passed=False, weight=self.WEIGHTS["V7_EVIDENCE_COVERAGE"],
                 score=round(10.0 * ratio, 2),
                 detail=f"Constatation(s) non reprise(s) : {', '.join(missing[:4])}.",
                 issue_codes=["INCOMPLETE_COVERAGE"],
             )
         return Check(
-            id="V7_EVIDENCE_COVERAGE", label="Le fait le plus grave est-il traite ?",
+            id="V7_EVIDENCE_COVERAGE", label="Le fait le plus grave est-il traité ?",
             passed=True, weight=self.WEIGHTS["V7_EVIDENCE_COVERAGE"], score=10.0,
-            detail=f"Les {len(f.rule_codes)} constatation(s) sont reprises dans la decision.",
+            detail=f"Les {len(f.rule_codes)} constatation(s) sont reprises dans la décision.",
         )
 
     # -- V8 -------------------------------------------------------------------
@@ -747,18 +747,18 @@ class VerificationLayer:
         ))
         if needs_caveat and not has_caveat:
             return Check(
-                id="V8_UNCERTAINTY", label="Les limites du diagnostic sont-elles enoncees ?",
+                id="V8_UNCERTAINTY", label="Les limites du diagnostic sont-elles énoncées ?",
                 passed=False, weight=self.WEIGHTS["V8_UNCERTAINTY"], score=3.0,
-                detail=f"Aucune reserve enoncee alors que {f.n_invalid_tags} point(s) de "
+                detail=f"Aucune réserve énoncée alors que {f.n_invalid_tags} point(s) de "
                        f"mesure sont en défaut et que le modèle est "
                        f"{'applicable' if f.model_applicable else 'INAPPLICABLE'}.",
                 issue_codes=["MISSING_CAVEAT"],
             )
         return Check(
-            id="V8_UNCERTAINTY", label="Les limites du diagnostic sont-elles enoncees ?",
+            id="V8_UNCERTAINTY", label="Les limites du diagnostic sont-elles énoncées ?",
             passed=True, weight=self.WEIGHTS["V8_UNCERTAINTY"], score=10.0,
-            detail="Reserves enoncees a bon escient." if needs_caveat
-                   else "Aucune reserve necessaire : base de mesure complete.",
+            detail="Réserves énoncées à bon escient." if needs_caveat
+                   else "Aucune réserve nécessaire : base de mesure complète.",
         )
 
 
@@ -860,7 +860,10 @@ class JudgeAgent:
         # seulement de refaire deux fois le meme calcul lorsque plusieurs
         # decisions portent sur le meme instant (cas du banc d'evaluation, qui
         # juge dix variantes d'une meme decision).
-        self._facts_cache: dict[str, VerifiedFacts] = {}
+        # La cle porte l'horodatage ET une empreinte de la table : voir
+        # `_verified_facts`. « Fonction pure des donnees » n'autorise a
+        # memoiser que si la cle designe AUSSI les donnees.
+        self._facts_cache: dict[tuple[str, tuple], VerifiedFacts] = {}
         logger.info(f"Judge initialise — mode "
                     f"{'hybride (verification + LLM)' if self.llm else 'verification deterministe'}")
 
@@ -893,11 +896,42 @@ class JudgeAgent:
         decision: AgentDecision,
         features: pd.DataFrame,
     ) -> VerifiedFacts:
-        """Reconstruit les faits depuis les données, avec mémoïsation sûre."""
-        key = decision.timestamp
+        """Reconstruit les faits depuis les données, avec mémoïsation sûre.
+
+        LA CLE NE DISTINGUAIT PAS DEUX TABLES — LE JUMEAU NON TRAITE DE S3-4.
+
+        Elle valait `decision.timestamp`, et rien d'autre. Deux tables de
+        features differentes interrogees au MEME horodatage recevaient donc les
+        memes faits : la seconde se voyait servir ceux de la premiere.
+
+        C'est mot pour mot le defaut corrige dans `detector._cache_key`, ou le
+        raisonnement est ecrit — « un piege qui ne se declenche pas encore reste
+        un piege, d'autant qu'il rendrait un resultat FAUX sans rien signaler ».
+        La correction n'avait pas ete portee ici, et la consequence y est plus
+        lourde : `VerifiedFacts` est la verite INDEPENDANTE du Judge, celle
+        contre laquelle il met la decision a l'epreuve. Servir des faits issus
+        d'une autre table revient a valider une decision contre les preuves d'un
+        autre monde, en silence.
+
+        Aujourd'hui un seul `JudgeAgent` existe, construit par `E7301Pipeline`
+        avec une seule table — le piege ne se declenche donc pas. Le banc
+        d'injection d'encrassement construit pourtant bien une table alteree, et
+        rien n'interdit qu'il sollicite un jour le Judge.
+
+        La cle reutilise `detector._cache_key`, qui porte deja l'empreinte de
+        contenu : un predicat recopie derive de son original.
+
+        Args:
+            decision: Décision à mettre à l'épreuve.
+            features: Table de features dont les faits sont reconstruits.
+
+        Returns:
+            Les faits vérifiés pour cet instant ET cette table.
+        """
+        key = (decision.timestamp, self.detector._cache_key(features))
         facts = self._facts_cache.get(key)
         if facts is None:
-            recomputed = self.detector.analyze(features, pd.Timestamp(key))
+            recomputed = self.detector.analyze(features, pd.Timestamp(decision.timestamp))
             facts = VerifiedFacts.from_detection(recomputed, self.domain)
             self._facts_cache[key] = facts
         return facts
@@ -1026,7 +1060,6 @@ class JudgeAgent:
                                 else None),
             verified_facts=facts.to_dict(),
             judged_by="hybrid" if llm_score is not None else "deterministic",
-            uncertainty_level="high",
             limitations=[
                 "Contrôle de cohérence interne utilisant les mêmes données et référentiels.",
                 "Aucune vérité terrain GMAO ni validation opérateur indépendante.",
@@ -1233,7 +1266,7 @@ def _default_feedback(
 
     worst = min(failed, key=lambda c: c.score)
     parts = [
-        f"{len(failed)} controle(s) en echec sur {len(checks)}.",
+        f"{len(failed)} contrôle(s) en échec sur {len(checks)}.",
         f"Point le plus penalisant — {worst.label} {worst.detail}",
     ]
     if capped:
@@ -1244,7 +1277,7 @@ def _default_feedback(
         )
     others = [c for c in failed if c is not worst]
     if others:
-        parts.append("Autres reserves : " + " ".join(f"{c.detail}" for c in others[:2]))
+        parts.append("Autres réserves : " + " ".join(f"{c.detail}" for c in others[:2]))
     return " ".join(parts)
 
 
@@ -1257,8 +1290,21 @@ def _extract_numbers(text: str) -> list[float]:
     Returns:
         Liste des nombres trouves.
     """
+    # LE SEPARATEUR DE MILLIERS FRANCAIS COUPAIT LES NOMBRES EN DEUX.
+    #
+    # `src.formatting` ecrit dix mille cent quatre-vingt-deux « 10 182 », avec
+    # une espace insecable etroite (U+202F). Ce motif s'arretait a l'espace et
+    # rendait DEUX nombres, 10 et 182 — dont aucun ne figure dans les faits.
+    # V1 aurait donc signale « nombres non rattachables aux mesures » sur un
+    # diagnostic parfaitement exact, et plafonne sa note a 5/10.
+    #
+    # Le cas ne se presentait pas tant que les messages formataient en
+    # notation anglaise, c'est-a-dire tant qu'ils etaient fautifs. Corriger la
+    # typographie sans corriger le lecteur aurait transforme un defaut
+    # d'affichage en faux positif de gouvernance.
+    normalise = (text or "").replace(" ", "").replace(" ", "")
     out: list[float] = []
-    for m in re.finditer(r"[-+]?\d+(?:[.,]\d+)?", text or ""):
+    for m in re.finditer(r"[-+]?\d+(?:[.,]\d+)?", normalise):
         try:
             out.append(float(m.group().replace(",", ".")))
         except ValueError:

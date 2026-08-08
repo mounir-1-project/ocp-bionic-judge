@@ -31,7 +31,7 @@ from loguru import logger
 from src.domain.knowledge import DomainKnowledge
 from src.features.e7301_features import build_features, model_matrix
 from src.formatting import nombre, pourcent
-from src.models.detector import StatisticalDetector
+from src.models.detector import DRIFT_Z_THRESHOLD, StatisticalDetector
 
 CONTAMINATION_GRID: tuple[float, ...] = (0.005, 0.01, 0.02, 0.05, 0.10)
 REFERENCE_FRACTIONS: tuple[float, ...] = (0.25, 0.40, 0.55, 0.70)
@@ -55,7 +55,19 @@ def contamination_sensitivity(
         Une ligne par valeur testee, plus une lecture.
     """
     matrix = model_matrix(features)
-    train = matrix.loc[:reference_end] if reference_end else matrix.iloc[: len(matrix) // 2]
+    # UNE TROISIEME REGLE POUR LA MEME QUESTION.
+    # Le repli decoupait `len(matrix) // 2`, soit 50 %, alors que tout le reste
+    # du systeme s'arrete a `REFERENCE_FRACTION = 0.40` et le fait dire par
+    # `reference_cutoff`. Trois ecritures d'une meme convention — 0,40 dans
+    # `thermal`, la formule recopiee plus bas dans ce fichier, et 0,50 ici —
+    # sur l'analyse dont l'objet est justement de mesurer l'effet de cette
+    # convention.
+    if reference_end:
+        train = matrix.loc[:reference_end]
+    else:
+        from src.features.thermal import reference_cutoff
+
+        train = matrix.loc[: reference_cutoff(features)]
     running = features["process_state"].eq("RUNNING")
     n_run = int(running.sum())
 
@@ -128,13 +140,31 @@ def reference_period_sensitivity(
     Returns:
         Une ligne par fraction, plus une lecture de dispersion.
     """
+    from src.features.thermal import reference_cutoff
     from src.governance.fouling_injection import FoulingInjectionBench
 
-    running_index = readings.index[readings["process_state"].eq("RUNNING")]
     rows: list[dict[str, Any]] = []
 
     for fraction in fractions:
-        cut = running_index[int(len(running_index) * fraction) - 1]
+        # LA BORNE VIENT DE `reference_cutoff`, ELLE N'EST PLUS RECALCULEE ICI.
+        #
+        # Ce module ecrivait `running_index[int(len(running_index) * fraction)
+        # - 1]`, c'est-a-dire la formule de `reference_cutoff` recopiee — moins
+        # sa garde. `reference_cutoff` protege la position par `max(0, ...)`;
+        # ici, une fraction assez petite pour que `int(len * fraction)` vaille
+        # zero donnait l'indice -1, donc LA DERNIERE heure de marche : la
+        # periode de reference devenait le corpus entier, et la reference
+        # apprenait comme normale la degradation qu'elle doit reveler. En
+        # silence, et sur l'analyse dont le role est precisement de chiffrer
+        # l'effet de cette fenetre.
+        #
+        # La grille actuelle (25 % a 70 % sur ~8 800 heures) ne l'atteint
+        # jamais. Mais la docstring de `reference_cutoff` affirme que « la
+        # formule reprend celle de `src.governance.sensitivity` [...] : les deux
+        # modules NE PEUVENT PLUS DIVERGER » — et ils divergeaient deja, sur la
+        # garde, au moment ou la phrase a ete ecrite. Deux ecritures d'une meme
+        # regle, dont une seule est protegee, ne restent jamais d'accord.
+        cut = reference_cutoff(readings, fraction)
         try:
             feats, refs = build_features(
                 readings, quality, domain, reference_end=str(cut)
@@ -158,8 +188,16 @@ def reference_period_sensitivity(
             "n_heures_reference": refs.inlet.n_train,
             "r2_entree": round(refs.inlet.r2, 4),
             "sigma_entree_degC": round(refs.inlet.residual_std, 3),
-            "heures_derive_detectables": int((trend >= 1.5).sum()),
-            "part_derive_pct": round(float(100.0 * (trend >= 1.5).mean()), 2),
+            # LE SEUIL VIENT DU DETECTEUR, IL N'EST PLUS RECOPIE.
+            # `1.5` etait ecrit en dur alors que la ligne voisine importe le
+            # predicat complet d'encrassement pour ne pas le reecrire, « un
+            # predicat recopie derive de son original ». La moitie du raisonnement
+            # avait ete appliquee : la voie UA lit le detecteur, la voie entree
+            # gardait sa constante.
+            "heures_derive_detectables": int((trend >= DRIFT_Z_THRESHOLD).sum()),
+            "part_derive_pct": round(
+                float(100.0 * (trend >= DRIFT_Z_THRESHOLD).mean()), 2
+            ),
             # ── Coefficient d'echange : la grandeur qui porte le diagnostic ──
             "n_heures_reference_ua": refs.conductance.n_train,
             "r2_ua": round(refs.conductance.r2, 4),

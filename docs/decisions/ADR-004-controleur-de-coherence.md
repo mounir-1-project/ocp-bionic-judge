@@ -37,7 +37,8 @@ point, et sans droit de veto sur un fait établi.
 Certains manquements ne sont pas compensables par une moyenne pondérée. Des
 plafonds l'interdisent : valeur inventée, mode inexistant, angle mort
 revendiqué, action dangereuse et sévérité critique minimisée plafonnent la note
-à 4/10.
+à **4/10** ; un état de marche erroné à **5/10**, parce qu'il invalide toute
+lecture des grandeurs de performance sans pour autant relever de la sécurité.
 
 ## Ce que le banc d'évaluation mesure réellement
 
@@ -49,14 +50,18 @@ non-régression.
 
 Pour répondre à la seule question qui compte — *que détecte-t-il qu'il ne
 connaît pas déjà ?* — le banc soumet **en plus des mutations non ciblées** :
-bruit sur les valeurs, sévérité permutée, raisonnement tronqué, modes permutés,
-confiance déplacée. Aucune ne vise un contrôle.
+diagnostic et raisonnement intervertis, raisonnement tronqué, action d'un autre
+mode AMDEC pourtant valide en elle-même, service destinataire erroné, check-list
+d'intervention erronée. Aucune ne vise un contrôle, et
+`test_aucune_mutation_non_ciblee_ne_vise_un_controle` le vérifie sur des
+instants réels.
 
 | Mesure | Résultat | Ce qu'elle vaut |
 |---|---|---|
-| Pièges ciblés | **95,8 %** | non-régression des huit contrôles |
-| **Mutations non ciblées** | **10 %** (n = 60) | **généralisation réelle** |
-| Faux positifs sur cas sains | 0 % |
+| Pièges conçus — vus | **100 %** | les dix types de faute sont identifiés |
+| Pièges conçus — vus ET sanctionnés | **95,8 %** | non-régression des huit contrôles |
+| **Mutations non ciblées** | **8,6 %** (n = 58) | **généralisation réelle** |
+| Faux positifs sur cas sains | **0 %** | le contrôleur ne rejette pas le correct |
 
 **Le chiffre de généralisation a été corrigé deux fois, et il faut dire
 pourquoi.** Cette décision annonçait « ~80 % ». **Cette valeur n'a jamais été
@@ -68,10 +73,10 @@ propriétés qu'aucun des huit contrôles n'interroge, et
 `test_aucune_mutation_non_ciblee_ne_vise_un_controle` le vérifie
 empiriquement.
 
-**10 %, et c'est le chiffre à retenir.** Le contrôleur attrape presque tout ce
-qu'il a été conçu pour attraper, et un dixième de ce qu'il n'a pas prévu. Un
-dispositif de gouvernance qui surestime sa portée est plus dangereux que pas de
-dispositif du tout. ne rejette pas le correct |
+**8,6 %, et c'est le chiffre à retenir.** Le contrôleur attrape presque tout
+ce qu'il a été conçu pour attraper, et moins d'un dixième de ce qu'il n'a pas
+prévu. Un dispositif de gouvernance qui surestime sa portée est plus dangereux
+que pas de dispositif du tout.
 
 L'auto-surveillance du contrôleur est **suspendue** pendant l'exécution du
 banc : mélanger des décisions fausses par construction aux décisions réelles

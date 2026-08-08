@@ -1,6 +1,6 @@
 # Matrice de traçabilité documentaire E7301
 
-Version 1.1 - 2026-08-02
+Version 1.2 — confrontée au référentiel le 2026-08-07
 
 | Information | Nature | Source et emplacement | Utilisation |
 |---|---|---|---|
@@ -15,7 +15,7 @@ Version 1.1 - 2026-08-02
 | Consignation, pression 0 bar, EPI, palan, couvercles | source OCP | Gamme PV page 1, phases 10-120 | barrières HSE du workflow interne |
 | Tamponnage et critère 30 % | source OCP | Gamme tamponnage ; plan préventif H | workflow tamponnage ; total de tubes non inventé |
 | 12 séries DCS et période | source | DATA.xlsx, Feuil1, B1:M10183 | ingestion et dictionnaire |
-| Tags, sens et unités | établi par recoupement | nomenclature ISA-5.1, physique du procédé, comportement des données, cohérence stœchiométrique | `tags.yaml`, champ `basis` — au moins deux bases indépendantes par tag, preuve publiée |
+| Tags, sens et unités | établi par recoupement | nomenclature ISA-5.1, physique du procédé, comportement des données, climatologie | `tags.yaml`, champ `basis` — au moins deux bases indépendantes par tag, preuve publiée |
 | Duty, résidus, z-scores | calcul | code versionné `src/features/` | indicateurs comportementaux |
 | Score Isolation Forest | calcul non supervisé | `src/models/` et manifeste candidat | suspicion d'écart, jamais panne confirmée |
 | Valeur économique | **retirée du périmètre** | aucune source, aucun fichier | aucun montant n'est produit ; deux tests interdisent le retour d'un endpoint économique et de la chaîne « MAD » |

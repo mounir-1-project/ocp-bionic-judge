@@ -61,7 +61,7 @@ Effet mesuré du seul rebasage de la période de conductance :
 
 | Grandeur | Avant | Après |
 |---|---|---|
-| Heures d'apprentissage | 8 709 | 3 487 |
+| Heures d'apprentissage | 8 709 | 3 505 |
 | UA de référence | 19,20 kW/K | 17,77 kW/K |
 | R² de la référence | 0,920 | 0,924 |
 | σ du résidu | 0,70 kW/K | 0,63 kW/K |

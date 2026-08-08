@@ -198,13 +198,44 @@ class AlarmStore:
         if not findings:
             return None
         lead = getattr(analysis.decision, "lead_finding", None)
-        if lead:
+        # `if lead:` TESTAIT LA FAUSSETE, PAS L'ABSENCE — l'idiome meme que
+        # `knowledge.seuil` existe pour abolir, et que `run_sync` vient de
+        # corriger sur `limit`. Le champ est declare `str | None` : seul `None`
+        # signifie « l'agent n'a pas tranche ». Une chaine vide tombait dans le
+        # repli sans que rien ne le dise.
+        if lead is not None:
             return str(lead)
-        # Repli : une decision NOMINALE ne designe aucune dominante, et
-        # `observe` ne cree d'alarme que sur WARNING ou CRITICAL. Ce chemin ne
-        # sert donc qu'a RESOUDRE une alarme existante, ou une analyse
-        # anterieure au champ. L'ordre des regles y est sans consequence : la
-        # cle recherchee est celle deja enregistree.
+        # AL-3 — CE REPLI PORTE UNE JUSTIFICATION FAUSSE, ET ELLE MASQUE LA
+        # SECONDE MOITIE D'AL-1.
+        #
+        # Il affirmait : « l'ordre des regles y est sans consequence : la cle
+        # recherchee est celle DEJA ENREGISTREE ». C'est l'inverse. `observe`
+        # calcule `key = self._key(analysis)` sur l'analyse COURANTE, puis
+        # cherche `WHERE alarm_key=?` avec cette cle-la. L'ordre des regles
+        # decide donc exactement quelle alarme sera retrouvee — et
+        # `_rule_sensor_health` passe en premier.
+        #
+        # Consequence mesuree, sur trois instants :
+        #
+        #   t1  CONC_DROP_SEVERE dominant     -> alarme `::CONC_DROP_SEVERE` ACTIVE
+        #   t2  nominal, SENSOR_FAULT en INFO -> cle cherchee `::SENSOR_FAULT`,
+        #                                        aucune ligne, alarme intacte
+        #   t3  plus aucune constatation      -> `_key` rend None, `observe` sort
+        #   puis cloture manuelle             -> REFUSEE, `close` n'est permis
+        #                                        que depuis RETURNED_NORMAL
+        #
+        # L'alarme ne peut donc ni se resoudre ni etre close. Elle reste ACTIVE
+        # indefiniment, et le registre ISA-18.2 n'accumule que des ouvertures.
+        # La voie de resolution ne fonctionne que pour une regle qui reemet le
+        # MEME code a une severite plus basse — cas rare.
+        #
+        # NON CORRIGE ICI, VOLONTAIREMENT : voir AL-2 dans le journal d'audit.
+        # Balayer les alarmes ouvertes dont la condition n'est plus observee
+        # suppose trois decisions de securite — qu'une analyse sans constatation
+        # vaille preuve de retour a la normale (l'en-tete du module dit le
+        # contraire), ce qu'on fait d'une ligne a l'arret (S7-1), et comment un
+        # capteur en defaut interagit avec le balayage. Elles ne se prennent pas
+        # en fin de session sans pouvoir jouer la suite complete.
         return str(findings[0].code)
 
     @classmethod
@@ -242,10 +273,30 @@ class AlarmStore:
         key = self._key(analysis)
         if key is None:
             return None
-        accepted_alarm = (
-            analysis.decision.severity in {"WARNING", "CRITICAL"}
-            and analysis.verdict.agreement
-        )
+        # AL-2 — UN DESACCORD DU JUDGE RESOLVAIT L'ALARME.
+        #
+        # Le test valait `severite alarmante ET accord du Judge`. Sa negation
+        # partait donc vers `_return_matching_to_normal` dans DEUX cas de
+        # natures opposees :
+        #
+        #   - la condition a cesse                      -> resolution legitime
+        #   - la condition PERSISTE, mais le Judge a
+        #     rejete la decision                        -> resolution ABSURDE
+        #
+        # Mesure : une alarme CRITICAL levee a t1, reobservee a t2 avec la meme
+        # constatation et `agreement=False`, passait a RETURNED_NORMAL — alors
+        # que le percement suspecte etait toujours la. C'est exactement ce que
+        # l'en-tete du module interdit : « le registre ne deduit jamais qu'une
+        # alarme a disparu parce qu'une AUTRE analyse est normale ». Ici il le
+        # deduisait d'un desaccord de gouvernance, ce qui est pire : le Judge
+        # conteste la REDACTION du diagnostic, il ne dit rien du procede.
+        #
+        # Les deux questions sont donc separees. La presence de la condition se
+        # lit sur la severite; l'accord du Judge decide seulement si l'alarme
+        # merite d'etre LEVEE. Une condition presente et contestee ne fait rien
+        # bouger : ni levee, ni resolution.
+        condition_presente = analysis.decision.severity in {"WARNING", "CRITICAL"}
+        accepted_alarm = condition_presente and analysis.verdict.agreement
         evidence = self._evidence(analysis)
         with self._lock:
             self._db.execute("BEGIN IMMEDIATE")
@@ -255,15 +306,20 @@ class AlarmStore:
                     "ORDER BY id DESC LIMIT 1",
                     (key,),
                 ).fetchone()
-                result = (
-                    self._raise_or_repeat(
+                if accepted_alarm:
+                    result = self._raise_or_repeat(
                         row, analysis, key, timestamp, evidence
                     )
-                    if accepted_alarm
-                    else self._return_matching_to_normal(
+                elif condition_presente:
+                    # Contestee par le Judge : on n'invente rien dans les deux
+                    # sens. Le desaccord est deja publie par
+                    # `/api/replay/disagreements`, il n'a pas a modifier le
+                    # registre d'alarmes.
+                    result = None
+                else:
+                    result = self._return_matching_to_normal(
                         row, timestamp, evidence
                     )
-                )
                 self._db.commit()
                 return result
             except Exception:

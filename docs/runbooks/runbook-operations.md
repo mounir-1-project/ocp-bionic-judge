@@ -1,6 +1,10 @@
 # Runbook opérationnel — E7301
 
-**Version active : 3.0 — 2 août 2026**
+**Version active : 3.0**
+
+*Dernière confrontation de ce runbook au code : 7 août 2026 — commandes de
+démarrage, portes de déploiement, comportement du canal d'escalade, contrôles
+quotidiens.*
 
 Ce runbook concerne le service FastAPI local de la version 3, seule
 architecture présente dans le dépôt.
@@ -22,8 +26,14 @@ le diagnostic et le Judge utilisent les règles déterministes.
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m uvicorn api.main:app --host 0.0.0.0 --port 8000
+.\.venv\Scripts\python.exe -m api
 ```
+
+`python -m api` **honore `API_HOST` et `API_PORT`**. Ce runbook écrivait
+`-m uvicorn api.main:app --host 0.0.0.0 --port 8000` : c'est l'une des sources
+de vérité concurrentes que `api/__main__.py` a été écrit pour supprimer, et son
+en-tête nomme explicitement « le README et le runbook ». Pour écouter sur
+toutes les interfaces, poser `API_HOST=0.0.0.0` dans `.env`.
 
 Contrôles :
 
@@ -44,6 +54,19 @@ démonstrateur, et non un incident.
 
 Les trois portes que le code décide — causalité temporelle, redondance des
 grandeurs du modèle, taux d'alertes hors période — sont, elles, **franchies**.
+
+Le poste en affiche **sept**, pas cinq : deux autres sont publiées et en échec
+**sans bloquer**, et il faut savoir pourquoi avant de les lire comme des
+incidents.
+
+| porte | état | nature |
+|---|---|---|
+| `redondance_hors_modele` | échec | **algébriquement infranchissable** — le résidu d'effort *est* l'écart de consigne (ADR-001) |
+| `derive_de_distribution` | échec | le PSI n'est interprétable que sur un pli saisonnièrement couvert, et le corpus n'en offre aucun |
+
+Un rapport de sept portes dont quatre en échec est donc l'**état nominal**, et
+la promotion reste légitimement refusée pour les deux seules raisons qui
+valent : `labels_gmao` et `validation_externe`.
 
 La promotion du modèle et la disponibilité du service sont deux questions
 distinctes : `/api/health/model` répond à la première, `/api/health/ready` à la
@@ -96,8 +119,15 @@ serveur après 30 minutes d'inactivité et 8 heures au maximum.
 ### Activer les notifications
 
 Configurer `SMTP_HOST` et `SMTP_FROM`, puis vérifier
-`/api/notifications/status`. `ALERT_EMAIL_TO` reste un destinataire de repli
-facultatif ; dès la connexion, l'e-mail de la session le remplace. Le bouton
+`/api/notifications/status`. `ALERT_EMAIL_TO` reste un destinataire
+permanent facultatif. **Il n'est pas remplacé par l'e-mail de session : les deux
+reçoivent.** `add_recipient` ajoute l'adresse du technicien à l'ensemble sans en
+retirer la précédente, et l'escalade est envoyée à chacune. À la déconnexion,
+seule l'adresse de session est retirée. C'est le comportement voulu — une
+astreinte permanente ne doit pas cesser d'être prévenue parce qu'un technicien
+s'est connecté — mais le runbook annonçait l'inverse. *Mesuré : avec
+`ALERT_EMAIL_TO=astreinte@…` et une session ouverte par `mounir@…`, les
+destinataires sont les deux.* Le bouton
 **Tester le canal** n'est actif que si le relais et un destinataire sont prêts.
 
 Les emails CRITICAL sont envoyés hors du thread de rejeu, dédupliqués

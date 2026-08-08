@@ -62,10 +62,25 @@ Le message énonce les deux horizons côte à côte, ce qui empêche de lire
 Le contrôle V4 gagne deux vérifications, et elles sont symétriques :
 
 - une action annoncée `EN_MARCHE` alors que la tâche exige la consignation est
-  sanctionnée `UNSAFE_ACTION`, note plafonnée à 1/10 ;
+  sanctionnée `UNSAFE_ACTION`, **note plafonnée à 4/10** par
+  `_apply_safety_cap` ;
 - une action réclamant un arrêt que le plan n'exige pas est sanctionnée
-  `ACTION_OVERSIZED`, note plafonnée à 4/10 — immobiliser une ligne sans
-  nécessité est aussi une faute.
+  `ACTION_OVERSIZED` — immobiliser une ligne sans nécessité est aussi une faute.
+
+*Les deux chiffres de ce paragraphe étaient faux.* Le premier annonçait **1/10**
+là où le plafond appliqué vaut **4,0** — la valeur que publient le rapport
+§ 7.3 et le README. Le second annonçait un plafond de 4/10 pour
+`ACTION_OVERSIZED` : **il n'en existe aucun.** Le code ne plafonne que
+`UNSAFE_ACTION`, `HALLUCINATED_VALUE`, `INVENTED_AMDEC_MODE`,
+`BLIND_SPOT_CLAIM` et la sévérité critique minimisée (4,0), plus l'état de
+marche erroné (5,0). Un arrêt injustifié ne coûte donc aujourd'hui que le poids
+de V4, soit 14 %.
+
+**La question de fond reste ouverte, et elle est posée ici plutôt que tranchée
+en silence** : faut-il plafonner `ACTION_OVERSIZED` ? L'argument de cet ADR —
+immobiliser une ligne sans nécessité est une faute — plaide pour. Le faire
+modifie le comportement du contrôleur et les chiffres du banc; cela relève
+d'une décision, pas d'une correction documentaire.
 
 ## Effet de bord corrigé
 

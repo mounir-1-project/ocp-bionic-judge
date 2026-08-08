@@ -97,6 +97,11 @@ def corroboration(rule_codes: list[str]) -> bool:
 CONFIANCE_MIN = 0.15
 CONFIANCE_MAX = 0.95
 
+# Services destinataires d'un bon de travail a PS III. Un seul jeu de chaines,
+# accentuees, partage par l'agent, le banc d'evaluation et l'affichage.
+SERVICE_MECANIQUE = "Service Mécanique PS III"
+SERVICE_INSTRUMENTATION = "Service Instrumentation PS III"
+
 
 def confiance_justifiable(
     *,
@@ -180,7 +185,19 @@ class RecommendedAction(BaseModel):
     requires_shutdown: bool = False
     maintenance_task_ref: str | None = None
     checklist_ref: str | None = None
-    responsible: str = "Service Mecanique PS III"
+    # TROIS ORTHOGRAPHES DU MEME SERVICE, DANS TROIS FICHIERS.
+    #
+    # Ce defaut valait « Service Mecanique PS III », sans accent, tandis que
+    # `detection_agent._build_action` ecrit « Service Mécanique PS III » et que
+    # le banc d'evaluation ecrivait encore une troisieme variante. Or la
+    # decision NOMINALE ne renseigne pas ce champ : elle prend donc le defaut,
+    # et affichait « Mecanique » a l'exploitant sur la formulation la plus
+    # frequente du systeme — le meme angle mort que `_quote_measurements`, au
+    # meme endroit, et invisible au controle typographique puisque
+    # « mecanique » ne figure pas dans son lexique.
+    #
+    # Les deux noms vivent desormais ici, une fois, et tout le monde les lit.
+    responsible: str = SERVICE_MECANIQUE
 
 
 class AgentDecision(BaseModel):
@@ -256,10 +273,14 @@ class Check(BaseModel):
     detail: str
     issue_codes: list[str] = Field(default_factory=list)
 
-    @property
-    def issue_code(self) -> str | None:
-        """Premier code releve, pour compatibilite d'affichage."""
-        return self.issue_codes[0] if self.issue_codes else None
+    # `issue_code` A ETE SUPPRIMEE.
+    #
+    # Propriete annoncee « pour compatibilite d'affichage », elle rendait le
+    # premier element de `issue_codes`. Aucun appelant, aucun test, et aucun
+    # affichage : le poste lit `issue_codes` en entier. Un controle qui echoue
+    # peut relever plusieurs anomalies — V4 en cumule jusqu'a quatre — et
+    # n'exposer que la premiere aurait masque les autres. La compatibilite
+    # invoquee ne l'etait avec rien.
 
 
 class JudgeVerdict(BaseModel):
@@ -290,11 +311,64 @@ class JudgeVerdict(BaseModel):
     corrected_severity: str | None = None
     verified_facts: dict[str, Any] = Field(default_factory=dict)
     judged_by: Literal["deterministic", "hybrid"] = "deterministic"
-    validation_scope: Literal["internal_logical_consistency"] = (
-        "internal_logical_consistency"
-    )
-    uncertainty_level: Literal["low", "medium", "high"] = "high"
+    # DEUX CHAMPS RETIRES, ET POURQUOI ILS ETAIENT PIRES QUE MORTS.
+    #
+    # `validation_scope` etait un `Literal` a UNE seule valeur admise, avec
+    # cette valeur pour defaut : un champ qui ne peut rien porter d'autre
+    # qu'une constante, jamais lu par personne.
+    #
+    # `uncertainty_level` etait declare a trois valeurs et ne valait jamais
+    # que « high » — ni au defaut, ni au seul site de construction. Le defaut
+    # n'est pas anodin : annoncer un champ a trois etats laisse entendre que
+    # le controleur pourrait, dans de bonnes conditions, descendre a « low ».
+    # C'est exactement la sur-promesse contre laquelle tout l'en-tete de ce
+    # module met en garde — l'incertitude du Judge est STRUCTURELLE, parce
+    # qu'il recalcule avec les memes donnees et les memes referentiels, et
+    # aucune combinaison de resultats ne la fait baisser.
+    #
+    # Les deux enonces survivent la ou ils ont un sens, dans `limitations`,
+    # en toutes lettres et sans laisser croire a une graduation.
     limitations: list[str] = Field(default_factory=list)
     evidence_refs: list[str] = Field(default_factory=list)
     rule_version: str = ""
     model_runtime_signature: str = ""
+
+
+# LIBELLES DES RESERVES DU CONTROLEUR — UNE SEULE SOURCE COTE PYTHON.
+#
+# `app.js` traduit les vingt codes d'anomalie en francais depuis longtemps, avec
+# ce motif ecrit dans son propre commentaire : « le poste affichait le code brut
+# — OVERCONFIDENCE — dans un encadre destine a l'exploitant. Un code de
+# programme n'est pas une reserve. »
+#
+# LE COURRIEL D'ESCALADE, LUI, EXPEDIAIT TOUJOURS LES CODES BRUTS. C'est
+# pourtant le canal le plus asymetrique du systeme : l'ecran se lit devant le
+# poste, avec le contexte sous les yeux; le courriel se lit sur un telephone, la
+# nuit, sans rien d'autre. `rediger_gouvernance` publiait « OVERCONFIDENCE —
+# 12 cas » sous le titre « Reserves les plus frequentes ».
+#
+# La table vit ici, aupres du contrat de decision. Le poste garde la sienne —
+# deux langages, on ne partage pas un dictionnaire — et
+# `test_les_reserves_sont_traduites_des_deux_cotes` interdit qu'elles divergent.
+RESERVE_LIBELLES: dict[str, str] = {
+    "OVERCONFIDENCE": "Confiance surévaluée",
+    "UNDERCONFIDENCE": "Confiance sous-évaluée",
+    "HALLUCINATED_VALUE": "Valeur non retrouvée",
+    "UNVERIFIABLE_VALUE": "Valeur invérifiable",
+    "NO_QUANTITATIVE_EVIDENCE": "Diagnostic sans chiffres",
+    "SEVERITY_OVERESTIMATED": "Sévérité surestimée",
+    "SEVERITY_UNDERESTIMATED": "Sévérité sous-estimée",
+    "INVENTED_AMDEC_MODE": "Mode AMDEC inexistant",
+    "UNSUPPORTED_AMDEC_MODE": "Mode AMDEC non étayé",
+    "NO_AMDEC_LINK": "Aucun rattachement",
+    "BLIND_SPOT_CLAIM": "Angle mort revendiqué",
+    "ACTION_UNDERSIZED": "Délai trop long",
+    "ACTION_OVERSIZED": "Arrêt injustifié",
+    "UNSAFE_ACTION": "Action dangereuse",
+    "VAGUE_ACTION": "Action trop vague",
+    "INVALID_TASK_REF": "Tâche inconnue",
+    "STATE_MISMATCH": "État de marche erroné",
+    "DIAGNOSIS_OUT_OF_STATE": "Diagnostic hors marche",
+    "INCOMPLETE_COVERAGE": "Constatation ignorée",
+    "MISSING_CAVEAT": "Limite non énoncée",
+}

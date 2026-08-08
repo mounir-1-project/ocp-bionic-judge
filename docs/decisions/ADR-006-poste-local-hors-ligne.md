@@ -16,8 +16,12 @@ Le service est **intégralement autonome**. Une seule commande le démarre, et
 il sert lui-même son interface :
 
 ```
-uvicorn api.main:app --port 8000
+python -m api
 ```
+
+Cette forme **honore `API_HOST` et `API_PORT`**. Ce document écrivait
+`uvicorn api.main:app --port 8000`, c'est-à-dire l'une des sources de vérité
+concurrentes que `api/__main__.py` a été écrit pour supprimer.
 
 - Aucune étape de compilation, aucun gestionnaire de paquets JavaScript.
 - Le moteur 3D, la bibliothèque de graphiques et les polices sont embarqués.

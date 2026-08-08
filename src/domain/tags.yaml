@@ -352,13 +352,20 @@ quality_codes:
 # -----------------------------------------------------------------------------
 # ETATS PROCESS — determines par la charge soufre et le debit acide
 # -----------------------------------------------------------------------------
+# Ces regles decrivent EXACTEMENT ce que fait `classify_process_state`. Elles
+# divergeaient sur un point, et sur la decision la plus determinante du
+# systeme : `T_ACID_IN < 60` etait annonce ici comme un critere de TRANSIENT
+# alors que le code le place, comme la charge et le debit, parmi les criteres
+# d'arret — ce que dit d'ailleurs le nom de la cle qui le porte,
+# `T_ACID_IN.shutdown_below`. Le critere de reprise apres arret manquait
+# entierement.
 process_states:
   STOPPED:
-    description: "Ligne a l'arret"
-    rule: "LOAD_SULFUR < 8 or F_ACID < 20"
+    description: "Ligne a l'arret ou circuit acide hors temperature de service"
+    rule: "LOAD_SULFUR < 8 or F_ACID < 20 or T_ACID_IN < 60"
   TRANSIENT:
-    description: "Demarrage / arret / changement d'allure"
-    rule: "abs(d(LOAD_SULFUR)/dt) > 2 t/h/h or T_ACID_IN < 60"
+    description: "Changement d'allure, ou premiere heure de reprise apres arret"
+    rule: "abs(d(LOAD_SULFUR)/dt) > 2 t/h/h or etat precedent = STOPPED"
   RUNNING:
     description: "Marche etablie — seul etat ou la surveillance de performance est valide"
     rule: "LOAD_SULFUR >= 8 and F_ACID >= 20 and T_ACID_IN >= 60"

@@ -77,12 +77,43 @@ def test_un_code_inconnu_ne_designe_aucune_piece(domain):
 
 
 def test_tous_les_codes_du_detecteur_sont_couverts(domain):
-    """Un code emis sans entree dans la table passerait inapercu."""
+    """Un code emis sans entree dans la table passerait inapercu.
+
+    DEUX DEFAUTS CORRIGES, ET LE SECOND FAUSSAIT AUSSI DEUX DOCUMENTS.
+
+    1. Le chemin etait RELATIF — `Path("src/models/detector.py")`. Tous les
+       autres controles par analyse de source du depot partent de
+       `Path(__file__).parents[1]`. Celui-ci ne passait que lance depuis la
+       racine : c'est le piege d'ENV-1, transpose au repertoire courant.
+
+    2. Le motif `code="([A-Z_]+)"` ne voyait pas les codes places dans une
+       CONDITIONNELLE. `detector.py` ecrit
+       `code="MODEL_ANOMALY" if persistent else "MODEL_ANOMALY_ISOLATED"` :
+       le second n'etait jamais confronte a la table. Mesure : 17 codes vus,
+       **18 emis**.
+
+    Le compte fautif avait essaime : le README annoncait « dix-sept codes du
+    detecteur » et ADR-003 « dix-sept regles determinis tes ». Il y a 18 codes,
+    produits par 6 methodes de regle (15 codes) et l'etage statistique (3).
+    """
     import re
     from pathlib import Path
 
-    source = Path("src/models/detector.py").read_text(encoding="utf-8")
-    emitted = set(re.findall(r'code="([A-Z_]+)"', source))
+    racine = Path(__file__).resolve().parents[1]
+    source = (racine / "src" / "models" / "detector.py").read_text(encoding="utf-8")
+    emitted: set[str] = set()
+    for m in re.finditer(
+        r'code=\s*\(?\s*"([A-Z_]+)"(?:\s*\n?\s*if[^,]*?else\s*"([A-Z_]+)")?',
+        source, re.S,
+    ):
+        emitted.add(m.group(1))
+        if m.group(2):
+            emitted.add(m.group(2))
+
+    assert len(emitted) >= 18, (
+        f"{len(emitted)} codes lus : le motif a cesse de suivre le code du "
+        f"detecteur, et ce controle ne verifie plus tout"
+    )
     manquants = emitted - set(domain.finding_map)
     assert not manquants, f"codes sans rattachement declare : {sorted(manquants)}"
 

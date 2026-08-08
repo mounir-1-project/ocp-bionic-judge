@@ -195,9 +195,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="OCP Bionic Judge — Refroidisseur E7301",
     description=(
-        "Rejeu historique accelere et surveillance d'écarts comportementaux du refroidisseur "
-        "d'acide de sechage E7301 (PS III, Maroc Chimie). Detection hybride "
-        "regles applicatives + modele statistique non supervisé, diagnostic suspecté, "
+        "Rejeu historique accéléré et surveillance d'écarts comportementaux du refroidisseur "
+        "d'acide de séchage E7301 (PS III, Maroc Chimie). Détection hybride "
+        "règles applicatives + modèle statistique non supervisé, diagnostic suspecté, "
         "puis contrôle de cohérence interne. Aucune panne n'est confirmée."
     ),
     version=config.APP_VERSION,
@@ -286,7 +286,7 @@ async def operator_access(request: Request, call_next):
         return _durcir(
             JSONResponse(
                 status_code=401,
-                content={"detail": "Authentification operateur requise"},
+                content={"detail": "Authentification opérateur requise"},
             ),
             request,
             request_id,
@@ -490,6 +490,23 @@ class WorkflowCompleteRequest(BaseModel):
     proof_ref: str = Field("", max_length=500)
 
 
+# IDENTITE DU POSTE NON PROTEGE — UNE SEULE ECRITURE.
+#
+# Ce bloc etait recopie a l'identique dans `auth_status` et dans `auth_login`,
+# a une quinzaine de lignes d'ecart. Deux ecritures d'une meme convention :
+# renommer le role local, ou changer ce que le poste affiche faute de session,
+# n'aurait bouge qu'a un seul endroit. Motif de S8-2 et d'A-5.
+def _identite_poste_local() -> dict[str, str]:
+    """Identité rendue lorsque l'accès protégé est désactivé."""
+    return {
+        "username": "Poste local",
+        "email": "",
+        "role": "local",
+        # Champ volontairement vide lorsque la protection est désactivée.
+        "csrf_token": "",  # nosec B105
+    }
+
+
 @app.get("/api/auth/status", tags=["Acces"])
 async def auth_status(request: Request) -> dict:
     """État de la protection et identité de la session courante."""
@@ -498,15 +515,7 @@ async def auth_status(request: Request) -> dict:
         "required": config.AUTH_ENABLED,
         "authenticated": not config.AUTH_ENABLED or session is not None,
         "operator": (
-            session.public()
-            if session is not None
-            else {
-                "username": "Poste local",
-                "email": "",
-                "role": "local",
-                # Champ volontairement vide lorsque la protection est désactivée.
-                "csrf_token": "",  # nosec B105
-            }
+            session.public() if session is not None else _identite_poste_local()
         ) if not config.AUTH_ENABLED or session is not None else None,
     }
 
@@ -518,13 +527,7 @@ def auth_login(payload: LoginRequest, request: Request) -> JSONResponse:
         return JSONResponse({
             "required": False,
             "authenticated": True,
-            "operator": {
-                "username": "Poste local",
-                "email": "",
-                "role": "local",
-                # Champ volontairement vide lorsque la protection est désactivée.
-                "csrf_token": "",  # nosec B105
-            },
+            "operator": _identite_poste_local(),
         })
     client_key = request.client.host if request.client else "unknown"
     try:
@@ -624,13 +627,42 @@ def dashboard() -> HTMLResponse:
 
 @app.get("/api/health", tags=["Systeme"])
 async def health() -> dict:
-    """Synthèse non ambiguë : service disponible ne signifie pas modèle promu."""
+    """Synthèse non ambiguë : service disponible ne signifie pas modèle promu.
+
+    POURQUOI `degraded` EST PERMANENT, ET POURQUOI IL LE RESTE.
+
+    `status` vaut `degraded` des que le modele n'est pas promu. Or la promotion
+    est LEGITIMEMENT IMPOSSIBLE sur ce corpus : `labels_gmao` et
+    `validation_externe` echouent faute d'historique de pannes etiquete, et
+    aucun commit ne les franchira. Cette route repond donc `degraded` a chaque
+    appel, definitivement.
+
+    La tentation etait de ramener `status` a l'etat du SERVICE et de renvoyer
+    la gouvernance a `ready_for_production`. Elle a ete ecartee : la phase 0 a
+    deja appris, sur `redondance_features`, qu'un critere restreint « pour qu'il
+    puisse passer » REMASQUE ce que l'auteur avait delibrement rendu visible.
+    `degraded` est une visibilite voulue, et un jury doit la lire.
+
+    Ce qui manquait n'etait donc pas la nuance, c'etait sa RAISON : rien dans la
+    reponse ne distinguait « degrade par un defaut reparable » de « degrade par
+    une limite definitive du corpus ». C'est la distinction que les portes
+    `redondance_hors_modele` et `derive_de_distribution` publient depuis la
+    phase 0.7, et elle n'avait pas ete portee ici. `status_reason` la porte.
+    """
     p = STATE.get("pipeline")
     model_promoted = bool(
         p and p.model_promotion_status in config.MODEL_ALLOWED_STATUSES
     )
     return {
         "status": "degraded" if p and not model_promoted else ("ok" if p else "starting"),
+        "status_reason": (
+            None if not p or model_promoted else (
+                p.model_rejection_reason
+                or "aucune vérité terrain panne/intervention dans le corpus : la "
+                   "promotion du modèle est définitivement impossible, et le "
+                   "service reste pleinement exploitable pour la démonstration"
+            )
+        ),
         "liveness": "alive",
         "readiness": "ready" if p else "starting",
         "ready_for_demo": bool(p),
@@ -687,19 +719,58 @@ async def model_availability() -> dict:
 
 
 @app.get("/api/health/database", tags=["Sante"])
-async def database_health() -> dict:
-    """Vérifie par lecture les registres locaux sans modifier leur contenu."""
-    alarm_ok = STATE.get("alarm_store") is not None
-    workflow_ok = STATE.get("workflow_store") is not None
-    if alarm_ok:
-        await run_in_threadpool(_alarm_store().list, limit=1)
-    if workflow_ok:
-        await run_in_threadpool(_workflow_store().list, 1)
-    return {
-        "status": "available" if alarm_ok and workflow_ok else "unavailable",
-        "alarm_store": alarm_ok,
-        "workflow_store": workflow_ok,
-    }
+async def database_health() -> JSONResponse:
+    """Vérifie par lecture les registres locaux sans modifier leur contenu.
+
+    LA VERIFICATION AVAIT LIEU ET NE DECIDAIT DE RIEN.
+
+    Le verdict etait fige AVANT la lecture — `store is not None` — donc il ne
+    mesurait que la CONSTRUCTION de l'objet au demarrage, jamais l'etat de la
+    base. La lecture etait bien executee, et son resultat jete.
+
+    Et lorsqu'elle echouait — fichier verrouille, base corrompue, disque plein,
+    c'est-a-dire les seules pannes qu'une sonde de base de donnees existe pour
+    voir — l'exception remontait au gestionnaire generique et la route repondait
+    **500**. Une sonde de sante qui repond 500 au lieu de « indisponible »
+    n'apprend rien a un orchestrateur : elle se confond avec un bogue applicatif.
+
+    La route voisine `/api/health/ready` traitait deja le cas correctement, en
+    repondant 503 avec le detail par registre. Le meme contrat est applique ici :
+    chaque registre est declare disponible seulement si sa lecture aboutit, et
+    le motif de l'echec est nomme.
+    """
+    async def _lisible(present: bool, lire) -> tuple[bool, str | None]:
+        if not present:
+            return False, "registre non initialisé"
+        try:
+            await run_in_threadpool(lire)
+        except Exception as exc:  # noqa: BLE001 — le motif est publié, pas avalé
+            logger.warning(f"Sonde base — lecture impossible : {exc}")
+            return False, f"lecture impossible ({type(exc).__name__})"
+        return True, None
+
+    alarm_ok, alarm_reason = await _lisible(
+        STATE.get("alarm_store") is not None,
+        lambda: _alarm_store().list(limit=1),
+    )
+    workflow_ok, workflow_reason = await _lisible(
+        STATE.get("workflow_store") is not None,
+        lambda: _workflow_store().list(1),
+    )
+    disponible = alarm_ok and workflow_ok
+    return JSONResponse(
+        {
+            "status": "available" if disponible else "unavailable",
+            "alarm_store": alarm_ok,
+            "workflow_store": workflow_ok,
+            "reasons": {
+                k: v for k, v in
+                (("alarm_store", alarm_reason), ("workflow_store", workflow_reason))
+                if v
+            },
+        },
+        status_code=200 if disponible else 503,
+    )
 
 
 @app.get("/api/health/version", tags=["Sante"])
@@ -784,13 +855,41 @@ def equipment() -> dict:
             {"tag": t.tag, "alias": t.alias, "label": t.label, "unit": t.unit,
              "role": t.role, "confidence": t.confidence,
              "range_operating": t.range_operating, "setpoint": t.setpoint,
-             "rationale": t.rationale, "governance": t.governance}
+             "rationale": t.rationale, "governance": t.governance,
+             # K-1 — LE RATTACHEMENT CAPTEUR -> MODE AMDEC ETAIT ECRIT ET
+             # JAMAIS LU. Cinq tags portent un `criticality_link` dans
+             # `tags.yaml`, avec le raisonnement qui le justifie en commentaire
+             # (« 904L : la vitesse de corrosion en H2SO4 98 % croit fortement
+             # au-dela de 110 degC — Ref AMDEC : FAISCEAU_CORROSION »). La
+             # propriete existait sur `Tag`, aucun appelant ne s'en servait :
+             # le lien entre l'instrumentation et l'analyse de risque restait
+             # invisible partout, y compris dans la vue qui les affiche cote a
+             # cote.
+             "criticality_link": t.criticality_link}
             for t in d.tags.values()
         ],
+        # K-1 — LES TROIS BAREMES DE COTATION ETAIENT CHARGES ET JAMAIS SERVIS.
+        #
+        # Ils sont transcrits des onglets GRV, OCC et DET du classeur AMDEC
+        # d'OCP : ce sont eux qui donnent un sens a « G = 7 » ou « N = 5 », et
+        # donc a chacune des treize criticites publiees. Sans eux, la table
+        # AMDEC affiche des nombres que rien ne definit, alors que le referentiel
+        # porte leur definition exacte. Chaque ligne cite desormais son
+        # echelon.
+        "baremes": {
+            "gravite": d.bareme_gravite,
+            "frequence": d.bareme_frequence,
+            "detection": d.bareme_detection,
+        },
         "amdec": [
             {"code": m.code, "element": m.element, "mode": m.mode,
              "F": m.F, "G": m.G, "N": m.N, "C": m.C,
+             "F_libelle": (d.bareme_frequence.get(m.F) or {}).get("desc", ""),
+             "F_mtbf_h": (d.bareme_frequence.get(m.F) or {}).get("mtbf_h"),
+             "G_libelle": d.bareme_gravite.get(m.G, ""),
+             "N_libelle": d.bareme_detection.get(m.N, ""),
              "band": m.criticality_band(),
+             "severite_immediate": m.immediate_severity,
              # `observable` est conserve pour compatibilite; `observabilite`
              # porte les trois etats reels du referentiel. Le booleen seul
              # faisait afficher « non — angle mort » sur des modes que le
@@ -807,6 +906,14 @@ def equipment() -> dict:
             for m in d.modes_ranked()
         ],
         "plan_maintenance": d.plan_maintenance,
+        # K-1 — LA REGLE DE CLASSIFICATION D'ETAT N'ETAIT LISIBLE NULLE PART.
+        # `DomainKnowledge.process_states` chargeait les trois definitions et
+        # personne ne les lisait. Or la classification STOPPED / TRANSIENT /
+        # RUNNING est la decision la plus determinante du systeme — c'est elle
+        # qui decide quelles heures sont jugeables — et un exploitant qui voit
+        # « ligne a l'arret » sur son ecran n'avait aucun moyen de savoir quel
+        # critere l'avait declenche.
+        "process_states": d.process_states,
         "blind_spots": [m.code for m in d.blind_spots()],
         "partially_observable": [m.code for m in d.partially_observable_modes()],
         "tag_registry_change_history": d.tag_registry_history,
@@ -870,10 +977,23 @@ def timeseries(
     # `MESURE_LABEL` les nomme avec leur unite et leur precision, et la carte
     # de lignage affiche la reference de conductance. Il ne manquait que la
     # serie.
+    # API-7 — L'ENTREE EXTERNE ET LE SEUL RESIDU INDEPENDANT MANQUAIENT AUSSI.
+    #
+    # `raw_aliases` ne couvre que `tags`; `T_SEAWATER` est declare sous
+    # `external_inputs` et n'etait donc servi par aucune route, alors que le
+    # poste en connait deja le libelle et l'unite. La climatologie de Safi est
+    # l'entree qui rend UA calculable : ne pas pouvoir la tracer interdisait de
+    # verifier a l'oeil que la saisonnalite de UA la suit bien.
+    #
+    # Meme sort pour la reference d'entree, que le module de features designe
+    # comme « le seul indicateur de degradation independant de la variable
+    # regulee » : ses trois colonnes etaient calculees et jamais exposees.
     cols = [*raw_aliases,
         "conc_min", "delta_t", "duty_kw", "duty_expected", "regulation_effort_z",
         "regulation_effort_trend_14d", "control_deviation",
+        "T_SEAWATER",
         "ua_kw_per_k", "ua_expected", "ua_residual_z", "fouling_resistance",
+        "t_in_expected", "t_in_residual_z", "t_in_residual_trend_14d",
     ]
     cols = [c for c in cols if c in df.columns]
 
@@ -910,8 +1030,8 @@ async def fouling_bench(
     severities: str = Query(
         "0.05,0.10,0.20,0.30",
         description=(
-            "Pertes de coefficient d'echange testees, en FRACTION dans ]0, 1[ "
-            "et separees par des virgules. 0.20 = perte de 20 % de UA."
+            "Pertes de coefficient d'échange testées, en FRACTION dans ]0, 1[ "
+            "et séparées par des virgules. 0.20 = perte de 20 % de UA."
         ),
     ),
     duration_days: int = Query(60, ge=14, le=180),
@@ -931,9 +1051,9 @@ async def fouling_bench(
     try:
         levels = tuple(float(a) for a in severities.split(",") if a.strip())
     except ValueError as exc:
-        raise HTTPException(422, "Severites illisibles") from exc
+        raise HTTPException(422, "Sévérités illisibles") from exc
     if not levels:
-        raise HTTPException(422, "Au moins une severite est requise")
+        raise HTTPException(422, "Au moins une sévérité est requise")
     # Une severite est une FRACTION de perte de UA. Laisser passer 1, 2 ou 3
     # produirait des scenarios ou l'echangeur n'echange plus rien, detectes
     # par construction : le banc afficherait 100 % sans rien demontrer.
@@ -941,8 +1061,8 @@ async def fouling_bench(
     if hors_plage:
         raise HTTPException(
             422,
-            f"Severite hors plage : {hors_plage}. Une severite est une perte "
-            f"de coefficient d'echange exprimee en fraction, dans ]0, 1[ "
+            f"Sévérité hors plage : {hors_plage}. Une sévérité est une perte "
+            f"de coefficient d'échange exprimée en fraction, dans ]0, 1[ "
             f"(0.20 = perte de 20 % de UA).",
         )
 
@@ -1034,6 +1154,15 @@ def sensor_detail(
         "role": tag.role,
         "confidence": tag.confidence,
         "rationale": tag.rationale,
+        # POURQUOI CE CAPTEUR EST LA. `tags.yaml` rattache cinq des douze tags
+        # a un mode de defaillance AMDEC, avec le raisonnement en clair. Rien
+        # ne lisait ce champ : le tiroir montrait des seuils et une plage sans
+        # jamais dire quel risque ce capteur sert a couvrir.
+        "criticality_link": tag.criticality_link,
+        "criticality_link_label": (
+            f"{mode.element} / {mode.mode} — criticité {mode.C}"
+            if (mode := p.domain.modes.get(tag.criticality_link or "")) else None
+        ),
         "setpoint": tag.setpoint,
         "range_operating": tag.range_operating,
         "thresholds": {
@@ -1113,7 +1242,7 @@ def analyze(req: AnalyzeRequest) -> dict:
     except KeyError as exc:
         raise HTTPException(
             status_code=404,
-            detail=f"Horodatage {req.timestamp} absent des donnees "
+            detail=f"Horodatage {req.timestamp} absent des données "
                    f"({p.features.index.min()} -> {p.features.index.max()})",
         ) from exc
 

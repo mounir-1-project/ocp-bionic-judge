@@ -245,7 +245,7 @@ Deux fichiers YAML constituent la source de vérité métier :
 - `tags.yaml` — les 12 points de mesure, leurs plages opératoires, leurs seuils d'alarme, leur consigne de régulation, leur niveau de confiance d'interprétation et sa justification ;
 - `amdec.yaml` — la transcription fidèle de l'AMDEC de 2019, les barèmes de gravité / fréquence / non-détection, le plan de maintenance préventive (tâches A à H), les gammes d'intervention et les check-lists d'inspection.
 
-Chaque mode de défaillance est enrichi d'une **signature** : la manière dont il se manifeste dans les signaux DCS, et surtout un indicateur `observable` déclarant s'il est détectable ou non avec l'instrumentation disponible.
+Chaque mode de défaillance est enrichi d'une **signature** : la manière dont il se manifeste dans les signaux DCS, et surtout un indicateur `observabilite` à **trois** états — `full`, `partial`, `none` — déclarant si l'instrumentation disponible mesure l'état de la pièce, seulement les conditions qui favorisent le mode, ou rien du tout. Le booléen `observable` est conservé pour compatibilité d'affichage, mais il confondait `partial` et `none` : voir § 10.4.
 
 ## 4.2 Ingestion
 
@@ -286,7 +286,7 @@ repose réellement.
 |---|---|---|
 | `delta_t` | T_entrée − T_sortie | Travail brut de l'échangeur |
 | `duty_kw` | ρ·c_p·V·ΔT | Puissance thermique évacuée |
-| `duty_per_load` | duty / charge soufre | Duty neutralisé de l'effet d'allure |
+| `flow_per_load` | débit acide / charge soufre | Débit neutralisé de l'effet d'allure |
 | `control_deviation` | T_sortie − 66 °C | Écart à la consigne de régulation |
 | `conc_min` | min(AI1100, AI1200) | Titre gouvernant la corrosion |
 | `conc_bias_drift_z` | (écart − biais normal) / σ | Dérive d'un analyseur |
@@ -464,7 +464,7 @@ Cette méthode a été retenue plutôt que SHAP pour trois raisons : elle est **
 
 ## 6.4 Des heures atypiques aux épisodes opérables
 
-Le runtime reconstruit localement signale **530 heures atypiques** sur les heures scorables. **Ce chiffre brut est inexploitable en salle de contrôle** : un opérateur ne traite pas 511 points d'alarme. Ce runtime est explicitement `runtime_trained_unpromoted` et ne peut pas être présenté comme un modèle approuvé.
+Le runtime reconstruit localement signale **530 heures atypiques** sur les heures scorables. **Ce chiffre brut est inexploitable en salle de contrôle** : un opérateur ne traite pas 530 points d'alarme. Ce runtime est explicitement `runtime_trained_unpromoted` et ne peut pas être présenté comme un modèle approuvé.
 
 Les heures atypiques sont agrégées en **épisodes** — regroupement des heures consécutives avec tolérance de 6 heures d'interruption, et rejet des épisodes de moins de 3 heures. L'artefact final produit **58 épisodes candidats** sur 14 mois. Ces valeurs sont recalculées avec le modèle livré et ne constituent pas 58 défaillances confirmées.
 
@@ -740,7 +740,7 @@ thermiques dépendent du modèle de référence et ne sont pas des mesures direc
 | Indicateur | Valeur | Lecture |
 |---|---|---|
 | Disponibilité des mesures du périmètre | 97,2 % | 6 capteurs surveillés |
-| Charge d'alertes | 5 épisodes/mois | Durée médiane 8 h — traitable |
+| Charge d'alertes | 4,1 épisodes/mois | 58 épisodes sur 424 j, durée médiane 8 h — traitable |
 | Exposition corrosive cumulée | 2 h | 0,02 % du temps de marche |
 | Marche durablement sous consigne | 28 % du temps | Réglage de conduite, mesuré sur l'écart de consigne |
 
@@ -794,10 +794,10 @@ sur les données :
 | Indicateur | Nature |
 |---|---|
 | Disponibilité moyenne des mesures du périmètre | `observed` |
-| Exposition cumulée à des conditions corrosives | `derived` |
-| Marche durablement sous consigne | `observed` |
-| Charge d'alertes pour l'exploitant | `observed` |
-| Taux horaire de signalement en marche | `observed` |
+| Exposition cumulée à des conditions corrosives | `observed` |
+| Marche durablement sous consigne | `derived` |
+| Charge d'alertes pour l'exploitant | `derived` |
+| Taux horaire de signalement en marche | `derived` |
 
 Chaque figure porte son `evidence_level`. Aucune ne se convertit en dirhams, et
 c'est délibéré : **la conversion suppose des données de gestion que ce projet
@@ -879,7 +879,7 @@ L'API FastAPI expose **45 routes `/api/`** couvrant la santé détaillée du sys
 
 L'interface est servie par la même application, sans étape de compilation. Elle remplace le synoptique statique par une représentation WebGL **horizontale et conceptuelle** du E7301 : calandre, fonds, brides, plaques tubulaires, faisceau illustratif et selles. Aucune cote ni quantité de tubes n'est revendiquée sans les plans 711-104/105/106. Le modèle tourne lentement, peut être orienté à la souris et colore les zones concernées en ambre ou rouge selon la sévérité. Un clic ouvre l'événement correspondant ou la vue AMDEC filtrée ; un mode sans WebGL reste disponible.
 
-Les douze tags DCS sont accessibles dans une constellation de capteurs indiquant dernière valeur, unité, rôle et disponibilité. Un clic isole le signal dans le graphe. Six familles de courbes couvrent températures, titres acides, débits/charge, contexte absorption, instrumentation dégradée et performance observée/attendue, sur cinq fenêtres temporelles. Les valeurs brutes des deux capteurs dégradés restent visibles pour expliquer la panne, mais sont strictement exclues de l'apprentissage.
+Les douze tags DCS sont accessibles dans une constellation de capteurs indiquant dernière valeur, unité, rôle et disponibilité. Un clic isole le signal dans le graphe. Dix familles de courbes sont proposées, sur cinq fenêtres temporelles. Quatre portent le diagnostic et sont issues de la correction du § 5.3 bis : **coefficient d'échange observé contre attendu**, **résistance d'encrassement**, **température d'entrée observée contre attendue**, et **source froide — climatologie de Safi**. Les six autres couvrent températures, titres acides, débits/charge, contexte absorption, instrumentation dégradée, et l'**effort de régulation** — cette dernière s'intitulait « performance observée / attendue », ce qu'elle n'est pas : le résidu de puissance vaut l'écart de consigne changé de signe (§ 5.3). Les valeurs brutes des deux capteurs dégradés restent visibles pour expliquer la panne, mais sont strictement exclues de l'apprentissage.
 
 Lorsque l'administrateur active explicitement le profil local de démonstration, le technicien saisit un e-mail présent dans la liste autorisée ; cet e-mail identifie la session et peut devenir un destinataire d'alerte. Le secret est vérifié par PBKDF2 ; la session reste opaque côté serveur avec cookie HttpOnly/SameSite, expiration, rotation et protection CSRF. Une file SMTP asynchrone envoie les décisions critiques acceptées, avec dédoublonnage et temporisation, uniquement lorsqu'un relais est configuré. Ces e-mails complètent l'alarme opérateur ; ils ne la remplacent pas. Pour la production, le démarrage impose un fournisseur OIDC et refuse ce profil local.
 

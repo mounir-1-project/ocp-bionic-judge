@@ -8,14 +8,41 @@ a partir de `DATA.xlsx` et de `tags.yaml`, sans rien d'autre.
 
 Le champ `evidence_level` distingue deux natures de resultat :
 
-  observed  la grandeur est lue directement dans les donnees
-            (exemple : disponibilite des mesures, heures d'exposition)
-  derived   la grandeur passe par la reference thermique semi-empirique
-            (exemple : energie evacuee en exces)
+  observed  la grandeur est lue directement dans les donnees et dans le
+            referentiel : disponibilite des mesures, heures d'exposition aux
+            conditions corrosives. Un tiers la recalcule avec `DATA.xlsx` et
+            `tags.yaml`, sans rien d'autre.
+  derived   la grandeur passe par un artefact AJUSTE — l'une des trois
+            references thermiques, ou le detecteur statistique. Elle herite
+            donc du choix de la periode de reference, dont
+            `src.governance.sensitivity` chiffre l'effet.
 
 Cette distinction n'est pas cosmetique : une grandeur `derived` herite des
 limites du modele de reference et ne doit jamais etre presentee comme une
 mesure.
+
+KPI-1 — LE CHAMP ETAIT DEVENU UNE CONSTANTE, ET SON EXEMPLE UN FANTOME.
+Cet en-tete citait « energie evacuee en exces » comme exemple de grandeur
+`derived`. C'est precisement le chiffre que `overcooling_regime` explique
+avoir RETIRE, en MWh, parce qu'il « deplacait un constat de conduite vers un
+registre economique que ce projet n'a pas les donnees pour traiter ». Le seul
+producteur de `derived` ayant disparu, les six indicateurs annoncaient tous
+`observed` : le champ ne distinguait plus rien, et sa documentation renvoyait
+a une grandeur qui n'existe plus.
+
+Le defaut n'etait pas seulement decoratif. Trois indicateurs passent par un
+artefact ajuste et se declaraient `observed` :
+
+  overcooling_regime  lit `regulation_effort_trend_14d`, residu de la
+                      reference d'effort — donc d'une regression apprise.
+  alert_load          compte des episodes issus des scores de l'Isolation
+                      Forest. Le « ~5 episodes par mois » cite ailleurs dans
+                      le projet est un resultat de modele, pas un comptage.
+  flag_rate           compare des scores a un seuil, tous deux appris.
+
+Les presenter comme des mesures est exactement ce que le paragraphe ci-dessus
+interdit. `test_le_niveau_de_preuve_distingue_reellement_deux_natures`
+verrouille la correction.
 
 Author: Mounir Sanbouli — Stage OCP, Programme Bionic
 """
@@ -209,7 +236,7 @@ class OperationalKPI:
                 value=0.0,
                 unit="% du temps de marche",
                 note="Aucun régime de sur-refroidissement installé sur la période.",
-                evidence_level="observed",
+                evidence_level="derived",
             )
         mean_dev = float(dev[sustained].mean())
         return Figure(
@@ -223,7 +250,7 @@ class OperationalKPI:
                  f"dégradation : la vanne d'eau de mer travaille plus qu'il "
                  f"n'est nécessaire, ce qui consomme par avance la marge "
                  f"disponible pour compenser un futur encrassement.",
-            evidence_level="observed",
+            evidence_level="derived",
         )
 
     def alert_load(self, episodes: pd.DataFrame) -> Figure:
@@ -245,7 +272,7 @@ class OperationalKPI:
                 value=0.0,
                 unit="épisodes/mois",
                 note="Aucun épisode sur la période.",
-                evidence_level="observed",
+                evidence_level="derived",
             )
         span_days = (self.f.index.max() - self.f.index.min()).days or 1
         per_month = len(episodes) * 30.0 / span_days
@@ -258,7 +285,7 @@ class OperationalKPI:
                  f"À lire avec le taux horaire de signalement : l'agrégation en "
                  f"épisodes rend la charge soutenable, elle ne réduit pas le "
                  f"bruit sous-jacent.",
-            evidence_level="observed",
+            evidence_level="derived",
         )
 
     def flag_rate(self, scores: pd.Series, threshold: float, contamination: float) -> Figure:
@@ -298,7 +325,7 @@ class OperationalKPI:
                  f"à l'ensemble : hors référence, le taux dérive. C'est le "
                  f"chiffre qui décide si un opérateur continue de regarder "
                  f"l'écran.",
-            evidence_level="observed",
+            evidence_level="derived",
         )
 
     def monthly_flag_rate(self, scores: pd.Series, threshold: float) -> pd.DataFrame:

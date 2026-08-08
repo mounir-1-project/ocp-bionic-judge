@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from src.operations import WorkflowStore
+from src.operations.workflows import TERMINAL_STATES, WORKFLOW_STATES
 
 
 def _steps():
@@ -168,11 +171,16 @@ def test_une_intervention_close_ne_se_reclot_pas(tmp_path):
 def test_les_etats_non_nominaux_sont_atteignables(tmp_path):
     """WF-4 — TROIS ETATS DECLARES QU'AUCUN TEST N'EXERCAIT.
 
-    `BLOCKED`, `NOT_APPLICABLE` et `CANCELLED` figurent dans `WORKFLOW_STATES`
-    et `STEP_STATES`. Aucun test ne les atteignait : une enumeration dont une
+    `BLOCKED` et `NOT_APPLICABLE` figuraient dans `WORKFLOW_STATES` et
+    `STEP_STATES` sans qu'aucun test ne les atteigne : une enumeration dont une
     valeur n'est jamais produite est soit un chemin mort, soit un chemin non
     verifie. Ici c'etait le second — et `NOT_APPLICABLE` intervient dans la
     condition de cloture, donc dans la barriere la plus importante du module.
+
+    LA DOCSTRING ANNONCAIT AUSSI `CANCELLED`, ET NE L'EXERCAIT PAS. Elle ne le
+    pouvait pas : aucun producteur ne l'ecrivait. Le troisieme etat n'etait pas
+    « non verifie », il etait mort — c'est WF-2, tranche depuis, et couvert par
+    `test_tout_etat_declare_est_productible`.
     """
     store = WorkflowStore(tmp_path / "workflows.db")
     workflow = store.create(
@@ -206,3 +214,116 @@ def test_les_etats_non_nominaux_sont_atteignables(tmp_path):
     )
     assert ferme["status"] == "COMPLETED"
     store.close()
+
+
+def test_tout_etat_declare_est_productible(tmp_path):
+    """WF-2 — Un vocabulaire d'états ne déclare rien d'inatteignable.
+
+    `WORKFLOW_STATES` portait `CANCELLED`, qu'AUCUN des trois producteurs de
+    statut ne pouvait écrire — `create` pose `PLANNED`, `update_step` pose
+    `BLOCKED` ou `IN_PROGRESS`, `complete` pose `COMPLETED`. Même forme que
+    LIN-1 sur `PROMOTION_STATUSES`.
+
+    Il n'était pas inoffensif : `TERMINAL_STATES` le contenait, donc les gardes
+    de `update_step` et de `complete` testaient une valeur impossible, et un
+    lecteur en déduisait qu'un chemin d'annulation existe.
+
+    Le contrôle est BEHAVIORAL et bidirectionnel : la boutique est conduite par
+    son API publique, et l'ensemble des statuts réellement observés doit être
+    exactement l'ensemble déclaré. Remettre `CANCELLED` sans écrire `cancel()`
+    fait échouer ce test.
+    """
+    observes: set[str] = set()
+
+    # PLANNED — à la création.
+    store = WorkflowStore(tmp_path / "etats.db")
+    workflow = store.create(
+        template_id="INSPECTION_EXTERNE", title="Inspection externe",
+        owner="Equipe mécanique", planned_at=None, created_by="maintenance",
+        steps=_steps(),
+    )
+    observes.add(workflow["status"])
+
+    # BLOCKED — dès qu'une étape est bloquée.
+    etapes = workflow["steps"]
+    courant = store.update_step(
+        workflow["id"], etapes[0]["id"], status="BLOCKED", actor="maintenance",
+        comment="Accès condamné", expected_version=etapes[0]["version"],
+    )
+    observes.add(courant["status"])
+
+    # IN_PROGRESS — dès qu'aucune étape ne l'est plus.
+    version = next(
+        s for s in courant["steps"] if s["id"] == etapes[0]["id"]
+    )["version"]
+    courant = store.update_step(
+        workflow["id"], etapes[0]["id"], status="COMPLETED", actor="maintenance",
+        comment="Échafaudage retiré", expected_version=version,
+    )
+    observes.add(courant["status"])
+
+    # COMPLETED — à la clôture signée.
+    for etape in courant["steps"]:
+        if etape["status"] in {"COMPLETED", "NOT_APPLICABLE"}:
+            continue
+        version = next(
+            s for s in courant["steps"] if s["id"] == etape["id"]
+        )["version"]
+        courant = store.update_step(
+            workflow["id"], etape["id"], status="COMPLETED", actor="maintenance",
+            comment="Contrôlé", expected_version=version,
+        )
+    observes.add(
+        store.complete(
+            workflow["id"], actor="maintenance", signature="Chef mécanique"
+        )["status"]
+    )
+    store.close()
+
+    assert not WORKFLOW_STATES - observes, (
+        f"états déclarés qu'aucun chemin ne produit : "
+        f"{sorted(WORKFLOW_STATES - observes)}. Soit écrire la méthode qui les "
+        f"atteint, soit les retirer du vocabulaire."
+    )
+    assert not observes - WORKFLOW_STATES, (
+        f"états produits hors du vocabulaire déclaré : "
+        f"{sorted(observes - WORKFLOW_STATES)}"
+    )
+    # Et la garde d'état terminal ne teste que des états atteignables.
+    assert TERMINAL_STATES <= WORKFLOW_STATES
+
+
+def test_le_schema_derive_son_vocabulaire_des_constantes(tmp_path):
+    """WF-3 — `WORKFLOW_STATES` était déclaré et lu par personne.
+
+    Le vocabulaire vivait en deux exemplaires : la constante Python, et la liste
+    recopiée dans le `CHECK` du schéma. `update_step` validait contre
+    `STEP_STATES`, jamais contre `WORKFLOW_STATES` — seul le littéral SQL était
+    réellement appliqué, et rien ne le rattachait à la constante. Motif de S8-2.
+
+    CE TEST PORTAIT UN NOM PLUS LARGE QUE SA COUVERTURE. « Dérive son
+    vocabulaire des constantes » est une ÉGALITÉ ; il ne vérifiait qu'une
+    inclusion — chaque état déclaré figure dans le schéma — plus l'absence
+    NOMMÉE d'un seul intrus, `CANCELLED`. Un état ajouté au seul littéral SQL,
+    ou une seconde valeur morte, passait donc sans bruit : exactement la
+    divergence que WF-3 prétend avoir refermée.
+
+    La contrainte est maintenant lue et comparée par ÉGALITÉ D'ENSEMBLES, ce qui
+    subsume le cas `CANCELLED` au lieu de le nommer. Le contrôle porte sur la
+    propriété, non sur l'exemple qui l'a fait découvrir.
+    """
+    store = WorkflowStore(tmp_path / "schema.db")
+    schema = store._db.execute(
+        "SELECT sql FROM sqlite_master WHERE name='workflows'"
+    ).fetchone()[0]
+    store.close()
+
+    clause = re.search(r"CHECK\s*\(\s*status\s+IN\s*\(([^)]*)\)", schema)
+    assert clause, f"aucune contrainte CHECK sur `status` dans le schéma :\n{schema}"
+    admis = set(re.findall(r"'([A-Z_]+)'", clause.group(1)))
+
+    assert admis == WORKFLOW_STATES, (
+        f"le schéma et la constante divergent — "
+        f"acceptés par le seul SQL : {sorted(admis - WORKFLOW_STATES)} ; "
+        f"déclarés sans être acceptés : {sorted(WORKFLOW_STATES - admis)}"
+    )

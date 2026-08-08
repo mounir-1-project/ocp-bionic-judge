@@ -26,8 +26,10 @@ semaines.
 
 Les deux étages fonctionnent ensemble, pas en concurrence.
 
-**Étage 1 — moteur de règles.** Dix-sept règles déterministes, chacune encodant
-une signature de mode de défaillance issue de l'AMDEC du 23/09/2019. Toute
+**Étage 1 — moteur de règles.** Six règles déterministes émettant **quinze
+codes** de constatation, chacun encodant une signature de mode de défaillance
+issue de l'AMDEC du 23/09/2019 — une même règle gradue sa sortie, ainsi
+`CONC_LOW` et `CONC_LOW_LOW`. Toute
 alerte se rattache à une ligne de ce document. Une règle ne peut pas halluciner :
 elle cite les valeurs qui l'ont déclenchée.
 

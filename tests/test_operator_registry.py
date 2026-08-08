@@ -30,7 +30,8 @@ from src.security.auth import (
     hash_password,
     verify_password,
 )
-from src.security.registry import MIN_PASSWORD_LENGTH, OperatorRegistry
+from src.security.auth import MIN_PASSWORD_LENGTH
+from src.security.registry import OperatorRegistry
 
 PASSWORD = "motdepasse-industriel-2026"
 OTHER = "un-autre-mot-de-passe"
@@ -82,8 +83,26 @@ def test_chaque_technicien_a_une_empreinte_distincte(registry):
 
 
 def test_mot_de_passe_trop_court_refuse(registry):
-    with pytest.raises(ValueError, match="12 caracteres"):
+    """Le refus doit citer la longueur exigée, et la citer correctement.
+
+    CE CONTROLE VERROUILLAIT LA FAUTE. Il exigeait `match="12 caracteres"`,
+    c'est-à-dire l'orthographe SANS ACCENT du message. Accentuer « caractères »
+    — ce que la règle du dépôt impose à tout texte affiché — le faisait échouer.
+    C'est exactement S6-4 : un test qui n'accepte la lecture que si elle est
+    mal écrite.
+
+    La règle du dépôt s'applique des deux côtés : le texte COMPARÉ est dépouillé
+    par `sans_accents`, le texte AFFICHÉ reste accentué. Et la longueur n'est
+    plus écrite ici non plus — elle vient de la constante.
+    """
+    from src.formatting import sans_accents
+    from src.security.auth import MIN_PASSWORD_LENGTH
+
+    with pytest.raises(ValueError) as refus:
         registry.add("tech@ocpgroup.ma", "court")
+    message = str(refus.value)
+    assert f"{MIN_PASSWORD_LENGTH} caracteres" in sans_accents(message)
+    assert "caractères" in message, "le message affiché doit rester accentué"
     assert registry.is_configured is False
 
 

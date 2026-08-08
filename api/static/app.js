@@ -277,7 +277,30 @@ function toast(message, tone = "info") {
 
 /* ── Session ─────────────────────────────────────────────────────────────── */
 
-function showGate() {
+/**
+ * Affiche le panneau d'identification.
+ *
+ * LE BANDEAU ANNONÇAIT « SESSION EXPIRÉE » DANS TROIS SITUATIONS SUR TROIS,
+ * ALORS QU'UNE SEULE L'EST.
+ *
+ * Cette fonction est appelée depuis `api()` sur un 401 — là le message est
+ * juste — mais aussi depuis `boot()` dans deux cas où il est faux :
+ *
+ *   - première ouverture avec accès protégé : le technicien n'a JAMAIS eu de
+ *     session, on lui annonce que la sienne a expiré ;
+ *   - poste local, sans authentification : il n'existe pas de session du tout,
+ *     et l'écran affiche « Prise de quart » à côté de « Session expirée ».
+ *
+ * C'est le défaut que le commentaire ci-dessous dénonce sur le message
+ * précédent — « le bandeau annonçait *Service injoignable*, c'est FAUX » — et
+ * la correction l'avait remplacé par un second message faux dans deux cas sur
+ * trois. Un diagnostic erroné envoie l'exploitant chercher au mauvais endroit.
+ *
+ * @param {string} motif Ce qui est réellement arrivé.
+ * @param {string} etat  État de liaison : `down` seulement si l'écran est figé
+ *                       sur des données périmées.
+ */
+function showGate(motif = "Session expirée — écran figé", etat = "down") {
   $("gate").hidden = false;
   document.body.dataset.boot = "gate";
 
@@ -302,7 +325,7 @@ function showGate() {
   //    errone envoie l'exploitant verifier le reseau au lieu de se
   //    reconnecter.
   if (S.timer) { clearInterval(S.timer); S.timer = null; }
-  setLink("down", "Session expirée — écran figé");
+  setLink(etat, motif);
 }
 
 /**
@@ -349,6 +372,18 @@ function setGateMode(secured) {
   $("loginPassword").required = secured;
   $("gateSubmit").textContent = secured ? "Ouvrir la session" : "Prendre le poste";
   $("gateDisclaimer").hidden = secured;
+  // DEUX AFFIRMATIONS CONTRADICTOIRES SUR LE PREMIER ÉCRAN.
+  //
+  // `gateAlertNote` annonce « Cette adresse recevra les états critiques » et
+  // n'était jamais masqué. Sur un poste sans authentification, il s'affichait
+  // donc À CÔTÉ de `gateDisclaimer`, qui dit que l'identification est
+  // déclarative — et c'est ce dernier qui a raison : la branche déclarative de
+  // `login()` ne fait aucun appel serveur, donc `add_recipient` n'est jamais
+  // appelé et l'adresse ne reçoit rien.
+  //
+  // Le technicien lisait une promesse d'escalade que le code ne tient pas, sur
+  // l'écran qu'il voit avant tous les autres.
+  $("gateAlertNote").hidden = !secured;
 }
 
 /**
@@ -395,7 +430,9 @@ async function boot(essai = 1) {
 
   if (auth.required && !auth.authenticated) {
     setGateMode(true);
-    showGate();
+    // Première ouverture : aucune session n'a jamais existé, et le service
+    // répond. Ni « expirée », ni « injoignable ».
+    showGate("Identification requise", "idle");
     return;
   }
 
@@ -403,7 +440,7 @@ async function boot(essai = 1) {
   if (!auth.required) {
     // Poste local : on demande quand meme qui prend le quart.
     setGateMode(false);
-    showGate();
+    showGate("Prise de quart — accès non protégé", "idle");
     return;
   }
 
@@ -631,6 +668,9 @@ async function openSensor(alias) {
     ["P1 – P99", `${fmt(data.stats.p01, 1)} – ${fmt(data.stats.p99, 1)}`],
     ["Min – Max", `${fmt(data.stats.min, 1)} – ${fmt(data.stats.max, 1)}`],
     ["Défauts tracés", `${data.quality.n_events}`],
+    // Le tiroir énonçait des seuils sans jamais dire quel risque ce capteur
+    // sert à couvrir. Le référentiel le dit pour cinq des douze tags.
+    ["Risque AMDEC couvert", data.criticality_link_label || "—"],
   ];
   $("drawerFacts").innerHTML = facts
     .map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("");
@@ -804,6 +844,20 @@ const TREND_SETS = {
     title: "Résistance d'encrassement", unit: "K/kW",
     lines: [["fouling_resistance", "Rf = 1/UA − 1/UA attendu"]],
     guide: ["Référence", 0],
+  },
+  entree: {
+    // Le seul résidu indépendant de la variable régulée (r = +0,03 avec
+    // l'écart de consigne). Il ne prouve rien seul — une dérive de l'entrée
+    // peut venir de la tour de séchage — mais il est le contexte amont, et il
+    // n'était traçable nulle part.
+    title: "Température d'entrée acide — observée contre attendue à charge et débit donnés",
+    unit: "°C",
+    lines: [["T_ACID_IN", "Observée"], ["t_in_expected", "Attendue"]],
+  },
+  froid: {
+    // L'entrée extérieure à l'atelier, celle qui rend UA calculable.
+    title: "Source froide — climatologie de Safi", unit: "°C",
+    lines: [["T_SEAWATER", "Eau de mer à la prise"]],
   },
   duty: {
     // Le titre disait « Performance observée / attendue ». C'est ce que cette
@@ -1275,7 +1329,12 @@ function renderEpisodes(episodes) {
   // Le score normalisé sature : les quatorze lignes affichaient « 1,000 », et
   // un tableau intitulé « les plus sévères » dont la colonne de sévérité est
   // constante ne hiérarchise rien. La marge — dépassement du seuil en
-  // écarts-types — n'est pas bornée et sépare 57 épisodes sur 59.
+  // écarts-types — n'est pas bornée et sépare 57 épisodes sur 58.
+  //
+  // Le dénominateur disait 59. L'artefact en compte 58, comme
+  // `project_metrics.json` et les deux bibliothèques. Recompté le 2026-08-08
+  // par `scripts/collecte_chiffres_front.py` : 58 épisodes, 57 valeurs de
+  // marge distinctes.
   $("episodeRows").innerHTML = episodes.slice(0, 14).map((ep, i) => `
     <tr>
       <td class="num">${esc(stamp(ep.start))}</td>
@@ -1362,6 +1421,33 @@ const PROVENANCE = {
   },
 };
 
+/**
+ * Les trois états réels d'observabilité, côté écran.
+ *
+ * Cette colonne se lisait `m.observable ? "oui" : "non — angle mort"`. Le
+ * serveur avait pourtant été corrigé : il publie `observabilite`, à trois
+ * valeurs, parce que le booléen seul faisait afficher « non — angle mort » sur
+ * la corrosion du faisceau et la fuite de calandre — deux modes auxquels le
+ * moteur de règles rattache activement des constatations. La correction avait
+ * été portée côté serveur et pas ici, si bien que l'écran continuait de
+ * démentir la chaîne de détection.
+ */
+const OBSERVABILITE = {
+  full: { mot: "oui", couleur: "", aide: "Le système mesure l'état de la pièce." },
+  partial: {
+    mot: "partielle",
+    couleur: "var(--warn)",
+    aide: "Le symptôme est mesurable, l'état de la pièce ne l'est pas : "
+        + "une inspection physique reste requise.",
+  },
+  none: {
+    mot: "non — angle mort",
+    couleur: "var(--fault)",
+    aide: "Aucun signal disponible ne dit quoi que ce soit de ce mode. "
+        + "Il reste couvert par le plan préventif.",
+  },
+};
+
 function renderAmdec(filter = "") {
   const q = filter.trim().toLowerCase();
   const rows = (S.equipment?.amdec || []).filter((m) => !q
@@ -1370,6 +1456,17 @@ function renderAmdec(filter = "") {
     const prov = PROVENANCE[m.provenance_category] || {
       court: m.provenance_category || "—", tone: "app", detail: "",
     };
+    const obs = OBSERVABILITE[m.observabilite]
+      || (m.observable ? OBSERVABILITE.full : OBSERVABILITE.none);
+    // Les trois barèmes viennent des onglets GRV, OCC et DET du classeur AMDEC
+    // d'OCP. Ils sont servis depuis `/api/equipment` : la criticité cesse
+    // d'être un nombre que rien ne définit.
+    const cotation = [
+      m.F_libelle ? `F = ${m.F} · ${m.F_libelle}` : `F = ${m.F}`,
+      m.G_libelle ? `G = ${m.G} · ${m.G_libelle}` : `G = ${m.G}`,
+      m.N_libelle ? `N = ${m.N} · ${m.N_libelle}` : `N = ${m.N}`,
+      `C = F × G × N = ${m.C} (${m.band})`,
+    ].join("\n");
     return `
     <tr>
       <td>
@@ -1379,8 +1476,9 @@ function renderAmdec(filter = "") {
           esc(prov.court)}</span>
       </td>
       <td>${esc(m.mode)}</td>
-      <td><span class="crit" data-band="${esc(m.band)}">${m.C}</span></td>
-      <td>${m.observable ? "oui" : '<span style="color:var(--fault)">non — angle mort</span>'}</td>
+      <td><span class="crit" data-band="${esc(m.band)}" title="${esc(cotation)}">${m.C}</span></td>
+      <td${obs.couleur ? ` style="color:${obs.couleur}"` : ""} title="${esc(obs.aide)}">${
+        esc(obs.mot)}</td>
       <td style="color:var(--ink-3)">${esc(m.action)}</td>
     </tr>`;
   }).join("");
@@ -1582,14 +1680,34 @@ const MESURE_LABEL = {
   fouling_resistance: { nom: "Résistance d'encrassement", unite: "K/kW", decimales: 4 },
   regulation_effort_z: { nom: "Effort de régulation", unite: "σ", decimales: 2 },
   regulation_effort_trend_14d: { nom: "Effort de régulation, 14 j", unite: "σ", decimales: 2 },
+  t_in_expected: { nom: "Entrée acide attendue", unite: "°C", decimales: 1 },
+  t_in_residual_z: { nom: "Écart de température d'entrée", unite: "σ", decimales: 2 },
+  t_in_residual_trend_14d: { nom: "Écart d'entrée, 14 j", unite: "σ", decimales: 2 },
   anomaly_score: { nom: "Score du modèle statistique", unite: "", decimales: 3 },
 };
 
-/** Intitulés des portes de déploiement, côté exploitant. */
+/**
+ * Intitulés des portes de déploiement, côté exploitant.
+ *
+ * DEUX PORTES SERVIES PAR LE SERVEUR N'AVAIENT PAS D'INTITULÉ ICI. Les phases
+ * 0.6 et 0.7 ont scindé `redondance_features` et `stabilite_hors_periode` :
+ * le serveur en publie sept depuis, cette table en connaissait cinq. Les deux
+ * nouvelles tombaient donc sur le repli `g.gate.replace(/_/g, " ")` et
+ * s'affichaient « redondance hors modele » et « derive de distribution » —
+ * en minuscules et SANS ACCENTS, c'est-à-dire exactement le défaut que le
+ * commentaire de `renderValidation` déclare corrigé trois lignes plus bas.
+ *
+ * Dix-neuvième occurrence du motif de cet audit, et toujours dans le même
+ * sens : le code de service porte la version juste, l'affichage la périmée.
+ * `test_les_portes_publiees_ont_toutes_un_intitule_a_l_ecran` l'interdit
+ * désormais.
+ */
 const GATE_LABEL = {
   causalite_temporelle: "Causalité temporelle",
   redondance_features: "Redondance des grandeurs",
+  redondance_hors_modele: "Redondance hors modèle",
   stabilite_hors_periode: "Stabilité hors référence",
+  derive_de_distribution: "Dérive de distribution",
   labels_gmao: "Vérité terrain GMAO",
   validation_externe: "Validation externe",
 };
@@ -1622,11 +1740,22 @@ function renderValidation(report) {
     g.evidence || "",
   ]);
 
+  // LA PREUVE ÉTAIT COUPÉE À 120 CARACTÈRES, ET C'EST LA RÉSERVE QUI TOMBAIT.
+  //
+  // Les preuves des portes font 300 à 500 caractères depuis qu'elles portent
+  // leur réserve — l'origine credit-scoring du seuil PSI, le caractère
+  // algébrique de la redondance hors modèle, ADR-001. Toutes ces phrases sont
+  // placées APRÈS la mesure, donc toutes tombaient. L'exploitant lisait
+  // « PSI max 3,745 […] pour 0,25 admis » et rien de ce qui en relativise la
+  // portée : le chiffre nu, sans ce qui le rend défendable.
+  //
+  // Le texte est désormais rendu en entier. C'est la seule partie de cet écran
+  // qu'un jury lit ligne à ligne.
   $("valid").innerHTML = [...cells, ...gateCells].map(([k, v, s]) => `
     <div class="valid-cell">
       <span class="micro">${esc(k)}</span>
       <strong style="${v === "non franchie" ? "color:var(--warn)" : ""}">${esc(v ?? "—")}</strong>
-      <small>${esc(String(s).slice(0, 120))}</small>
+      <small>${esc(String(s))}</small>
     </div>`).join("");
 
   $("controlLimits").innerHTML = (report?.limitations || [])
@@ -1651,7 +1780,8 @@ function renderBench(result) {
         aveugle.flagged_rate === undefined ? "—" : `${fmt(aveugle.flagged_rate * 100, 0)} %`
       }</strong>fautes d'un genre non anticipé
     </span>
-    <span><strong>${fmt((s.trap_detection_rate ?? 0) * 100, 0)} %</strong>pièges conçus (non-régression)</span>
+    <span><strong>${fmt((s.trap_success_rate ?? 0) * 100, 0)} %</strong>pièges conçus : vus ET sanctionnés</span>
+    <span><strong>${fmt((s.trap_detection_rate ?? 0) * 100, 0)} %</strong>pièges conçus : vus</span>
     <span><strong>${fmt(s.clean_score_mean, 2)}</strong>note des cas sains</span>
     <span><strong>${fmt((s.false_positive_rate ?? 0) * 100, 0)} %</strong>faux positifs</span>`;
 

@@ -274,9 +274,15 @@ def test_aucun_chiffre_cle_ne_contredit_les_artefacts():
         ),
         # LE MOTIF VISE LE TOTAL, PAS LA CHARGE MENSUELLE.
         # `(\d+)\s+épisodes` attrapait « 5 épisodes/mois » — une autre
-        # grandeur, juste — et jusqu'au « 1 » de « § 9.1 Épisodes les plus
-        # marqués ». Un controle bruyant finit desactive : on exige donc le
-        # qualificatif qui designe le decompte sur les quatorze mois.
+        # grandeur — et jusqu'au « 1 » de « § 9.1 Épisodes les plus marqués ».
+        # Un controle bruyant finit desactive : on exige donc le qualificatif
+        # qui designe le decompte sur les quatorze mois.
+        #
+        # CE COMMENTAIRE QUALIFIAIT CE « 5 » DE « JUSTE ». Il ne l'etait pas :
+        # `kpi.alert_load` calcule `58 x 30 / 424` = **4,1**. Ecarter une valeur
+        # d'un motif n'est pas la verifier, et la declarer juste au passage lui
+        # a donne vingt lots de survie. Le terme « charge d'alertes » ci-dessous
+        # la confronte desormais a l'artefact.
         "épisodes agrégés": (
             str(metrics["model"]["episodes"]),
             r"(\d+)\s+épisodes\s+(?:candidats|agrégés)",
@@ -285,9 +291,59 @@ def test_aucun_chiffre_cle_ne_contredit_les_artefacts():
             str(metrics["model"]["alert_hours_historical"]),
             r"([\d   ]+)\s+heures atypiques\b",
         ),
+        # LE JUMEAU AVAIT SURVECU EN CHANGEANT DE MOT.
+        #
+        # La docstring ci-dessus recense « 511 heures atypiques a trois lignes
+        # de 530 » parmi les huit constats de ce controle. La premiere
+        # occurrence a bien ete corrigee — mais la SECONDE, trois lignes plus
+        # bas, ecrivait « un operateur ne traite pas 511 points d'alarme ». Le
+        # motif ne la voyait pas : elle designe la meme grandeur sous un autre
+        # nom, et elle est restee fausse pendant tout ce temps.
+        #
+        # Le motif dominant du depot, applique au controle cense l'empecher.
+        "points d'alarme": (
+            str(metrics["model"]["alert_hours_historical"]),
+            r"([\d   ]+)\s+points d'alarme\b",
+        ),
+        # LA CHARGE D'ALERTES ETAIT SUR-ESTIMEE DE 22 %, ET L'ADR AVAIT RAISON.
+        #
+        # `kpi.alert_load` calcule `len(episodes) * 30 / span_days`, soit
+        # 58 x 30 / 424 = 4,1 episodes/mois. Le README et le rapport publiaient
+        # « environ 5 », ADR-003 publiait « environ 4,1 ».
+        #
+        # C'est la SECONDE exception a l'ordre de fraicheur etabli par cet audit
+        # sur dix-huit occurrences — code/artefacts -> README -> ADR -> rapport.
+        # Ici l'ADR portait la valeur juste et les deux documents les plus lus
+        # portaient l'ancienne.
+        "charge d'alertes": (
+            f"{metrics['model']['episodes'] * 30.0 / 424:.1f}".replace(".", ","),
+            r"([\d,]+)\s*(?:\*\*)?\s*épisodes?[ /](?:par )?mois",
+        ),
+        # Le § 12.2 publie le nombre de routes `/api/`. Il est juste
+        # aujourd'hui — verifie, 45 — et rien ne le maintenait : une route
+        # ajoutee ou retiree le rendait faux en silence.
+        "routes de l'API": (
+            str(metrics["api"]["route_count"]),
+            r"expose\s+\*\*(\d+)\s+routes",
+        ),
+        # LA PRECISION PUBLIEE DOIT ETRE CELLE DE L'ARTEFACT.
+        #
+        # L'attendu etait arrondi a l'entier (`:.0f`) et le motif ne capturait
+        # que des chiffres. Le banc mesure 0,086 : le document doit ecrire
+        # « 8,6 % », que ce controle lisait « 8 » et comparait a « 9 ».
+        # Arrondir un taux de gouvernance a l'entier fait perdre un demi-point
+        # sur un chiffre qui vaut moins de dix.
         "généralisation du contrôleur": (
-            f"{judge['blind_mutations']['flagged_rate'] * 100:.0f}",
-            r"\*\*(\d+)\s*%\*\*\s*\(n\s*=\s*\d+\)",
+            f"{judge['blind_mutations']['flagged_rate'] * 100:.1f}".replace(".", ","),
+            r"\*\*([\d,]+)\s*%\*\*\s*\(n\s*=\s*\d+\)",
+        ),
+        # LE MEME CHIFFRE EST PUBLIE TROIS FOIS DANS LE README, ET LE MOTIF
+        # CI-DESSUS N'EN VOYAIT QU'UNE — celle qui porte « (n = ...) ».
+        # C'est le motif de « 511 » (S26-3) : la valeur survit la ou le
+        # controle ne regarde pas. Celui-ci attrape la mise en avant.
+        "généralisation mise en avant": (
+            f"{judge['blind_mutations']['flagged_rate'] * 100:.1f}".replace(".", ","),
+            r"\*\*([\d,]+)\s*%, et c'est le chiffre à retenir",
         ),
         "part du risque couverte": (
             f"{coverage['part_couverte_pct']:.1f}".replace(".", ","),

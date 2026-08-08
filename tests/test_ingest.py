@@ -88,12 +88,56 @@ def test_arret_detecte_sur_charge_nulle(synthetic_readings, domain):
     assert (state.iloc[110:140] == "STOPPED").all()
 
 
-def test_transitoire_autour_dun_arret(synthetic_readings, domain):
-    """Les instants encadrant un arret doivent etre marques TRANSIENT."""
+def test_le_transitoire_est_causal_et_ne_lit_pas_l_instant_suivant(
+    synthetic_readings, domain
+):
+    """TRANSIENT ne peut marquer que ce qui est deja observable.
+
+    CE TEST AFFIRMAIT UNE SYMETRIE QUE LE CODE REFUSE — ET IL AVAIT RAISON DE
+    LA REFUSER. Sa phrase disait « les instants ENCADRANT un arret doivent etre
+    marques TRANSIENT », et son assertion unissait les deux fenetres
+    (`set(entree) | set(sortie)`) : une seule des deux bornes suffisait, ce qui
+    masquait le fait qu'UNE SEULE est produite.
+
+    Sur une chute instantanee, l'entree en arret ne peut PAS etre transitoire :
+
+        state[is_trans & ~is_down] = "TRANSIENT"
+        state[is_down] = "STOPPED"
+
+    l'instant ou la charge tombe est deja `is_down`, donc STOPPED. Le marquer
+    transitoire exigerait `is_down.shift(-1)` — « l'instant t est transitoire
+    parce que la ligne s'arrete en t+1 » — c'est-a-dire la LECTURE DU FUTUR que
+    `dcs_loader` documente avoir supprimee, sur vingt-sept horodatages, parce
+    qu'« une chaine de detection ne peut pas etre a demi causale ».
+
+    Ce controle verrouille donc les deux proprietes reelles, separement.
+    """
+    # 1. REPRISE apres arret : garantie dure, via `is_down.shift(1)`.
     df = synthetic_readings.copy()
     df.loc[df.index[100:150], "LOAD_SULFUR"] = 0.0
     state = classify_process_state(df, domain)
-    assert "TRANSIENT" in set(state.iloc[95:105]) | set(state.iloc[148:158])
+    assert "TRANSIENT" in set(state.iloc[148:158]), (
+        "la reprise apres arret n'est pas marquee transitoire"
+    )
+    # Et l'entree, elle, est franche : aucune anticipation.
+    assert "TRANSIENT" not in set(state.iloc[96:100]), (
+        "un instant de marche est declare transitoire avant que quoi que ce "
+        "soit ne soit observable : c'est une lecture de l'instant suivant"
+    )
+
+    # 2. DESCENTE PROGRESSIVE : la variation de charge, elle, est causale et
+    #    doit produire TRANSIENT tant que la ligne tourne encore.
+    graduel = synthetic_readings.copy()
+    rampe = [15.0, 11.0, 9.0]          # > seuil d'arret (8), pente > 2 t/h
+    for i, valeur in enumerate(rampe, start=100):
+        graduel.iloc[i, graduel.columns.get_loc("LOAD_SULFUR")] = valeur
+    graduel.iloc[103:150, graduel.columns.get_loc("LOAD_SULFUR")] = 0.0
+    etat = classify_process_state(graduel, domain)
+    assert "TRANSIENT" in set(etat.iloc[100:103]), (
+        "une descente de charge de plus de 2 t/h en marche doit etre "
+        "transitoire : ce critere ne lit que le passe"
+    )
+
 
 
 # ── Ingestion reelle ──────────────────────────────────────────────────────────

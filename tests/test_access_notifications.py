@@ -45,9 +45,19 @@ def test_session_opaque_csrf_et_invalidation():
 
     manager.destroy(new_token)
     assert manager.validate(new_token) is None
-    assert [event["event"] for event in manager.audit_events()] == [
-        "LOGIN_FAILED", "LOGIN_SUCCEEDED",
+    # L'EGALITE PORTAIT SUR LE JOURNAL ENTIER, APRES UNE ROTATION ET UNE
+    # DESTRUCTION. Elle gelait donc l'ABSENCE de toute trace pour ces deux
+    # operations : ajouter une ligne de deconnexion cassait ce test, avec un
+    # message qui n'en disait pas la raison. Or `auth.py` n'a qu'un seul
+    # `self._audit.append`, appele depuis `authenticate` — c'est un constat,
+    # pas une intention verifiee (SEC-3, laisse ouvert).
+    # L'exactitude est conservee sur ce que le test dit examiner : les deux
+    # issues d'authentification, dans l'ordre.
+    authentification = [
+        e["event"] for e in manager.audit_events()
+        if str(e["event"]).startswith("LOGIN_")
     ]
+    assert authentification == ["LOGIN_FAILED", "LOGIN_SUCCEEDED"]
 
 
 def test_allowlist_et_limitation_des_tentatives():
@@ -247,3 +257,85 @@ def test_le_corps_d_alerte_est_redige_en_francais():
     assert "Sévérité" in corps and "Équipement" in corps
     assert "9,20/10" in corps, "la note ne doit pas porter un point décimal anglais"
     assert "Aucune panne n'est confirmée" in corps
+
+
+def test_la_rotation_ne_touche_pas_la_session_tenue_par_une_requete_en_vol():
+    """Rotation = publication atomique, jamais mutation d'un objet partagé.
+
+    LE DEFAUT QUE CE CONTROLE INTERDIT (SEC-2, lot S13).
+
+    `rotate()` écrasait `csrf_token` SUR l'objet de session, sous le verrou. Le
+    commentaire en tirait la conclusion que la course était fermée. Elle ne
+    l'était pas : le lecteur ne prend jamais le verrou. `api/main.py` compare
+    `request.headers["X-CSRF-Token"]` à `session.csrf_token` sur l'objet que
+    `validate()` lui a rendu, verrou déjà relâché.
+
+    Déroulé reproduit ici : une requête en vol obtient la session, une rotation
+    survient, la requête compare enfin son en-tête. Avec la mutation en place
+    elle recevait `403` sur une requête parfaitement légitime.
+
+    C'est SEC-1 du lot S11 sur une autre structure, et la parade est la même :
+    on ne modifie pas l'objet que d'autres tiennent, on en publie un nouveau.
+    """
+    manager = AuthManager(
+        password_hash=hash_password("phrase secrete industrielle 2026"),
+        allowed_emails={"tech@example.test"},
+    )
+    resultat = manager.authenticate(
+        "tech@example.test", "phrase secrete industrielle 2026", "127.0.0.1"
+    )
+    assert resultat is not None
+    jeton, _ = resultat
+
+    # 1. La requête en vol obtient sa session et retient son jeton CSRF.
+    en_vol = manager.validate(jeton)
+    assert en_vol is not None
+    csrf_presente_par_le_client = en_vol.csrf_token
+
+    # 2. Une rotation survient entre-temps.
+    rotation = manager.rotate(jeton)
+    assert rotation is not None
+    nouveau_jeton, renouvelee = rotation
+
+    # 3. La requête en vol compare enfin. Elle doit passer.
+    assert en_vol.csrf_token == csrf_presente_par_le_client, (
+        "la rotation a muté la session qu'une requête concurrente tenait : "
+        "elle recevra 403 sur une requête légitime"
+    )
+    assert renouvelee is not en_vol, "la rotation doit publier un objet distinct"
+    assert renouvelee.csrf_token != csrf_presente_par_le_client
+    assert nouveau_jeton != jeton
+
+    # La rotation ne prolonge pas l'expiration absolue.
+    assert renouvelee.created_at == en_vol.created_at
+    assert renouvelee.email == en_vol.email
+    assert renouvelee.role == en_vol.role
+
+    # Et l'ancien identifiant ne vaut plus rien.
+    assert manager.validate(jeton) is None
+    assert manager.validate(nouveau_jeton) is renouvelee
+
+
+def test_la_limitation_de_debit_consigne_le_compte_vise():
+    """Le seul événement qui signale une attaque doit nommer sa cible.
+
+    `LOGIN_RATE_LIMITED` était consigné avec une chaîne vide : le journal disait
+    qu'une limite avait été atteinte, jamais contre quel compte — alors que la
+    valeur était dans la portée et que les deux autres événements la consignent.
+    """
+    manager = AuthManager(
+        password_hash=hash_password("phrase secrete industrielle 2026"),
+        allowed_emails={"vise@example.test"},
+    )
+    for _ in range(5):
+        manager.authenticate("vise@example.test", "mauvais-secret", "client-z")
+    with pytest.raises(TooManyAttemptsError):
+        manager.authenticate("vise@example.test", "mauvais-secret", "client-z")
+
+    limites = [
+        evenement for evenement in manager.audit_events()
+        if evenement["event"] == "LOGIN_RATE_LIMITED"
+    ]
+    assert limites, "aucun événement de limitation consigné"
+    assert limites[-1]["email"] == "vise@example.test"
+    assert limites[-1]["client_key"] == "client-z"

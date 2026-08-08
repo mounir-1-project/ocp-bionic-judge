@@ -161,8 +161,10 @@ class InjectionResult:
         detected = [c for c in self.cases if c.detected]
         return {
             "method": (
-                "rampe d'encrassement superposée aux données réelles ; le "
-                "détecteur n'est pas réentraîné sur les données modifiées"
+                "rampe d'encrassement superposée aux données réelles ; les "
+                "trois références sont réajustées sur la fenêtre de référence, "
+                "qui s'achève avant le début de la rampe et ne voit donc aucune "
+                "donnée modifiée"
             ),
             "injection_model": (
                 "dégradation progressive du coefficient d'échange global ; les "
@@ -203,7 +205,12 @@ class InjectionResult:
                 "serait détecté ; il ne valide pas la signature physique réelle.",
                 "Aucune vérité terrain n'existe : ce résultat est une borne "
                 "supérieure de performance, pas une garantie d'exploitation.",
-                "L'injection dégrade UA à débit d'eau de mer inchangé. La "
+                "Les scénarios ne démarrent que dans une fenêtre où la règle "
+                "est silencieuse sur les données réelles ET où la ligne tourne "
+                "au moins la moitié du temps : une fenêtre d'arrêt serait "
+                "calme sans rien pouvoir porter, l'injection n'altérant que "
+                "les heures de marche établie.",
+                "L'injection dégrade UA à débit d'eau de mer inchangé. La"
                 "régulation réelle ouvrirait la vanne pour compenser, ce que "
                 "le banc ne simule pas faute de mesure côté eau de mer : "
                 "l'avancement à la détection publié ici est donc plus "
@@ -303,31 +310,63 @@ class FoulingInjectionBench:
         """
         self.pipeline = pipeline
 
-    @staticmethod
+    # Part minimale d'heures de marche etablie exigee dans une fenetre pour
+    # qu'elle puisse porter un scenario. Voir `_quiet_start`.
+    MIN_RUNNING_SHARE = 0.5
+
+    @classmethod
     def _quiet_start(
-        control: pd.Series, after: pd.Timestamp, span_days: int
+        cls,
+        control: pd.Series,
+        running: pd.Series,
+        after: pd.Timestamp,
+        span_days: int,
     ) -> pd.Timestamp | None:
-        """Cherche une fenetre ou le temoin ne declenche rien.
+        """Cherche une fenetre ou le temoin ne declenche rien ET ou la ligne tourne.
 
         Sans cette precaution, la rampe demarre sur une periode ou les donnees
         reelles declenchent deja la regle, et la « detection » mesuree n'est
         attribuable a rien. C'est le defaut qu'avait la premiere version de ce
         banc : elle annoncait 100 % de detection a 0 % d'avancement.
 
+        UNE FENETRE PEUT ETRE CALME PARCE QUE LA LIGNE EST A L'ARRET.
+        Le critere ne portait que sur `not window.any()` : l'absence de
+        declenchement. Or `_fouling_hours` exige `process_state == RUNNING`, et
+        `inject_fouling` n'altere que les heures de marche
+        (`effect = advancement.where(running, 0.0)`). Un arret de ligne
+        satisfait donc le critere de calme SANS pouvoir rien porter : la rampe
+        n'y modifie aucune temperature, la regle ne peut pas s'y declencher, et
+        le scenario etait pourtant enregistre « NON DETECTEE ».
+
+        C'est le meme defaut que celui releve sur le banc du Judge : un
+        denominateur qui contient des essais ou rien n'a ete tente. Ici il
+        ABAISSE le taux de detection et DEGRADE l'avancement median publie —
+        biais prudent, mais un chiffre fausse dans le bon sens reste un chiffre
+        fausse, et celui-ci figure dans le rapport.
+
+        On exige donc que la moitie au moins de la fenetre soit en marche
+        etablie. Le corpus compte 1 385 heures d'arret sur 10 182, reparties en
+        episodes : la contrainte reste satisfiable.
+
         Args:
             control: Detections sur donnees non modifiees.
+            running: Masque de marche etablie, aligne sur `control`.
             after: Borne basse (fin de periode de reference).
             span_days: Duree calme exigee.
 
         Returns:
-            Debut de fenetre calme, ou None s'il n'en existe aucune.
+            Debut de fenetre calme et exploitable, ou None s'il n'en existe pas.
         """
         candidates = control.index[control.index >= after]
         need = pd.Timedelta(days=span_days)
         for ts in candidates:
             window = control.loc[ts : ts + need]
-            if len(window) > 24 and not window.any():
-                return ts
+            if len(window) <= 24 or window.any():
+                continue
+            marche = running.loc[ts : ts + need]
+            if float(marche.mean()) < cls.MIN_RUNNING_SHARE:
+                continue
+            return ts
         return None
 
     def run(
@@ -370,11 +409,12 @@ class FoulingInjectionBench:
                 # fenetre ou le temoin est silencieux, sinon la detection n'est
                 # attribuable a rien.
                 start = self._quiet_start(
-                    control, ref_end + pd.Timedelta(days=7), duration
+                    control, running, ref_end + pd.Timedelta(days=7), duration
                 )
                 if start is None:
                     logger.warning(
-                        f"Aucune fenetre calme de {duration} j : scenario ignore"
+                        f"Aucune fenetre de {duration} j a la fois calme et "
+                        f"majoritairement en marche : scenario ignore"
                     )
                     continue
 

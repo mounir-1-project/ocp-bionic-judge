@@ -6,15 +6,17 @@
   "false_positive_rate": 0.0,
   "n_traps": 118,
   "trap_score_mean": 5.78,
-  "trap_detection_rate": 0.958,
-  "trap_missed": 5,
+  "trap_detection_rate": 1.0,
+  "trap_success_rate": 0.958,
+  "trap_caught_not_sanctioned": 5,
+  "trap_missed": 0,
   "separation": 4.13,
   "verdict_warnings": [],
   "blind_mutations": {
-    "n": 60,
-    "flagged_rate": 0.1,
+    "n": 58,
+    "flagged_rate": 0.086,
     "penalised_rate": 0.017,
-    "score_mean": 9.89,
-    "reading": "Mutations aleatoires ne visant aucun controle. Ce taux, inferieur au precedent, est la mesure honnete de ce que le Judge attrape sans l'avoir anticipe."
+    "score_mean": 9.91,
+    "reading": "Mutations aléatoires ne visant aucun contrôle. Ce taux, inférieur au précédent, est la mesure honnête de ce que le Judge attrape sans l'avoir anticipé. Les mutations restées sans effet sur la décision — la check-list ne peut pas être inversée quand la décision n'en cite aucune — sont écartées du dénominateur : compter un essai où rien n'a été tenté comme une non-détection fausserait le chiffre."
   }
 }

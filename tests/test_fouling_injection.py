@@ -143,18 +143,33 @@ def test_la_detection_est_tardive_et_le_projet_le_dit(result):
 
 
 def test_une_perte_plus_forte_est_vue_plus_tot(result):
-    """Propriete de coherence : plus la perte est franche, plus tot on la voit."""
+    """Propriete de coherence : plus la perte est franche, plus tot on la voit.
+
+    LE `if` RENDAIT CE CONTROLE FACULTATIF. Sans deux scenarios detectes,
+    l'assertion ne s'executait pas et le test passait en n'ayant rien compare.
+    Or c'est precisement quand la detection faiblit — donc quand un seul cas
+    est vu — que la propriete merite d'etre examinee. Le depot porte la
+    doctrine depuis `test_typographie._exiger` : un controle qui reussit
+    d'autant plus surement qu'il ne lit rien ne controle rien.
+
+    Il declare desormais par `skip` quand le banc ne lui offre pas de quoi
+    comparer, au lieu de rendre un vert silencieux.
+    """
     par_severite = {
         c.severity: c.advancement_at_detection
         for c in result.cases
         if c.advancement_at_detection is not None
     }
-    if len(par_severite) >= 2:
-        faible = par_severite[min(par_severite)]
-        fort = par_severite[max(par_severite)]
-        assert fort <= faible + 1e-9, (
-            "une perte plus forte devrait etre detectee a un avancement moindre"
+    if len(par_severite) < 2:
+        pytest.skip(
+            f"{len(par_severite)} scenario(s) detecte(s) sur {len(result.cases)} : "
+            f"la monotonie ne peut pas etre eprouvee"
         )
+    faible = par_severite[min(par_severite)]
+    fort = par_severite[max(par_severite)]
+    assert fort <= faible + 1e-9, (
+        "une perte plus forte devrait etre detectee a un avancement moindre"
+    )
 
 
 def test_le_predicat_du_banc_equivaut_a_la_regle(pipeline):

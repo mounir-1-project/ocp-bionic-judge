@@ -28,6 +28,7 @@ from typing import Any
 import pandas as pd
 from loguru import logger
 
+from src.config import BASE_DIR
 from src.domain.knowledge import DomainKnowledge, Tag, load_domain, seuil
 from src.formatting import duree_pas
 
@@ -371,6 +372,24 @@ def classify_process_state(df: pd.DataFrame, domain: DomainKnowledge) -> pd.Seri
 
     state = pd.Series("RUNNING", index=df.index, dtype=object)
 
+    # POURQUOI `fillna(0)` ICI, ALORS QUE LE MODULE S'INTERDIT D'INVENTER
+    # UNE DONNEE PARTOUT AILLEURS.
+    #
+    # `classify_process_state` est appelee deux fois : sur les valeurs BRUTES
+    # pour etablir l'eligibilite au gel, puis sur les valeurs NETTOYEES, ou les
+    # points disqualifies par un defaut capteur sont deja passes a NaN. Au
+    # second appel, une mesure absente vaut donc « on ne sait pas si la ligne
+    # tourne ». Le zero de repli tranche cette indecision dans le sens qui
+    # EXCLUT l'heure du jugement de performance, et c'est le seul sens
+    # acceptable : declarer RUNNING une heure dont on ignore la charge
+    # reviendrait a juger un echangeur sur une base de mesure qu'on sait
+    # trouee.
+    #
+    # Le prix a payer est enonce plutot que masque : ces heures s'affichent
+    # « ligne a l'arret » sur le poste alors qu'elles sont en realite des
+    # heures de mesure indisponible. La table `sensor_health` et les
+    # evenements qualite en portent le motif exact; l'etat, lui, ne dispose
+    # que de trois valeurs gouvernees.
     is_down = load.fillna(0) < shutdown_load
     is_down |= flow.fillna(0) < flow_ll
     is_down |= t_in.fillna(0) < shutdown_temp
@@ -491,8 +510,21 @@ def ingest(
 
     health = _sensor_health(values, quality, domain)
 
+    # D-1 — LE MEME CHEMIN ABSOLU, PAR UNE AUTRE PORTE.
+    #
+    # `src.config.summary()` relativise deliberement tous ses chemins : « un
+    # endpoint de diagnostic n'a aucune raison de divulguer l'arborescence de
+    # la machine hote, son nom d'utilisateur ni sa structure de repertoires ».
+    # Ce rapport d'ingestion publiait `str(path)` tel quel, et il est servi par
+    # `/api/health` via `E7301Pipeline.health_report()` : la correction faite
+    # sur `/api/config` etait donc contournee par une route voisine.
+    try:
+        source = Path(path).resolve().relative_to(BASE_DIR.resolve()).as_posix()
+    except ValueError:
+        source = Path(path).name
+
     report = {
-        "source": str(path),
+        "source": source,
         "t_start": str(clean.index.min()),
         "t_end": str(clean.index.max()),
         "n_raw_rows": len(raw),

@@ -47,7 +47,21 @@ from src.security.auth import EMAIL_PATTERN, VALID_ROLES, hash_password
 UTC = timezone.utc
 
 SCHEMA_VERSION = 1
-MIN_PASSWORD_LENGTH = 12
+
+# `MIN_PASSWORD_LENGTH` A QUITTE CE MODULE POUR `src.security.auth`.
+#
+# Elle etait declaree ici, et `auth.hash_password` — le DERNIER verrou, que
+# `add()` comme `set_password()` traversent — ecrivait `12` en dur faute de
+# pouvoir l'importer sans cycle : `registry` importe `auth`, jamais l'inverse.
+#
+# Le module qui APPLIQUE la regle ne possedait donc pas la valeur. Porter la
+# politique a 14 caracteres ici aurait change ce que le script exige et ce que
+# `add()` verifie, et laisse `hash_password` accepter 12 — une politique de mot
+# de passe a moitie appliquee, en silence. Motif d'A-5 et de S8-2.
+#
+# Les deux lecteurs — `scripts/manage_operators.py` et les tests — l'importent
+# desormais de `src.security.auth`. Aucun alias n'est laisse ici : un nom
+# reexporte sans lecteur est precisement ce que ce travail retire partout.
 
 
 @dataclass(frozen=True)
@@ -171,6 +185,42 @@ class OperatorRegistry:
         # partiellement charge a un rechargement concurrent.
         with self._lock:
             self._operators = charges
+
+    def _publier(self, operateurs: dict[str, Operator]) -> None:
+        """Remplace le registre en memoire puis sur disque, d'un seul geste.
+
+        SEC-1 — LE PRINCIPE ETAIT ENONCE ONZE LIGNES AU-DESSUS ET VIOLE
+        PAR LES TROIS METHODES DE MODIFICATION.
+
+        `load()` construit son dictionnaire a part puis le publie d'un coup,
+        avec ce motif : « Les accesseurs de lecture NE PRENNENT PAS LE VERROU;
+        remplir le dictionnaire en place exposait un registre partiellement
+        charge a un rechargement concurrent. »
+
+        `add`, `set_password` et `remove` mutaient pourtant `self._operators`
+        EN PLACE. Le verrou protege les ecrivains les uns des autres, pas les
+        lecteurs — c'est la premisse meme du commentaire. Or cinq accesseurs
+        PARCOURENT le dictionnaire sans verrou : `emails`, `roles`,
+        `password_hashes`, `alert_recipients`, `listing`.
+
+        FastAPI sert ses endpoints dans un pool de threads. Un `remove()`
+        concurrent d'une authentification levait donc
+
+            RuntimeError: dictionary changed size during iteration
+
+        au milieu de `password_hashes()`, c'est-a-dire sur le chemin
+        d'ouverture de session, et sur une action — retirer une habilitation —
+        qu'on execute precisement quand la situation est tendue.
+
+        Chaque modification construit desormais un dictionnaire complet et le
+        substitue par une seule affectation. Un lecteur voit l'ancien registre
+        ou le nouveau, jamais un etat intermediaire.
+
+        Args:
+            operateurs: Registre complet a publier.
+        """
+        self._operators = operateurs
+        self._save()
 
     def _save(self) -> None:
         """Ecrit le registre, en restreignant les droits quand c'est possible."""
@@ -296,12 +346,14 @@ class OperatorRegistry:
                 email=normalized,
                 name=(name or normalized.split("@", 1)[0]).strip(),
                 role=role,
-                password_hash=hash_password(password),  # leve si < 12 caracteres
+                password_hash=hash_password(password),  # leve sous MIN_PASSWORD_LENGTH
                 created_at=datetime.now(UTC).isoformat(timespec="seconds"),
                 alert_recipient=alert_recipient,
             )
-            self._operators[normalized] = operator
-            self._save()
+            # SEC-1 — PUBLICATION ATOMIQUE, COMME DANS `load()`.
+            # Voir la note de `_publier` : muter le dictionnaire en place
+            # exposait les lecteurs, qui ne prennent pas le verrou.
+            self._publier({**self._operators, normalized: operator})
         return operator
 
     def set_password(self, email: str, password: str) -> None:
@@ -319,15 +371,17 @@ class OperatorRegistry:
             current = self._operators.get(normalized)
             if current is None:
                 raise KeyError(normalized)
-            self._operators[normalized] = Operator(
-                email=current.email,
-                name=current.name,
-                role=current.role,
-                password_hash=hash_password(password),
-                created_at=current.created_at,
-                alert_recipient=current.alert_recipient,
-            )
-            self._save()
+            self._publier({
+                **self._operators,
+                normalized: Operator(
+                    email=current.email,
+                    name=current.name,
+                    role=current.role,
+                    password_hash=hash_password(password),
+                    created_at=current.created_at,
+                    alert_recipient=current.alert_recipient,
+                ),
+            })
 
     def remove(self, email: str) -> None:
         """Retire un technicien.
@@ -342,8 +396,10 @@ class OperatorRegistry:
         with self._lock:
             if normalized not in self._operators:
                 raise KeyError(normalized)
-            del self._operators[normalized]
-            self._save()
+            self._publier({
+                email: op for email, op in self._operators.items()
+                if email != normalized
+            })
 
 
 def load_registry(path: str | Path | None = None) -> OperatorRegistry:

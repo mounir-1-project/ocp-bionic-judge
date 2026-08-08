@@ -111,7 +111,7 @@ jobs:
           res = JudgeEvaluator(E7301Pipeline(use_llm=False)).run(n_cases=6)
           s = res.summary
           print(res.report())
-          ok = (s["trap_detection_rate"] >= 0.85
+          ok = (s["trap_success_rate"] >= 0.85
                 and s["false_positive_rate"] <= 0.20
                 and s["separation"] >= 2.0)
           sys.exit(0 if ok else 1)

@@ -30,6 +30,8 @@ from loguru import logger
 
 from src.agents.schemas import (
     MIN_URGENCY_FOR_SEVERITY,
+    SERVICE_INSTRUMENTATION,
+    SERVICE_MECANIQUE,
     AgentDecision,
     RecommendedAction,
     Severity,
@@ -53,6 +55,23 @@ _ETAT_LISIBLE: dict[str, str] = {
     "TRANSIENT": "en régime transitoire",
     "STOPPED": "à l'arrêt",
 }
+
+# Echecs imputables a la REPONSE du modele, non au service. Ils justifient un
+# repli sur cet instant, jamais l'ouverture du coupe-circuit : voir `analyze`.
+#   ValueError          — `_extract_json` n'a trouve aucun objet JSON
+#   json.JSONDecodeError— objet trouve mais syntaxiquement invalide (sous-classe
+#                         de ValueError, citee pour la lisibilite)
+#   KeyError / TypeError— champ attendu absent ou d'un type impossible
+#   ValidationError     — `RecommendedAction` refuse le contenu propose
+_REPONSE_INEXPLOITABLE: tuple[type[Exception], ...] = (
+    ValueError, json.JSONDecodeError, KeyError, TypeError,
+)
+try:  # pydantic est une dependance de `schemas`, mais l'import reste defensif
+    from pydantic import ValidationError as _ValidationError
+
+    _REPONSE_INEXPLOITABLE = (*_REPONSE_INEXPLOITABLE, _ValidationError)
+except ImportError:  # pragma: no cover
+    pass
 
 def _nominal_confidence(result: DetectionResult) -> float:
     """Confiance d'une decision nominale, alignee sur le bareme du controleur.
@@ -167,12 +186,25 @@ class RuleBasedComposer:
         """
         self.domain = domain
 
-    def compose(self, result: DetectionResult, case: dict[str, Any]) -> AgentDecision:
+    def compose(self, result: DetectionResult) -> AgentDecision:
         """Produit une decision structuree.
+
+        A-3 — LE DOSSIER DE FAITS ETAIT CONSTRUIT PUIS IGNORE.
+
+        Cette methode recevait `case`, le dossier de faits, et ne le lisait
+        jamais : le corps entier travaille sur `result`. Le parametre disait
+        donc le contraire de ce que la classe fait, et laissait croire que le
+        compositeur deterministe et le LLM partagent la meme entree — alors
+        que seul le second lit le dossier.
+
+        Le cout n'etait pas nul : `analyze()` appelait `build_case_file` AVANT
+        de savoir si le LLM allait servir, donc a chaque instant du rejeu, y
+        compris en mode regles seules ou le dossier n'est lu par personne. Sa
+        construction parcourt les modes AMDEC et le plan preventif. Le dossier
+        n'est desormais assemble que si la redaction va effectivement l'utiliser.
 
         Args:
             result: Sortie de la detection.
-            case: Dossier de faits.
 
         Returns:
             AgentDecision generee par regles.
@@ -268,7 +300,7 @@ class RuleBasedComposer:
             )
 
         action = self._build_action(lead.severity, mode)
-        confidence = self._calibrate_confidence(result, lead, mode)
+        confidence = self._calibrate_confidence(result)
 
         return AgentDecision(
             timestamp=result.timestamp,
@@ -403,7 +435,7 @@ class RuleBasedComposer:
                             "par une seconde source avant toute intervention.",
                 urgency=urgency,
                 execution_window="EN_MARCHE",
-                responsible="Service Instrumentation PS III",
+                responsible=SERVICE_INSTRUMENTATION,
             )
 
         # LA TACHE RETENUE EST LA PLUS FREQUENTE DU MODE, PAS LA PREMIERE ECRITE.
@@ -448,8 +480,20 @@ class RuleBasedComposer:
                      "atteinte ne permet pas d'attendre un arrêt programmé : la mise "
                      "à l'arrêt de la ligne relève de la décision d'exploitation.")
 
-        responsible = ("Service Instrumentation PS III" if mode.code == "CAPTEUR_DEFAILLANT"
-                       else "Service Mécanique PS III")
+        # A-5 — LA MEME DISTINCTION, LUE D'UN COTE ET ECRITE EN DUR DE L'AUTRE.
+        #
+        # Ce test valait `mode.code == "CAPTEUR_DEFAILLANT"`. Or `_priorite`,
+        # cent-cinquante lignes plus haut, tranche exactement la meme question
+        # — instrumentation ou equipement — en lisant `sous_equipement` dans le
+        # referentiel, avec un commentaire disant que la distinction « est lue
+        # dans le referentiel, pas ecrite ici ».
+        #
+        # Deux facons de repondre a une question dans le meme fichier, dont une
+        # seule suit le referentiel. Ajouter un second mode d'instrumentation
+        # dans `amdec.yaml` l'aurait fait trier comme un defaut de mesure par
+        # `_priorite`, et adresser au service mecanique par celle-ci.
+        instrumentation = mode.raw.get("sous_equipement", "") == "INSTRUMENTATION"
+        responsible = SERVICE_INSTRUMENTATION if instrumentation else SERVICE_MECANIQUE
 
         return RecommendedAction(
             description=desc,
@@ -461,7 +505,7 @@ class RuleBasedComposer:
             responsible=responsible,
         )
 
-    def _calibrate_confidence(self, result: DetectionResult, lead, mode) -> float:
+    def _calibrate_confidence(self, result: DetectionResult) -> float:
         """Calibre la confiance sur la force reelle des preuves.
 
         LE BAREME EST CELUI DU CONTROLEUR, PAS UNE SECONDE IMPLEMENTATION.
@@ -477,10 +521,18 @@ class RuleBasedComposer:
         Une seule fonction calcule desormais la valeur; l'agent l'ANNONCE, le
         controleur la VERIFIE, et la divergence est reellement impossible.
 
+        A-3, SUITE — DEUX PARAMETRES DE PLUS, DOCUMENTES ET JAMAIS LUS.
+        La signature portait `lead` et `mode`. Le corps n'en utilise aucun :
+        l'observabilite est calculee sur `result.amdec_modes`, precisement
+        parce que la restreindre au mode dominant rouvrirait la divergence
+        avec le controleur (voir le commentaire ci-dessous). `lead` etait
+        d'ailleurs annote « conservee pour la signature » — l'aveu qu'il ne
+        servait a rien; `mode` n'avait meme pas cet aveu. Une signature qui
+        annonce des entrees inertes fait croire que le calcul en depend, et
+        conduit le relecteur suivant a chercher un couplage qui n'existe pas.
+
         Args:
             result: Sortie de la detection.
-            lead: Constatation dominante (conservee pour la signature).
-            mode: Mode AMDEC associe.
 
         Returns:
             Confiance dans [0.15, 0.95].
@@ -539,21 +591,46 @@ class RuleBasedComposer:
 def _quote_measurements(m: dict[str, float]) -> str:
     """Formate les grandeurs cles pour les citer dans un diagnostic nominal.
 
+    A-1 — LA PHRASE LA PLUS SOUVENT PRODUITE PAR LE SYSTEME ETAIT LA SEULE
+    ECRITE EN CARACTERES DE MACHINE.
+
+    Cette fonction rendait « entree acide 94.23 degC, sortie acide 65.91 degC,
+    debit acide 56.40 m3/h ». Trois fautes cumulees dans une interface
+    entierement francaise :
+
+      - libelles sans accents — « entree », « debit » ;
+      - unites en ASCII — « degC », « m3/h » — la ou le referentiel, le poste
+        et `src.formatting` ecrivent « °C » et « m³/h » ;
+      - point decimal anglais, que `src.formatting` existe pour supprimer.
+
+    ET ELLE A ECHAPPE AU CONTROLE POUR UNE RAISON PRECISE.
+    `test_les_messages_de_detection_sont_accentues` soumet les diagnostics de
+    `pipeline.notable_timestamps(12)`. Or cette fonction n'est appelee que par
+    la branche NOMINALE de `_nominal_decision`, c'est-a-dire quand il n'y a
+    AUCUNE constatation actionnable — exactement ce qu'un instant « notable »
+    n'est jamais. Le controle echantillonnait la seule population qui ne peut
+    pas declencher le defaut.
+
+    C'est pourtant la formulation la plus frequente du systeme : sur ce
+    corpus, l'immense majorite des heures de marche etablie sont nominales.
+
     Args:
         m: Dictionnaire de mesures.
 
     Returns:
-        Chaine du type "entree 94.2 degC, sortie 65.9 degC, debit 56.4 m3/h".
+        Chaine du type « entrée acide 94,23 °C, sortie acide 65,91 °C ».
     """
+    from src.formatting import unite
+
     parts = []
-    for key, label, unit in (
-        ("T_ACID_IN", "entree acide", "degC"),
-        ("T_ACID_OUT", "sortie acide", "degC"),
-        ("F_ACID", "debit acide", "m3/h"),
-        ("conc_min", "titre", "%"),
+    for key, label, symbole, decimales in (
+        ("T_ACID_IN", "entrée acide", "°C", 2),
+        ("T_ACID_OUT", "sortie acide", "°C", 2),
+        ("F_ACID", "débit acide", "m³/h", 2),
+        ("conc_min", "titre", "%", 2),
     ):
         if key in m and m[key] is not None:
-            parts.append(f"{label} {m[key]:.2f} {unit}")
+            parts.append(f"{label} {unite(m[key], symbole, decimales)}")
     return ", ".join(parts) + "." if parts else "valeurs indisponibles."
 
 
@@ -656,17 +733,39 @@ class DetectionAgent:
             AgentDecision. Toujours valide : en cas d'echec du LLM, la decision
             par regles est retournee.
         """
-        case = build_case_file(result, self.domain)
-        baseline = self.composer.compose(result, case)
+        baseline = self.composer.compose(result)
         if self.llm is None or not use_llm:
             return baseline
+        case = build_case_file(result, self.domain)
         try:
             return self._analyze_llm(result, case, baseline)
+        except _REPONSE_INEXPLOITABLE as e:
+            # A-2 — UNE REPONSE MAL FORMEE N'EST PAS UNE PANNE DE SERVICE.
+            #
+            # Le coupe-circuit s'ouvrait sur `Exception` et coupait la couche
+            # de redaction JUSQU'A LA FIN DU PROCESSUS. Un unique JSON tronque
+            # — le mode d'echec le plus banal d'un modele de langage, et celui
+            # que `_extract_json` est ecrit pour rencontrer — desactivait donc
+            # le LLM pour toutes les heures suivantes, en journalisant
+            # « Agent LLM indisponible », ce qui etait faux : le service
+            # repondait.
+            #
+            # Consequence sur la demonstration : le premier point mal rendu
+            # faisait basculer toute la session en mode regles, et l'apport du
+            # LLM devenait inobservable sans qu'on sache pourquoi.
+            #
+            # Le repli reste immediat — la decision deterministe est deja
+            # calculee — mais le circuit reste FERME : l'heure suivante
+            # retentera.
+            logger.warning(
+                f"Réponse LLM inexploitable ({type(e).__name__}: {e}) — "
+                f"repli sur les règles pour cet instant, circuit maintenu"
+            )
+            return baseline
         except Exception as e:
-            # Coupe-circuit : une cle invalide ou un service indisponible ne
-            # doit pas bloquer chaque point du rejeu ni provoquer une rafale
-            # de requetes identiques. Le mode regles reste completement
-            # fonctionnel jusqu'au prochain redemarrage configure.
+            # Panne franche : clé invalide, service injoignable, quota épuisé.
+            # Là, réessayer à chaque point produirait une rafale de requêtes
+            # vouées à l'échec. Le circuit s'ouvre jusqu'au prochain démarrage.
             self.llm = None
             logger.warning(
                 f"Agent LLM indisponible ({type(e).__name__}: {e}) — "

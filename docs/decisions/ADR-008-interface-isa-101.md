@@ -39,7 +39,17 @@ en noir et blanc les confond toujours. Chaque état porte donc un **glyphe**, un
 **mot** et une **couleur**, et les bordures d'alarme portent en plus un motif
 distinct — trait plein pour l'avertissement, trait double pour le critique.
 
-Contraste vérifié : 4,6:1 minimum sur les micro-libellés, conforme au niveau AA.
+Contraste vérifié : **4,54:1** sur les micro-libellés, mesuré sur le **pire des
+cinq fonds réellement employés** — `--raise`, qui est le fond de survol de toutes
+les lignes du poste, donc l'état exact dans lequel l'exploitant lit. Le seuil AA
+est 4,5:1 : il est tenu, de justesse.
+
+> Cet ADR annonçait « 4,6:1 minimum ». La valeur est 4,54:1, que `app.css`
+> arrondit honnêtement à « 4,5:1 au pire ». Recalculée le 2026-08-08 par
+> `scripts/collecte_chiffres_front.py`, bloc 12. L'écart est d'un dixième et
+> sans conséquence pratique, mais il allait dans le sens flatteur — et le
+> document ne doit jamais être plus optimiste que la feuille de style qu'un banc
+> vérifie.
 
 ### 3. Hiérarchie de vues
 

@@ -1,0 +1,413 @@
+Construction de la chaine (peut prendre une a deux minutes)...
+Chaine prete.
+
+==============================================================================
+1. INGESTION ET QUALITE DE DONNEE
+==============================================================================
+periode            : 2024-01-01 07:00:00  ->  2025-02-28 11:00:00
+lignes brutes      : 10182
+lignes retenues    : 10180
+pas nominal        : 1 h
+tags connus        : 12
+trous temporels    : 1
+doublons           : 2
+hors ordre         : 0
+evenements qualite : 8995
+tags degrades      : ['PHI_5306', 'TI_5303']
+
+REPARTITION DES ETATS PROCEDE :
+  RUNNING        8832 h    86.8 %
+  STOPPED        1251 h    12.3 %
+  TRANSIENT        97 h     1.0 %
+
+SANTE CAPTEURS (disponibilite croissante) :
+  TI_5303       degraded   dispo  47.83 %    5311 h en defaut   gel=2 sat=5170 hors_plage=0 code=139
+  PHI_5306      degraded   dispo  85.43 %    1483 h en defaut   gel=1344 sat=0 hors_plage=0 code=139
+  C_ACID_1200   primary    dispo  93.93 %     618 h en defaut   gel=103 sat=515 hors_plage=0 code=0
+  C_ACID_1100   primary    dispo  94.00 %     611 h en defaut   gel=75 sat=536 hors_plage=0 code=0
+  F_3412        context    dispo  96.99 %     306 h en defaut   gel=75 sat=0 hors_plage=231 code=0
+  T_ACID_OUT    primary    dispo  98.52 %     151 h en defaut   gel=151 sat=0 hors_plage=0 code=0
+  LOAD_SULFUR   context    dispo  98.90 %     112 h en defaut   gel=75 sat=0 hors_plage=37 code=0
+  F_ACID        primary    dispo  99.06 %      96 h en defaut   gel=76 sat=0 hors_plage=19 code=1
+  A_3302        context    dispo  99.24 %      77 h en defaut   gel=76 sat=0 hors_plage=0 code=1
+  A_3301        context    dispo  99.24 %      77 h en defaut   gel=76 sat=0 hors_plage=0 code=1
+  T_ACID_IN     primary    dispo  99.26 %      75 h en defaut   gel=75 sat=0 hors_plage=0 code=0
+  T_CIRC_1300   secondary  dispo  99.26 %      75 h en defaut   gel=75 sat=0 hors_plage=0 code=0
+
+==============================================================================
+2. LES TROIS REFERENCES  (ADR-001 / ADR-009)
+==============================================================================
+--- CONDUCTANCE (UA) ---
+  cible          : ua_kw_per_k  [kW/K]
+  periode        : 2024-01-01 07:00:00  ->  2024-07-13 17:00:00
+  n heures       : 3505
+  R2             : 0.9244
+  sigma residu   : 0.6259
+  regresseurs    : ['F_ACID^0.8', 'T_acide_moyenne', 'T_eau_de_mer', 'const']
+  coefficients   : [1.0515384585054666, 0.2900280950453808, 0.8172711512105373, -46.53574325969156]
+  UA moyen ref   : 17.766 kW/K
+
+--- EFFORT DE REGULATION (duty) ---
+  cible          : duty_kw  [kW]
+  periode        : 2024-01-01 07:00:00  ->  2024-07-13 17:00:00
+  n heures       : 3505
+  R2             : 0.9682353735419509
+  R2 SANS apprentissage : 0.9622995252624186
+  APPORT REEL DU MODELE : 0.0059   <-- ADR-001
+  sigma residu   : 24.384043640786004
+  regresseurs    : ['LOAD_SULFUR', 'F_ACID', 'T_ACID_IN', 'conc_min', 'F_ACID*T_ACID_IN', 'const']
+  coefficients   : [17.85706630344868, -62.36338617980952, -14.176755747904139, 25.280697640629164, 0.8620264357160821, -1425.9164351102168]
+
+--- TEMPERATURE D'ENTREE ---
+  cible          : T_ACID_IN  [degC]
+  periode        : 2024-01-01 07:00:00  ->  2024-07-13 17:00:00
+  n heures       : 3532
+  R2             : 0.4790872677911976
+  sigma residu   : 1.5320929083698698
+  regresseurs    : ['LOAD_SULFUR', 'F_ACID', 'LOAD_SULFUR*F_ACID', 'const']
+  coefficients   : [0.3959603188530018, -0.21696651273614218, 0.016463694855440636, 80.74415779805237]
+
+
+==============================================================================
+3. INDEPENDANCE DES INDICATEURS  (ADR-001)
+==============================================================================
+ua_residual_z            r = -0.5366   variance partagee  28.8 %   independant=False   role=diagnostic
+regulation_effort_z      r = -0.9378   variance partagee  87.9 %   independant=False   role=conduite
+t_in_residual_z          r = +0.0332   variance partagee   0.1 %   independant=True   role=contexte
+
+==============================================================================
+4. COEFFICIENT D'ECHANGE MOIS PAR MOIS  (ADR-002)
+==============================================================================
+mois         UA obs   UA att   T mer         Rf  residu z
+2024-01      13.81    14.46    17.7    0.00312     -1.03
+2024-02      15.43    15.57    17.1    0.00054     -0.23
+2024-03      17.51    17.37    17.3   -0.00078      0.23
+2024-04      17.09    17.35    17.9    0.00085     -0.43
+2024-05      18.96    18.20    18.7   -0.00222      1.21
+2024-06      19.31    19.52    19.7    0.00055     -0.34
+2024-07      20.51    20.46    20.7   -0.00012      0.08
+2024-08      21.79    21.32    21.6   -0.00098      0.76
+2024-09      21.86    21.38    21.8   -0.00102      0.77
+2024-10      21.56    20.44    21.1   -0.00264      1.80
+2024-11      19.49    19.16    19.7   -0.00081      0.52
+2024-12      18.73    18.47    18.4   -0.00075      0.41
+2025-01      18.51    17.75    17.5   -0.00236      1.21
+2025-02      18.60    17.33    17.1   -0.00432      2.01
+
+UA min mensuel : 13.81 kW/K (January 2024)
+UA max mensuel : 21.86 kW/K (September 2024)
+
+==============================================================================
+5. DETECTION : SIGNALEMENT ET EPISODES
+==============================================================================
+seuil de decision      : 0.9643
+contamination visee    : 2.0%
+heures de marche       : 8832
+heures signalees       : 530
+TAUX DE SIGNALEMENT    : 6.00 %
+RATIO SUR LA CIBLE     : 3.00 x
+
+META D'ENTRAINEMENT DU DETECTEUR :
+  n_train : 3367
+  period : ['2024-01-02 07:00:00', '2024-07-13 17:00:00']
+  contamination : 0.02
+  threshold : 0.9642612800415576
+  features : ['ua_residual_z', 'regulation_effort_z', 't_in_residual_z', 'conc_min', 'conc_bias_drift_z', 'conc_drop_24h', 'flow_per_load', 'd_t_out', 'd_conc', 't_out_local_z', 't_in_local_z']
+
+TAUX DE SIGNALEMENT MOIS PAR MOIS :
+  2024-01      0.8 %   sur 375 h de marche
+  2024-02     10.7 %   sur 150 h de marche
+  2024-03      1.3 %   sur 672 h de marche
+  2024-04      2.3 %   sur 685 h de marche
+  2024-05      1.5 %   sur 744 h de marche
+  2024-06      0.5 %   sur 618 h de marche
+  2024-07      4.5 %   sur 726 h de marche
+  2024-08      2.4 %   sur 718 h de marche
+  2024-09      3.6 %   sur 696 h de marche
+  2024-10     26.9 %   sur 717 h de marche
+  2024-11     13.9 %   sur 674 h de marche
+  2024-12      0.7 %   sur 732 h de marche
+  2025-01      2.6 %   sur 703 h de marche
+  2025-02     14.0 %   sur 622 h de marche
+
+EPISODES AGREGES : 58
+  soit 4.10 episodes / mois
+  duree mediane : 7 h
+  duree max     : 38 h
+
+  Les 10 plus marques :
+              start                 end  duration_h  n_hours  margin_max  score_max
+2024-10-25 04:00:00 2024-10-26 17:00:00          38       23        5.40     0.9998
+2025-02-19 14:00:00 2025-02-19 18:00:00           5        4        4.65     0.9996
+2025-01-29 08:00:00 2025-01-29 11:00:00           4        4        4.21     0.9995
+2024-03-26 09:00:00 2024-03-26 11:00:00           3        2        3.94     0.9993
+2025-02-20 02:00:00 2025-02-21 12:00:00          35       23        3.52     0.9989
+2024-09-02 15:00:00 2024-09-03 00:00:00          10        8        3.47     0.9988
+2025-02-17 17:00:00 2025-02-18 21:00:00          29       16        3.43     0.9988
+2024-10-22 10:00:00 2024-10-22 19:00:00          10        8        3.37     0.9987
+2025-02-15 06:00:00 2025-02-16 15:00:00          34       16        3.35     0.9987
+2024-01-12 11:00:00 2024-01-12 13:00:00           3        2        3.31     0.9986
+
+==============================================================================
+6. INDICATEURS D'EXPLOITATION
+==============================================================================
+[observed] Disponibilité moyenne des mesures du périmètre
+           97.34 %
+           Calculée sur 6 capteurs surveillés, 1 626 horodatages en défaut au total. Un horodatage en défaut est écarté du calcul de performance, jamais comblé par interpolation.
+
+[derived ] Charge d'alertes pour l'exploitant
+           4.1 épisodes/mois
+           58 épisodes sur 424 jours, durée médiane 7 h. À lire avec le taux horaire de signalement : l'agrégation en épisodes rend la charge soutenable, elle ne réduit pas le bruit sous-jacent.
+
+[observed] Exposition cumulée à des conditions corrosives
+           2.0 h
+           2 h sur 8 832 h de marche (0,02 %). Critères : titre inférieur à 98,0 % ou entrée acide supérieure à 100 °C. Sur cette période, la conduite n'expose pratiquement jamais le faisceau à des conditions agressives : le vieillissement observé relève de l'âge et de l'érosion, non du régime de marche.
+
+[derived ] Marche durablement sous consigne
+           29.89 % du temps de marche
+           2 640 h sur 8 832 h de marche, à 1,7 °C sous la consigne en moyenne (critère : écart inférieur à -0,5 °C et dérive de la référence au-delà de +1 sigma). Constat de conduite, pas de dégradation : la vanne d'eau de mer travaille plus qu'il n'est nécessaire, ce qui consomme par avance la marge disponible pour compenser un futur encrassement.
+
+[derived ] Taux horaire de signalement en marche
+           6.0 %
+           530 h signalées sur 8 832 h de marche, soit 3,0 fois la contamination de calibration (2 %). Le seuil est appris sur la période de référence puis appliqué à l'ensemble : hors référence, le taux dérive. C'est le chiffre qui décide si un opérateur continue de regarder l'écran.
+
+STABILITE DE REGULATION, MOIS PAR MOIS :
+  2024-01   ecart moyen  -0.004 degC   hors bande 1 degC :   0.3 %   (375 h)
+  2024-02   ecart moyen  +0.361 degC   hors bande 1 degC :   0.7 %   (150 h)
+  2024-03   ecart moyen  +0.016 degC   hors bande 1 degC :   1.6 %   (672 h)
+  2024-04   ecart moyen  -0.097 degC   hors bande 1 degC :   1.8 %   (685 h)
+  2024-05   ecart moyen  -1.474 degC   hors bande 1 degC :  87.0 %   (744 h)
+  2024-06   ecart moyen  -0.006 degC   hors bande 1 degC :   0.0 %   (591 h)
+  2024-07   ecart moyen  -0.123 degC   hors bande 1 degC :   1.4 %   (726 h)
+  2024-08   ecart moyen  -1.358 degC   hors bande 1 degC :  82.0 %   (718 h)
+  2024-09   ecart moyen  -1.652 degC   hors bande 1 degC :  96.8 %   (681 h)
+  2024-10   ecart moyen  -1.777 degC   hors bande 1 degC :  99.1 %   (683 h)
+  2024-11   ecart moyen  -0.532 degC   hors bande 1 degC :  36.2 %   (674 h)
+  2024-12   ecart moyen  +0.003 degC   hors bande 1 degC :   0.0 %   (732 h)
+  2025-01   ecart moyen  -0.003 degC   hors bande 1 degC :   0.3 %   (703 h)
+  2025-02   ecart moyen  -0.272 degC   hors bande 1 degC :  18.3 %   (622 h)
+
+==============================================================================
+7. COUVERTURE DU RISQUE AMDEC
+==============================================================================
+criticite totale       : 1052
+couverte               : 318  (30.2 %)  n=3
+partielle              : 195  (18.5 %)  n=2
+non couverte           : 539  n=8
+
+MODES PARTIELLEMENT OBSERVES :
+  FAISCEAU_CORROSION                 C=105   FAISCEAU TUBULAIRE / Corrosion / perte d'épaisseur
+  CALANDRE_FUITE                     C=90    CALANDRE / Fuite
+ANGLES MORTS :
+  PLAQUE_SACRIFICIELLE_DYSFONCTION   C=112   preventif ['D', 'E']
+  VANNE_ACIDE_FUITE                  C=112   preventif ['F']
+  PORTE_VISITE_FUITE                 C=90    preventif ['C']
+  VANNE_ACIDE_BOUCHAGE               C=90    preventif ['F']
+  VANNE_EM_BOUCHAGE                  C=42    preventif ['G']
+  VANNE_ACIDE_DYSFONCTION            C=42    preventif ['F']
+  VANNE_EM_FUITE                     C=42    preventif ['G']
+  VANNE_EM_DYSFONCTION               C=9     preventif ['G']
+
+==============================================================================
+8. EXEMPLE TRAVAILLE DE BOUT EN BOUT
+==============================================================================
+INSTANT ANALYSE : 2024-01-15 15:00:00
+etat procede    : RUNNING
+
+--- MESURES DE L'INSTANT ---
+  LOAD_SULFUR                    11.4995
+  F_ACID                         29.2102
+  T_ACID_IN                      84.85
+  T_ACID_OUT                     65.6021
+  C_ACID_1100                    98.6448
+  C_ACID_1200                    98.6547
+  conc_min                       98.6448
+  conc_spread                    0.0099
+  delta_t                        19.2479
+  duty_kw                        394.4832
+  duty_expected                  385.2144
+  regulation_effort_z            0.3801
+  regulation_effort_trend_14d    -0.3213
+  control_deviation              -0.3979
+  T_SEAWATER                     17.5
+  ua_kw_per_k                    6.8981
+  ua_expected                    5.2247
+  ua_residual_z                  2.6734
+  fouling_resistance             -0.0464
+
+--- CONSTATATIONS DU DETECTEUR ---
+  [WARNING ] FLOW_LOW  (source RULE, mode CALANDRE_FUITE)
+      Débit acide à 29,2 m³/h (seuil L 35,0 m³/h). Une vitesse de circulation réduite favorise en outre le dépôt de sulfates dans les tubes.
+      preuves : {'F_ACID': 29.2102, 'seuil_L': 35.0}
+  [INFO    ] MODEL_ANOMALY_ISOLATED  (source MODEL, mode —)
+      Point isolé atypique : 1 heure(s) atypique(s) sur les 4 exploitable(s) des 6 dernières heures. Trop bref pour conclure à une anomalie de procédé — surveiller sans agir.
+      preuves : {'anomaly_score': 0.9873, 'threshold': 0.9643, 'top_feature': 't_in_local_z', 'heures_atypiques_sur_6h': 1, 'heures_exploitables_sur_6h': 4, 'persistent': False}
+
+--- ATTRIBUTION DU MODELE ---
+  score 0.9873 / seuil 0.9643
+  t_in_local_z             valeur -3.7327  reference 0.0143  contribution 0.0303
+  t_out_local_z            valeur -3.6079  reference -0.0115  contribution 0.0208
+  flow_per_load            valeur 2.5401  reference 3.0818  contribution 0.0155
+  ua_residual_z            valeur 2.6734  reference -0.1705  contribution 0.0094
+  conc_bias_drift_z        valeur 1.6948  reference 0.2273  contribution 0.0061
+
+--- DIAGNOSTIC DE L'AGENT ---
+  severite   : WARNING
+  confiance  : 0.8
+  modes      : ['CALANDRE_FUITE']
+  dominante  : FLOW_LOW
+  diagnostic : Débit acide à 29,2 m³/h (seuil L 35,0 m³/h). Une vitesse de circulation réduite favorise en outre le dépôt de sulfates dans les tubes. Rattachement AMDEC : CALANDRE / Fuite (criticité 90, significative).
+  raisonnement : État process : en marche établie. Constatation dominante : FLOW_LOW (WARNING, source RULE). Contribution statistique dominante : l'entrée acide face à ses 24 h à -3,73 sigma contre +0,01 sigma en référence.
+
+--- ACTION RECOMMANDEE ---
+  urgence    : SOUS_24H
+  fenetre    : EN_MARCHE
+  arret requis : False
+  tache      : C   check-list INSPECTION_EXTERNE
+  responsable: Service Mécanique PS III
+  description: Changement joint à chaque révision — inspection visuelle — mesure des épaisseurs — tâche C du plan préventif : Inspection externe du refroidisseur (cadence 1 mois).
+
+--- VERDICT DU CONTROLEUR ---
+  note globale      : 10.0 / 10
+  note deterministe : 10.0 / 10
+  accord            : True
+  anomalies         : aucune
+
+  [OK ] V1_NUMERIC_FIDELITY    note 10.00  poids 0.22
+        Les valeurs citées correspondent-elles aux mesures réelles ?
+        4 valeur(s) confrontée(s) aux mesures recalculées, toutes exactes.
+  [OK ] V2_SEVERITY            note 10.00  poids 0.16
+        La sévérité correspond-elle aux faits ?
+        Sévérité WARNING conforme au recalcul interne des règles.
+  [OK ] V3_AMDEC_GROUNDING     note 10.00  poids 0.14
+        Les modes AMDEC invoqués sont-ils fondés ?
+        Mode(s) CALANDRE_FUITE : existant(s), observable(s), et soutenu(s) par les constatations.
+  [OK ] V4_ACTION_CONFORMITY   note 10.00  poids 0.14
+        L'action est-elle proportionnée, conforme et exécutable ?
+        Qualification sous 'SOUS_24H', proportionnée à la sévérité WARNING ; intervention réalisable équipement en service, conforme à l'état exigé par le plan préventif.
+  [OK ] V5_CONFIDENCE          note 10.00  poids 0.15
+        La confiance est-elle calibrée sur les preuves ?
+        Confiance 0,80 cohérente avec les 0,80 justifiables par les preuves disponibles.
+  [OK ] V6_STATE_AWARENESS     note 10.00  poids 0.08
+        L'état de marche est-il respecté ?
+        État RUNNING correctement pris en compte.
+  [OK ] V7_EVIDENCE_COVERAGE   note 10.00  poids 0.05
+        Le fait le plus grave est-il traité ?
+        Les 2 constatation(s) sont reprises dans la décision.
+  [OK ] V8_UNCERTAINTY         note 10.00  poids 0.06
+        Les limites du diagnostic sont-elles énoncées ?
+        Aucune réserve nécessaire : base de mesure complète.
+
+  SYNTHESE : Cohérence interne acceptée : les 8 contrôles sont satisfaits. Valeurs citées conformes aux mesures, sévérité WARNING retrouvée par les mêmes règles, action logiquement proportionnée. Ce résultat ne constitue pas une validation terrain.
+
+==============================================================================
+9. ETAT DU MODELE ET DE LA CHAINE
+==============================================================================
+source du modele        : runtime_trained_unpromoted
+statut de promotion     : None
+motif de refus          : statut 'candidate' non autorisé au runtime
+mode de l'agent         : rules
+mode du controleur      : deterministic
+
+==============================================================================
+10. BACKTEST ET PORTES DE DEPLOIEMENT
+==============================================================================
+revendication : non démontrable avec le corpus disponible; aucune AUC, précision, rappel ou réduction de panne revendiquée
+
+PORTES DE DEPLOIEMENT :
+  [PASSE] causalite_temporelle
+        evidence : aucun décalage négatif ni fenêtre centrée dans le code exécutable de `src`, gouvernance comprise ; chaîne reconstruite et vérifiée sur trois troncatures du corpus (40, 60, 80 %)
+  [PASSE] redondance_features
+        evidence : 0 paire(s) redondante(s) entre grandeurs du modèle ; conditionnement 3,09
+  [ECHEC] redondance_hors_modele
+        evidence : 2 grandeur(s) du modèle redondante(s) avec une variable régulée hors modèle — la plus forte : regulation_effort_z contre control_deviation, r = -0,938. Propriété algébrique permanente établie par ADR-001, non corrigeable par une modification de code : publiée, jamais bloquante. Le résidu d'effort est conservé sous le nom `regulation_effort` et ne fonde aucun diagnostic d'encrassement.
+  [PASSE] stabilite_hors_periode
+        evidence : alertes moyennes 7,8 % hors période de référence, pour 15,0 % admis · dispersion du seuil 0,001
+  [ECHEC] derive_de_distribution
+        evidence : aucun des 4 plis n'est mesurable. Seuls comptent les plis dont la fenêtre de test reste dans la plage d'eau de mer vue à l'apprentissage : ailleurs le PSI mesure l'année incomplète de la fenêtre croissante, non une dérive du modèle — il vaut 3,183 sur le pli qui extrapole le plus, et le plus tardif, qui n'extrapole pas, est le plus stable. Le seuil vient du scoring de crédit, où les populations comparées sont supposées échangeables ; son transfert à des scores d'anomalie non supervisés n'est pas argumenté. Mesure publiée, non bloquante.
+  [ECHEC] labels_gmao
+        evidence : aucune date de panne ou d'intervention dans le corpus disponible
+  [ECHEC] validation_externe
+        evidence : aucune annotation indépendante — limite définitive du corpus
+
+BACKTEST TEMPOREL : 4 plis
+  {'fold': 1, 'train_period': ['2024-01-02 07:00:00', '2024-03-25 03:00:00'], 'reference_train_period': ['2024-01-01 07:00:00', '2024-03-25 03:00:00'], 'test_period': ['2024-03-26 04:00:00', '2024-06-18 23:00:00'], 'n_train': 1055, 'n_test': 1786, 'gap_calendar_hours': 25.0, 'threshold': 0.9661, 'test_alert_rate': 0.1607, 'score_psi': 1.9885, 'score_psi_empty_deciles': 0, 'seasonal_extrapolation': 0.7648, 'score_p95': 0.9812, 'causal_pipeline_refit': True}
+  {'fold': 2, 'train_period': ['2024-01-02 07:00:00', '2024-06-17 23:00:00'], 'reference_train_period': ['2024-01-01 07:00:00', '2024-06-17 23:00:00'], 'test_period': ['2024-06-19 00:00:00', '2024-09-10 07:00:00'], 'n_train': 2841, 'n_test': 1837, 'gap_calendar_hours': 25.0, 'threshold': 0.9656, 'test_alert_rate': 0.0441, 'score_psi': 3.1826, 'score_psi_empty_deciles': 1, 'seasonal_extrapolation': 1.0, 'score_p95': 0.9591, 'causal_pipeline_refit': True}
+  {'fold': 3, 'train_period': ['2024-01-02 07:00:00', '2024-09-10 07:00:00'], 'reference_train_period': ['2024-01-01 07:00:00', '2024-09-10 07:00:00'], 'test_period': ['2024-09-11 22:00:00', '2024-12-05 15:00:00'], 'n_train': 4702, 'n_test': 1873, 'gap_calendar_hours': 25.0, 'threshold': 0.9647, 'test_alert_rate': 0.0726, 'score_psi': 0.5796, 'score_psi_empty_deciles': 0, 'seasonal_extrapolation': 0.0523, 'score_p95': 0.9774, 'causal_pipeline_refit': True}
+  {'fold': 4, 'train_period': ['2024-01-02 07:00:00', '2024-12-04 15:00:00'], 'reference_train_period': ['2024-01-01 07:00:00', '2024-12-04 15:00:00'], 'test_period': ['2024-12-05 16:00:00', '2025-02-28 11:00:00'], 'n_train': 6551, 'n_test': 1908, 'gap_calendar_hours': 25.0, 'threshold': 0.9653, 'test_alert_rate': 0.0346, 'score_psi': 0.0681, 'score_psi_empty_deciles': 0, 'seasonal_extrapolation': 0.1279, 'score_p95': 0.9446, 'causal_pipeline_refit': True}
+
+==============================================================================
+11. ANALYSE DE SENSIBILITE
+==============================================================================
+--- CONTAMINATION ---
+  valeur    seuil  taux signal.   ratio   heures
+   0.005   0.9925         1.53%    3.06      135
+    0.01   0.9846         2.76%    2.76      244
+    0.02   0.9643         6.00%     3.0      530
+    0.05   0.8980        14.75%    2.95     1303
+     0.1   0.8143        26.48%    2.65     2339
+  ratio moyen : 2.88   dispersion : 0.41
+
+--- PERIODE DE REFERENCE  (LE RESULTAT LE PLUS IMPORTANT) ---
+ fraction  n ref UA   R2 UA  sigma UA  min trend  h fouling   part %  fin
+     0.25      2208   0.941     0.533      -6.41       4605    52.14  2024-05-14 13:00:00
+      0.4      3505   0.924     0.626      -1.22          0     0.00  2024-07-13 17:00:00
+     0.55      4830   0.953     0.575      -1.35          0     0.00  2024-09-08 00:00:00
+      0.7      6106   0.948     0.632      -1.26          0     0.00  2024-11-04 10:00:00
+
+DISPERSION de la part d'encrassement : 52.14 points
+Part a la fenetre retenue (40 %)     : 0.0 %
+Sensible ?                            : True
+
+==============================================================================
+12. BANC D'INJECTION D'ENCRASSEMENT
+==============================================================================
+scenarios               : 8
+taux de detection brut  : 100.0%
+TAUX DE DETECTION UTILE : 37.5%   (avancement <= 50%)
+AVANCEMENT MEDIAN       : 0.674
+latence mediane         : 562 h
+plus petite perte vue   : 5.0 %
+faux positifs (temoin)  : 0.00% sur 8832 h de marche
+
+DETAIL PAR SCENARIO :
+ perte UA  duree  detecte  avancement  latence  debut
+     5.0%    30j     True         1.0     1617  2024-07-20 17:00:00
+     5.0%    60j     True         1.0     3097  2024-07-20 17:00:00
+    10.0%    30j     True       0.781      562  2024-07-20 17:00:00
+    10.0%    60j     True       0.876     1261  2024-07-20 17:00:00
+    20.0%    30j     True       0.568      409  2024-07-20 17:00:00
+    20.0%    60j     True        0.39      562  2024-07-20 17:00:00
+    30.0%    30j     True       0.478      344  2024-07-20 17:00:00
+    30.0%    60j     True       0.322      464  2024-07-20 17:00:00
+
+==============================================================================
+13. BANC D'EVALUATION DU CONTROLEUR
+==============================================================================
+decisions saines        : 12
+  note moyenne          : 9.91 / 10
+  taux de validation    : 100.0%
+  FAUX POSITIFS         : 0.0%
+cas pieges              : 118
+  note moyenne          : 5.78 / 10
+  RAPPEL (non-regression): 100.0%
+  fautes non sanctionnees: 0
+SEPARATION saines/fautives : 4.13 points
+
+MUTATIONS NON CIBLEES (generalisation) : n=58
+  TAUX DE DETECTION     : 8.6%   <-- LE CHIFFRE HONNETE
+  taux de penalisation  : 1.7%
+  note moyenne          : 9.91 / 10
+
+DETAIL PAR TYPE DE FAUTE :
+                    trap           expected_issue  n  detection_rate  penalty_rate  success_rate  score_mean
+Action sous-dimensionnee        ACTION_UNDERSIZED 12           100.0          75.0          75.0        5.32
+   Severite sous-estimee  SEVERITY_UNDERESTIMATED 10           100.0          80.0          80.0        4.77
+       Action dangereuse            UNSAFE_ACTION 12           100.0         100.0         100.0        4.00
+   Angle mort revendique         BLIND_SPOT_CLAIM 12           100.0         100.0         100.0        4.00
+  Constatations ignorees      INCOMPLETE_COVERAGE 12           100.0         100.0         100.0        9.41
+Diagnostic sans chiffres NO_QUANTITATIVE_EVIDENCE 12           100.0         100.0         100.0        8.13
+   Etat de marche errone           STATE_MISMATCH 12           100.0         100.0         100.0        5.00
+      Mode AMDEC invente      INVENTED_AMDEC_MODE 12           100.0         100.0         100.0        4.00
+           Sur-confiance           OVERCONFIDENCE 12           100.0         100.0         100.0        9.04
+         Valeur inventee       HALLUCINATED_VALUE 12           100.0         100.0         100.0        4.00

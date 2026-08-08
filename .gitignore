@@ -22,6 +22,13 @@ ENV/
 # L'export DCS de reference EST versionne : il fait partie du livrable et
 # permet a quiconque clone le depot de reproduire tous les resultats.
 # Tout le reste (bases, exports intermediaires) ne l'est pas.
+#
+# CE QUE CE CHOIX IMPOSE, ET QUI N'ETAIT ECRIT NULLE PART.
+# `data/raw/DATA.xlsx` porte QUATORZE MOIS d'exploitation reelle d'une
+# installation d'OCP Group. Le versionner n'est acceptable qu'a une condition :
+# LE DEPOT DISTANT DOIT RESTER PRIVE. Le commentaire ci-dessus justifiait le
+# choix sans jamais enoncer sa contrepartie — voir le README, section
+# « Ce depot ne peut pas etre public ». Une publication est irreversible.
 data/*.db
 data/*.db-*
 data/*.sqlite*

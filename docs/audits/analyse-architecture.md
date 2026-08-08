@@ -6277,3 +6277,4060 @@ séance, dont deux fois sur moi.**
 - **D** — rapport, ADR, architecture, runbook, notebook, **+ 4 écarts AMDEC,
   DOC-3, J-2 élargi (lexique et périmètre)**, contrôle 3
 - **E1 puis E2** — dans cet ordre, une seule fois
+
+---
+
+# Reprise de `src/` — lecture intégrale, fichier par fichier
+
+La session précédente avait **diagnostiqué** `src/` sans rien y corriger. Les
+constats y étaient donc ouverts, et ils ont été traités à tort comme acquis.
+Cette section reprend la lecture ligne à ligne, et **corrige au fur et à
+mesure**. Chaque entrée dit ce qui a été lu, ce qui a été trouvé, et ce qui a
+été fait.
+
+## Lot S1 — la couche features (1 384 lignes lues intégralement)
+
+`src/formatting.py` (165) · `src/config.py` (413) · `src/pipeline.py` (403) ·
+`src/features/thermal.py` (411) · `src/features/e7301_features.py` (807)
+
+### S1-0 — `formatting.py` et `config.py` : rien à reprendre
+
+Lus en entier. `formatting.py` n'expose que cinq fonctions, toutes consommées,
+et le repli NaN/None est uniforme. `config.py` tient sa promesse d'en-tête :
+les 44 variables déclarées sont toutes lues quelque part, `validate()` couvre
+chacune d'elles, et `summary()` ne publie aucun chemin absolu. Aucun constat.
+
+### S1-1 — RETRACTATION : `ntu_de()` et `EFFECTIVENESS_MAX` ne sont pas morts
+
+Le diagnostic précédent les déclarait inutilisés. C'est faux, et l'erreur est
+du même type que celle déjà retirée sur `Tag.confidence` : une absence établie
+par recherche de nom au lieu d'être suivie jusqu'à son point d'usage.
+
+- `ntu_de()` est appelée `thermal.py:221`, dans le corps de
+  `overall_conductance` — c'est-à-dire au cœur du calcul de UA.
+- `EFFECTIVENESS_MAX` est lue trois fois, lignes 206, 214 et 217 : la borne du
+  `clip`, le comptage des écrêtages, et le message de journal.
+
+Ce sont des symboles **internes au module**, ce qui explique qu'une recherche
+menée hors de `thermal.py` n'en trouve aucune trace. Constat retiré.
+
+### S1-2 — `fouling_resistance` divergeait sans garde  → corrigé
+
+`Rf = 1/UA − 1/UA_attendu`. `UA_attendu` est une prédiction linéaire **non
+contrainte** : rien dans `np.linalg.lstsq` n'interdit une valeur proche de
+zéro à des conditions extrêmes (débit très bas, eau de mer hors plage), et le
+terme `1/UA_attendu` diverge alors. Une résistance d'encrassement de plusieurs
+milliers de K/kW s'afficherait sur le poste — le tracé `encrassement` la sert
+telle quelle — et se lirait comme un faisceau bouché.
+
+Correction : plancher de 1 kW/K sur les deux termes, deux ordres de grandeur
+sous toute valeur observée sur ce corpus (UA attendu y vaut 14 à 22 kW/K). La
+grandeur devient **indisponible** plutôt que fausse.
+
+### S1-3 — Trois colonnes calculées à chaque heure, lues par personne → retirées
+
+Vérification menée sur `src`, `api`, `tests`, `scripts`, `notebooks`, `docs`,
+extensions `.py .js .html .ipynb .yaml .md` :
+
+| colonne | lecteurs trouvés | verdict |
+|---|---|---|
+| `approach_ratio` | **aucun**, nulle part | retirée |
+| `fouling_resistance_trend_14d` | **aucun**, nulle part | retirée |
+| `duty_per_load` | **un seul** : le test qui vérifie qu'elle existe | retirée |
+
+`approach_ratio` se décrivait elle-même comme un « proxy sans mesure d'eau de
+mer » : c'est précisément ce que la climatologie de Safi (ADR-002) a rendu
+inutile, puisque UA est désormais calculé avec la température du fluide froid.
+C'est un résidu de la conception antérieure à la correction scientifique.
+
+`fouling_resistance_trend_14d` doublait `ua_residual_trend_14d`, seule tendance
+que `FOULING_DRIFT` consulte réellement. En publier deux laissait croire à deux
+critères de dérive là où il n'y en a qu'un.
+
+`duty_per_load` était maintenue en vie par `test_features_de_performance_
+nulles_a_larret`. Le test a été réaligné sur `flow_per_load`, qui est, elle,
+dans `MODEL_FEATURES`. La normalisation à l'allure n'est donc pas perdue.
+
+### S1-4 — API-7 : l'entrée externe et le seul résidu indépendant n'étaient servis nulle part
+
+`/api/timeseries` construit sa liste de colonnes à partir de `raw_aliases`,
+qui ne parcourt que la section `tags` de `tags.yaml`. Or **`T_SEAWATER` est
+déclaré sous `external_inputs`** (ligne 331) : il n'était donc servi par
+aucune route — alors que le poste en connaît déjà le libellé et l'unité
+(`MESURE_LABEL`, `app.js:1592`). L'entrée qui rend UA calculable n'était pas
+traçable, et l'on ne pouvait pas vérifier à l'œil que la saisonnalité de UA la
+suit bien.
+
+Même sort pour la référence d'entrée. `e7301_features.py` la désigne comme
+« le seul indicateur de dégradation indépendant de la variable régulée »
+(r = +0,03 contre −0,94 pour l'effort de régulation) et `t_in_residual_z` est
+l'une des onze `MODEL_FEATURES` — mais ses trois colonnes étaient calculées et
+jamais exposées.
+
+Correction : `T_SEAWATER`, `t_in_expected`, `t_in_residual_z` et
+`t_in_residual_trend_14d` ajoutés à la liste servie; deux familles de signaux
+ajoutées au menu du poste (`entrée · observée / attendue` et
+`source froide · eau de mer`), avec leurs libellés et unités.
+
+### S1-5 — M-2 : deux derniers résidus de « jumeau »  → corrigés
+
+`e7301_features.py:2` (titre du module) et `:599` (docstring de
+`add_dynamic_features`, « là où le jumeau capte les dérives lentes »). Ce sont
+les deux dernières occurrences du vocabulaire abandonné dans la couche
+features; elles sont remplacées par la désignation des références réelles.
+
+## Lot S2 — ingestion et domaine (1 433 lignes lues intégralement)
+
+`src/ingest/dcs_loader.py` (586) · `src/domain/knowledge.py` (849)
+
+### S2-1 — D-1 confirmé : le chemin absolu passait par une autre porte → corrigé
+
+`config.summary()` relativise délibérément tous ses chemins, et le commentaire
+qui le justifie est explicite : « un endpoint de diagnostic n'a aucune raison
+de divulguer l'arborescence de la machine hôte, son nom d'utilisateur ni sa
+structure de répertoires ». Le rapport d'ingestion publiait `str(path)` tel
+quel — et il est servi par `/api/health` à travers `health_report()`. La
+correction faite sur `/api/config` était donc contournée par la route voisine.
+Même relativisation appliquée.
+
+### S2-2 — Le référentiel et le code divergeaient sur la classification d'état → corrigé
+
+`tags.yaml/process_states` annonçait `T_ACID_IN < 60` comme critère de
+**TRANSIENT**. `classify_process_state` le place parmi les critères
+d'**arrêt** — ce que dit d'ailleurs le nom de la clé qui le porte,
+`T_ACID_IN.shutdown_below`, et le commentaire qui l'accompagne
+(« ce seuil gouverne la classification d'état de marche »). Le critère de
+reprise après arrêt (`is_down.shift(1)`) ne figurait pas du tout dans la prose.
+
+C'est la décision la plus déterminante du système — elle décide quelles heures
+sont jugeables — et sa description publique ne correspondait pas à son
+exécution. Les trois règles de `process_states` disent maintenant exactement ce
+que fait le code. Aucun test n'en dépendait, ce qui explique la dérive.
+
+### S2-3 — `fillna(0)` sur les entrées de classification : conservé, mais énoncé
+
+Le module s'interdit partout d'inventer une donnée, et `classify_process_state`
+remplit pourtant les manquants par zéro — ce qui déclare STOPPED. Vérifié :
+la fonction est appelée deux fois, et au second appel les NaN sont ceux que la
+détection de défaut capteur vient de poser. Le zéro tranche donc l'indécision
+dans le sens qui **exclut** l'heure du jugement de performance, seul sens
+acceptable.
+
+Décision : ne pas changer le comportement — la modification déplacerait des
+heures vers RUNNING, donc déplacerait la borne de `reference_cutoff`, qui
+compte les heures de marche — mais **écrire le raisonnement dans le code**,
+avec son prix : ces heures s'affichent « ligne à l'arrêt » alors qu'elles sont
+des heures de mesure indisponible.
+
+### S2-4 — K-1 vérifié surface par surface
+
+| surface | lecteurs | décision |
+|---|---|---|
+| `bareme_gravite` / `frequence` / `detection` | **aucun** | **publiées** |
+| `Tag.criticality_link` (5 tags le portent) | **aucun** | **publié** |
+| `FailureMode.immediate_severity` (2 modes) | **aucun** | publié, à instruire |
+| `process_states` | **aucun** | **publié** |
+| `components_for_mode()` | **aucun** | supprimée |
+| `modes_for_component()` | `judge_agent.py:672` | conservée |
+| `locate_finding()` | tests seuls | conservée, voir S2-6 |
+
+Les trois barèmes sont transcrits des onglets **GRV, OCC et DET** du classeur
+AMDEC d'OCP. Ce sont eux qui donnent un sens à « G = 7 » ou « N = 5 », donc à
+chacune des treize criticités affichées. Les charger sans jamais les montrer
+revenait à publier des nombres que rien ne définit, alors que le référentiel
+porte leur définition exacte. `/api/equipment` les sert désormais, et chaque
+ligne AMDEC cite son échelon en infobulle.
+
+`criticality_link` rattache cinq capteurs à un mode de défaillance, avec le
+raisonnement en clair dans `tags.yaml` (« 904L : la vitesse de corrosion en
+H2SO4 98 % croît fortement au-delà de 110 °C — Réf AMDEC :
+FAISCEAU_CORROSION »). Le tiroir capteur énonçait des seuils sans jamais dire
+quel risque le capteur sert à couvrir. Il le dit maintenant, dans les deux
+routes qui décrivent un capteur.
+
+### S2-5 — L'écran démentait la correction serveur sur l'observabilité → corrigé
+
+`api/main.py` publie `observabilite` à trois valeurs depuis une correction dont
+le commentaire dit le motif : « le booléen seul faisait afficher *non — angle
+mort* sur des modes que le détecteur rattache activement à des constatations ».
+
+`app.js:1397` lisait toujours `m.observable ? "oui" : "non — angle mort"`.
+
+C'est le seizième cas — et le plus visible — du motif établi par cet audit :
+**corrigé d'un côté, pas de son jumeau, et c'est toujours le code de service
+qui porte la version juste et l'affichage la version périmée**. Ici la
+conséquence est directe : la table AMDEC affichait « angle mort » sur la
+corrosion du faisceau et la fuite de calandre, deux modes que le moteur de
+règles déclenche. La colonne a maintenant les trois états, avec l'aide qui dit
+ce que « partielle » implique.
+
+### S2-6 — `locate_finding` : vérifié, ce n'est pas un doublon fautif
+
+Le front ne réimplémente pas une règle : `twinStateFrom` fait la même lecture
+directe de `finding_map`, table gouvernée servie par `/api/topology`, avec la
+même garde (« un code inconnu n'allume rien »). Les deux côtés lisent la même
+source; la mise en évidence 3D est nécessairement cliente. Aucune correction.
+
+## Lot S3 — le détecteur (1 334 lignes lues intégralement)
+
+`src/models/detector.py`
+
+### S3-1 — M-1 confirmé : le seul endroit du dépôt qui enfreignait sa propre règle → corrigé
+
+`_fouling_warning_sigma` écrivait :
+
+```python
+seuil = (mode.signature.get("warning_sigma") if mode else None) or 3.0
+return max(float(seuil), DRIFT_Z_THRESHOLD)
+```
+
+Deux fautes superposées sur six lignes.
+
+L'idiome `or` est exactement celui que `src.domain.knowledge.seuil` existe
+pour abolir — sa docstring dit « le repli teste l'absence, pas la fausseté »
+et recense les douze endroits où il avait été remplacé. Le module importe
+d'ailleurs `seuil` ligne 49 et l'emploie correctement **huit fois** ailleurs :
+lignes 256, 257, 461, 462, 537, 538, 564, 565.
+
+Et la variable locale s'appelait `seuil`, masquant donc la fonction importée
+dans cette portée : la fonction qui corrige le défaut était inaccessible sous
+son propre nom, à l'endroit précis où le défaut se reproduisait.
+
+**Preuve par mutation** (les deux implémentations comparées hors dépôt) :
+
+| `warning_sigma` gouverné | ancien | nouveau |
+|---|---|---|
+| absent | 3,0 | 3,0 |
+| 2,5 | 2,5 | 2,5 |
+| **0** | **3,0** | **1,5** |
+
+Un `warning_sigma: 0` — réglage parfaitement légitime, signifiant « toute
+perte de coefficient d'échange persistante passe en WARNING » — était
+silencieusement remplacé par 3,0. C'est précisément le scénario que la
+fonction `seuil` documente.
+
+### S3-2 — La correction de la fenêtre n'avait pas été portée jusqu'à la preuve publiée → corrigé
+
+Le commentaire de `_rule_thermal_drift` explique, sur huit lignes, que
+`persistance_h` « publiait un nombre de lignes sous un nom d'heures », et la
+fenêtre est bien devenue calendaire. Mais la preuve valait toujours
+`len(recent)` : le nombre d'heures **où la tendance était calculable** dans la
+fenêtre — donc toujours un compte de lignes, sous toujours le même nom.
+
+Trois champs distincts remplacent le champ ambigu : `fenetre_h` (constante
+calendaire), `heures_mesurees_dans_la_fenetre`, `part_sous_le_seuil`. Aucun
+consommateur n'existait pour `persistance_h`, vérifié sur tout le dépôt.
+
+### S3-3 — M-2 : la classe documentait un paramètre qui n'existe pas → corrigé
+
+`CoolerAnomalyDetector` documentait, dans ses `Attributes` **et** dans les
+`Args` de `__init__`, un paramètre `twin: Jumeau thermique`. Le paramètre
+réel s'appelle `references` et n'était documenté nulle part. La signature
+décrivait donc un argument absent et taisait celui qu'elle accepte.
+
+### S3-4 — Le cache de scores ne distinguait pas deux tables → corrigé
+
+La clé valait `(longueur, premier horodatage, dernier horodatage)`. Deux
+tables construites sur la même période, avec le même nombre de lignes et des
+**valeurs différentes**, recevaient la même clé — et la seconde se voyait
+servir les scores de la première.
+
+C'est exactement ce que produit le banc d'injection d'encrassement, qui
+superpose une rampe aux données réelles sans toucher à l'index. Vérifié :
+`FoulingInjectionBench` n'exploite pas ce chemin, parce qu'il évalue le
+prédicat de la règle déterministe (`_fouling_hours`) et ne sollicite jamais
+l'étage statistique. Le piège ne se déclenche donc pas aujourd'hui — mais il
+rendrait un résultat **faux sans rien signaler**, et rien ne garantit que le
+banc restera déterministe. La clé intègre désormais une empreinte du contenu
+(somme des features du modèle, ~1 ms sur dix mille lignes contre plusieurs
+dizaines pour la forêt que le cache évite).
+
+### S3-5 — `severite_immediate` : détermination de gouvernance sans effet → verrouillée
+
+`amdec.yaml` déclare `signature.severite_immediate` pour deux modes —
+CRITICAL pour FAISCEAU_FUITE, WARNING pour CAPTEUR_DEFAILLANT — et
+`FailureMode.immediate_severity` la charge. **Aucun appelant ne la lisait.**
+Le service fiabilité pouvait la corriger dans le référentiel sans qu'aucune
+alerte ne change.
+
+L'appliquer comme plancher aurait cassé une gradation voulue : `CONC_DROP`
+est délibérément WARNING (« à confirmer par prélèvement laboratoire ») tout en
+portant FAISCEAU_FUITE. La sémantique juste est donc : la sévérité déclarée
+est celle que le mode atteint **au plus haut**.
+
+C'est ce qu'établit désormais un test par analyse du source de `RuleEngine` —
+le patron déjà employé sept fois dans le dépôt. Il lit les `Finding(...)`
+construits, apparie `amdec_mode` et `severity`, compare au référentiel.
+Mesuré à l'écriture :
+
+| mode | sévérités émises | plafond | AMDEC |
+|---|---|---|---|
+| FAISCEAU_FUITE | WARNING, CRITICAL | CRITICAL | CRITICAL ✓ |
+| CAPTEUR_DEFAILLANT | WARNING | WARNING | WARNING ✓ |
+
+Limite énoncée : le test verrouille le **plafond collectif** d'un mode. Deux
+règles portant FAISCEAU_FUITE en CRITICAL, abaisser l'une des deux ne le fait
+pas échouer. Il interdit la dérive du référentiel et l'abaissement complet
+d'un mode, pas la modification d'une règle isolée.
+
+### S3-6 — Constat mineur, non corrigé
+
+`test_agregation_en_episodes` affirme `ep["score_max"].is_monotonic_decreasing`
+alors que `episodes()` trie sur `margin_max` depuis la correction de la
+saturation du score. Les deux grandeurs étant monotones en score brut,
+l'assertion reste vraie — mais elle vérifie une propriété de l'ancienne clé de
+tri, et le score sature, donc elle passe surtout par égalités. Elle ne protège
+plus grand-chose. Signalée, pas réécrite : elle n'est pas fausse.
+
+## Lot S4 — l'agent de détection (780 lignes lues intégralement)
+
+`src/agents/detection_agent.py`
+
+### S4-1 — A-1 confirmé, et le contrôle échantillonnait la population complémentaire
+
+`_quote_measurements` rendait :
+
+> « entree acide 94.23 degC, sortie acide 65.91 degC, debit acide 56.40 m3/h »
+
+Trois fautes cumulées — libellés sans accents, unités en ASCII là où le
+référentiel et le poste écrivent « °C » et « m³/h », point décimal anglais.
+
+**Pourquoi rien ne l'a vu.** Cette fonction n'est appelée que par la branche
+NOMINALE de `_nominal_decision`, c'est-à-dire quand il n'y a **aucune**
+constatation actionnable. Or `test_les_messages_de_detection_sont_accentues`
+échantillonne `notable_timestamps(12)` — par construction, exactement les
+instants qui en portent une. Le contrôle inspectait le complémentaire de la
+population qui peut déclencher le défaut.
+
+Et même échantillonné, il l'aurait laissé passer : `entree` et `debit` ne
+figuraient pas dans le lexique des 44 mots. Deux verrous manquants sur le même
+texte, qui est pourtant la phrase la plus fréquemment produite du système —
+l'immense majorité des heures de marche établie sont nominales.
+
+Corrigé aux trois niveaux : la fonction, le lexique (7 mots ajoutés, dont les
+3 déjà relevés en J-2), et un test dédié aux instants nominaux.
+
+### S4-2 — LE PLUS GROS ANGLE MORT TYPOGRAPHIQUE DU DÉPÔT
+
+En cherchant l'origine de S4-1, un défaut plus large est apparu.
+
+`src/formatting.py` s'ouvre sur : « un test parcourt les sorties du système
+pour vérifier qu'aucun nombre n'échappe à la règle ». **C'était faux pour la
+plus grande surface de texte du projet.**
+
+Les vingt-trois messages du moteur de règles formataient leurs valeurs par
+f-string — `f"...{t_out:.1f} °C"` — et rendaient donc « 66.3 °C ». Ces
+messages remplissent le journal du rejeu, la carte de diagnostic, le registre
+d'alarmes et les courriels d'escalade.
+
+**Deux tests se partagent la typographie, et chacun couvrait une moitié
+différente sur une population différente :**
+
+| test | cherche | échantillonne |
+|---|---|---|
+| `..._messages_de_detection_sont_accentues` | accents | constatations ✓ |
+| `..._aucun_point_decimal_dans_les_textes_affiches` | point décimal | indicateurs, sensibilité, backtest — **jamais une constatation** |
+
+L'intersection était vide. C'est le même motif que S4-1, un cran au-dessus :
+non pas une branche non échantillonnée, mais **un croisement de critère et de
+population que personne n'avait fermé**.
+
+Corrigé : helper `_n()` adossé à `src.formatting`, 23 sites convertis dans
+`detector.py`, `_pretty` réécrite, `m3/h` → `m³/h`, et le contrôle du point
+décimal étendu aux constatations, diagnostics, raisonnements et actions.
+
+### S4-3 — A-2 : une réponse mal formée coupait le LLM pour tout le processus
+
+Le coupe-circuit s'ouvrait sur `Exception` et posait `self.llm = None`
+définitivement. Un unique JSON tronqué — le mode d'échec le plus banal d'un
+modèle de langage, celui que `_extract_json` est écrit pour rencontrer —
+désactivait donc la rédaction pour toutes les heures suivantes, en
+journalisant « Agent LLM indisponible », ce qui était faux : le service
+répondait.
+
+Conséquence directe sur la démonstration : le premier point mal rendu
+basculait toute la session en mode règles, et l'apport du LLM devenait
+inobservable sans qu'on sache pourquoi.
+
+Les deux familles sont désormais distinguées. Réponse inexploitable
+(`ValueError`, `JSONDecodeError`, `KeyError`, `TypeError`, `ValidationError`)
+→ repli sur cet instant, **circuit maintenu fermé**. Panne franche → circuit
+ouvert, comme avant.
+
+### S4-4 — A-3 : trois paramètres documentés et jamais lus
+
+`compose(result, case)` recevait le dossier de faits et ne le lisait jamais :
+le corps entier travaille sur `result`. Le paramètre disait le contraire de ce
+que la classe fait, et laissait croire que le compositeur déterministe et le
+LLM partagent la même entrée — seul le second lit le dossier.
+
+Le coût n'était pas nul : `analyze()` appelait `build_case_file` **avant** de
+savoir si le LLM allait servir, donc à chaque instant du rejeu, y compris en
+mode règles seules. Sa construction parcourt les modes AMDEC et le plan
+préventif. Il n'est plus assemblé que si la rédaction va l'utiliser.
+
+`_calibrate_confidence(result, lead, mode)` : `lead` et `mode` inutilisés
+également. Le premier était annoté « conservée pour la signature » — l'aveu
+qu'il ne servait à rien; le second n'avait même pas cet aveu.
+
+### S4-5 — A-5 : la même distinction, lue d'un côté et écrite en dur de l'autre
+
+`_build_action` tranchait « instrumentation ou équipement » par
+`mode.code == "CAPTEUR_DEFAILLANT"`. Or `_priorite`, dans le même fichier,
+tranche exactement la même question en lisant `sous_equipement` dans le
+référentiel — avec un commentaire disant que la distinction « est lue dans le
+référentiel, pas écrite ici ».
+
+Ajouter un second mode d'instrumentation dans `amdec.yaml` l'aurait fait
+trier comme un défaut de mesure par l'une, et adresser au service mécanique
+par l'autre. Les deux lisent maintenant la même clé.
+
+## Lot S5 — le contrôleur (1 290 lignes lues intégralement)
+
+`src/agents/judge_agent.py` · `src/agents/schemas.py` (surfaces concernées)
+
+### S5-1 — La correction typographique de S4-2 aurait cassé V1 en silence
+
+`_extract_numbers` lit les nombres du diagnostic pour vérifier qu'ils sont
+rattachables aux faits. Son motif s'arrête à l'espace. Or `src.formatting`
+écrit dix mille cent quatre-vingt-deux « 10 182 », avec une espace insécable
+étroite (U+202F).
+
+**Preuve par mutation :**
+
+| texte | ancien lecteur | nouveau |
+|---|---|---|
+| `Puissance évacuée 10 182 kW` | `[10, 182]` | `[10182]` |
+| `Titre acide à 98,36 %` | `[98.36]` | `[98.36]` |
+
+Ni 10 ni 182 ne figurent dans les faits : V1 aurait signalé « nombres non
+rattachables aux mesures » sur un diagnostic parfaitement exact, et plafonné
+sa note à 5/10.
+
+Le cas ne se présentait pas tant que les messages étaient en notation
+anglaise — c'est-à-dire tant qu'ils étaient fautifs. **Corriger l'affichage
+sans corriger le lecteur aurait transformé un défaut de forme en faux positif
+de gouvernance.** C'est le risque propre à ce type de correction, et il n'était
+signalé nulle part.
+
+### S5-2 — Troisième surface du même angle mort typographique
+
+Les détails des huit contrôles citaient « 0.85 annonce contre 0.70 » et
+« annonce 66.3, mesure 66.1 », et quatre libellés sur huit étaient sans
+accents — « Les valeurs citees correspondent-elles aux mesures reelles ? ».
+C'est le texte de l'encart « Réserves du contrôleur », seul endroit où une
+anomalie de calibration est présentée à l'exploitant.
+
+`test_les_controles_du_juge_sont_accentues` les regardait déjà — mais ne
+cherchait, là encore, que des accents. Le contrôle du point décimal leur est
+étendu, ainsi qu'à la synthèse du verdict.
+
+### S5-3 — J-1, J-4, J-5 : trois surfaces mortes, dont deux pires que mortes
+
+`Check.issue_code` — propriété annoncée « pour compatibilité d'affichage »,
+rendant le premier élément de `issue_codes`. Aucun appelant, aucun test, et
+aucun affichage : le poste lit la liste entière. V4 cumule jusqu'à quatre
+codes; n'en exposer qu'un les aurait masqués. **Supprimée.**
+
+`JudgeVerdict.validation_scope` — un `Literal` à **une seule** valeur admise,
+avec cette valeur pour défaut. Un champ qui ne peut rien porter d'autre qu'une
+constante. **Supprimé.**
+
+`JudgeVerdict.uncertainty_level` — déclaré à trois valeurs, ne valait jamais
+que `"high"`, ni au défaut ni au seul site de construction. Ce n'est pas une
+simple redondance : **annoncer un champ à trois états laisse entendre que le
+contrôleur pourrait, dans de bonnes conditions, descendre à `"low"`.** C'est
+exactement la sur-promesse contre laquelle tout l'en-tête du module met en
+garde — l'incertitude du Judge est structurelle, il recalcule avec les mêmes
+données et les mêmes référentiels, et aucune combinaison de résultats ne la
+fait baisser. **Supprimé**; l'énoncé survit dans `limitations`, en toutes
+lettres et sans graduation implicite.
+
+## Lot S6 — le banc d'évaluation du Judge (700 lignes lues intégralement)
+
+`src/governance/judge_eval.py` · `src/agents/schemas.py` (surfaces concernées)
+
+### S6-1 — Le banc se déclare reproductible et laissait le LLM décider
+
+`__init__` fixe la graine avec ce motif explicite : « les mutations non ciblées
+doivent être reproductibles, **sinon le chiffre de généralisation change à
+chaque exécution** ».
+
+Trois lignes plus bas, `agent.analyze(detection)` et `judge.judge(...)`
+prenaient leur défaut `use_llm=True`.
+
+Conséquence dès qu'une clé Gemini est présente : la décision **saine** est
+rédigée par le modèle, et le Judge s'autorise un ajustement de ±1,5 point sur
+**chaque** verdict — sain comme muté. Or `penalised` compare la note mutée à la
+note saine, et `separation` est la différence des moyennes. Les deux chiffres
+que le rapport publie devenaient aléatoires, et la graine n'y changeait rien :
+elle ne gouverne que le tirage des mutations.
+
+Le banc mesure les huit contrôles **déterministes**. La couche de rédaction
+n'entre pas dans son objet, et sa présence rendait le résultat indémontrable.
+`use_llm=False` sur les trois sites.
+
+### S6-2 — Le dénominateur du chiffre de généralisation contenait des non-événements
+
+`wrong_checklist` rend la décision **inchangée** quand `checklist_ref` ne vaut
+ni `INSPECTION_EXTERNE` ni `INSPECTION_INTERNE` — cas fréquent, le champ étant
+facultatif. Le verdict était alors identique à celui de la décision saine, donc
+`caught=False`, `penalised=False`, et la ligne entrait au dénominateur.
+
+Le chiffre publié comme « mesure honnête de ce que le Judge attrape sans
+l'avoir anticipé » comptait donc des essais **où rien n'avait été tenté**.
+
+Le biais va dans le sens de la prudence — il abaisse le taux — mais un banc
+dont le dénominateur contient des non-événements ne mesure pas ce qu'il
+annonce, et le sens du biais n'y change rien. La comparaison se fait désormais
+sur le contenu sérialisé (`_clone` produit toujours un objet distinct, même
+quand il recopie à l'identique), et la lecture publiée dit ce qui est écarté.
+
+### S6-3 — Trois orthographes du même service, dont la valeur par défaut
+
+| fichier | chaîne |
+|---|---|
+| `schemas.py` (défaut de `responsible`) | `Service Mecanique PS III` |
+| `detection_agent.py` (`_build_action`) | `Service Mécanique PS III` |
+| `judge_eval.py` (mutation) | `Service Mecanique PS III` |
+
+Et la décision **nominale** ne renseigne pas ce champ : elle prend le défaut, et
+affichait donc « Mecanique » à l'exploitant sur la formulation la plus
+fréquente du système. **Même angle mort que `_quote_measurements`, au même
+endroit, invisible au contrôle typographique** puisque « mecanique » ne figure
+pas dans son lexique.
+
+La mutation `wrong_responsible` basculait par ailleurs sur `"Instrumentation"
+in courant` — une comparaison par sous-chaîne là où deux constantes suffisent.
+Les deux noms vivent maintenant une seule fois, dans `schemas.py`, accentués,
+et les trois fichiers les lisent.
+
+### S6-4 — Un test qui n'acceptait la lecture que si elle était mal écrite
+
+`test_les_mutations_non_ciblees_mesurent_la_generalisation` se terminait par
+`assert "honnete" in blind["reading"]`. Il a échoué à la seconde où ce texte a
+été correctement accentué.
+
+C'est le défaut exact que documente `src.formatting.sans_accents` : le contrôle
+V8 cherchait « reserve », « defaut », « degrade » dans des textes accentués et
+échouait sur 100 % des heures hors marche. Ici, le même piège du côté des
+tests — un contrôle qui verrouille la faute au lieu du fond.
+
+| | texte accentué |
+|---|---|
+| `"honnete" in reading` | **False** |
+| `"honnete" in sans_accents(reading)` | True |
+
+La règle du dépôt est désormais appliquée des deux côtés : le texte **comparé**
+est dépouillé, le texte **affiché** est accentué. L'assertion a été renforcée
+au passage — elle exige aussi que la lecture mentionne le dénominateur, sans
+quoi le chiffre de S6-2 redeviendrait ininterprétable.
+
+## Lot S7 — le banc d'injection d'encrassement (467 lignes lues intégralement)
+
+`src/governance/fouling_injection.py`
+
+### S7-1 — Une fenêtre pouvait être « calme » parce que la ligne était à l'arrêt
+
+`_quiet_start` cherche une fenêtre où la règle ne se déclenche pas sur les
+données réelles, pour que la détection mesurée soit attribuable à la rampe.
+Son unique critère était `not window.any()` — l'absence de déclenchement.
+
+Or les deux bouts de la chaîne exigent la marche établie :
+
+- `_fouling_hours` filtre sur `process_state == "RUNNING"` ;
+- `inject_fouling` n'altère que les heures de marche
+  (`effect = advancement.where(running, 0.0)`).
+
+**Un arrêt de ligne satisfait donc le critère de calme sans pouvoir rien
+porter.** La rampe n'y modifie aucune température, la règle ne peut pas s'y
+déclencher, et le scénario était pourtant enregistré « NON DÉTECTÉE ».
+
+C'est exactement le défaut relevé en S6-2 sur le banc du Judge, dans un autre
+module et pour un autre chiffre : **un dénominateur qui contient des essais où
+rien n'a été tenté.** Ici il abaisse le taux de détection et dégrade
+l'avancement médian publié. Le biais est prudent — et un chiffre faussé dans le
+bon sens reste un chiffre faussé, d'autant qu'il figure dans le rapport.
+
+Correction : la moitié au moins de la fenêtre doit être en marche établie. Le
+corpus compte 1 385 heures d'arrêt sur 10 182, réparties en épisodes : la
+contrainte reste satisfiable. La limite est publiée dans `limitations`.
+
+### S7-2 — « Le détecteur n'est pas réentraîné » : vrai par accident, pas par construction
+
+`to_dict()` annonçait « le détecteur n'est pas réentraîné sur les données
+modifiées ». L'Isolation Forest ne l'est pas — le banc ne le sollicite jamais,
+il évalue le prédicat déterministe. Mais `build_features(injected, ...)` **réajuste
+les trois références thermiques** sur la table injectée.
+
+Vérifié : la fenêtre d'apprentissage s'achève à `ref_end`, et la rampe démarre
+au plus tôt à `ref_end + 7 jours`. Les références ne voient donc effectivement
+aucune donnée modifiée. **Mais c'est une conséquence du placement de la rampe,
+pas une propriété du code** : rapprocher le début de la rampe ferait apprendre
+aux références la dégradation qu'elles doivent révéler, sans qu'aucun garde-fou
+ne le signale. L'énoncé dit maintenant ce qui se passe réellement.
+
+## Lot S8 — l'analyse de sensibilité (265 lignes lues intégralement)
+
+`src/governance/sensitivity.py` · `src/features/thermal.py` (docstring)
+
+### S8-1 — Une revendication de non-divergence, démentie par le module qu'elle cite
+
+`thermal.reference_cutoff` porte cette phrase dans sa docstring :
+
+> « La formule reprend celle de `src.governance.sensitivity`, qui coupait déjà
+> sur les heures de marche : **les deux modules ne peuvent plus diverger.** »
+
+Ils divergeaient au moment même où la phrase a été écrite.
+
+```python
+# thermal.reference_cutoff
+position = max(0, int(len(running) * fraction) - 1)
+
+# sensitivity.reference_period_sensitivity
+cut = running_index[int(len(running_index) * fraction) - 1]
+```
+
+La garde `max(0, ...)` manque du second. **Preuve par mutation :**
+
+| n heures de marche | fraction | indice ancien | nouveau |
+|---|---|---|---|
+| 8 800 | 0,25 | 2 199 | 2 199 |
+| 8 800 | 0,40 | 3 519 | 3 519 |
+| 120 | 0,005 | **−1** | 0 |
+| 50 | 0,01 | **−1** | 0 |
+
+Un indice `-1` désigne la **dernière** heure de marche : la période de référence
+devient le corpus entier, et la référence apprend comme normale la dégradation
+qu'elle doit révéler. En silence — et précisément dans l'analyse dont l'objet
+est de chiffrer l'effet de cette fenêtre.
+
+La grille actuelle ne l'atteint jamais. Ce n'est pas le point : **reprendre une
+formule n'est pas la partager.** `sensitivity` appelle maintenant
+`reference_cutoff`, et la docstring dit ce qui s'est réellement passé.
+
+### S8-2 — Trois écritures de la même convention, dans le module qui la mesure
+
+`contamination_sensitivity` se repliait sur `matrix.iloc[: len(matrix) // 2]`,
+soit **50 %**, quand tout le reste du système s'arrête à `REFERENCE_FRACTION =
+0.40`. Trois écritures d'une même convention — 0,40 dans `thermal`, la formule
+recopiée plus bas dans ce fichier, 0,50 ici — dans le module dont l'unique
+raison d'être est de mesurer l'effet de cette convention.
+
+### S8-3 — Le raisonnement n'avait été appliqué qu'à une moitié de la fonction
+
+Ligne 151, un commentaire justifie l'import du prédicat d'encrassement :
+« un prédicat recopié dérive de son original ». Dix lignes plus haut, la voie
+« température d'entrée » comparait à `1.5` écrit en dur — la valeur de
+`DRIFT_Z_THRESHOLD`. La voie UA lisait le détecteur, la voie entrée gardait sa
+constante. Les deux lisent maintenant la même source.
+
+## Lot S9 — la traçabilité des artefacts (299 lignes lues intégralement)
+
+`src/governance/lineage.py`
+
+### S9-1 — Un constat de cet audit, introduit PAR cet audit
+
+`EXTERNAL_DATA_GATES = MANDATORY_GATES - SOFTWARE_GATES` a été ajoutée en
+phase 0, par symétrie : puisqu'on séparait les portes qu'une modification de
+code peut casser, il paraissait naturel de nommer les autres.
+
+**Aucun appelant ne l'a jamais lue.** `validate_release.py` n'importe que
+`failed_mandatory_gates` et `failed_software_gates`. C'est exactement le défaut
+retiré partout ailleurs dans ce travail — un nom sans lecteur, qui donne au
+fichier une apparence de complétude et oblige chaque relecture à redémontrer
+qu'il ne sert à rien — et il a été écrit par cet audit. Supprimée ; le
+complément se lit en une soustraction, et le commentaire l'énonce.
+
+### S9-2 — Le refus le plus probable était le moins explicite
+
+`validate_model_manifest` refusait un artefact sur « versions de bibliothèques
+incompatibles », sans nommer un seul paquet.
+
+C'est le refus **le plus probable** de toute la fonction — un `pip install` qui
+monte pandas d'un correctif suffit — et il laissait l'exploitant sans point de
+départ, là où le refus sur Python, six lignes plus haut, cite ses deux valeurs.
+
+| | message |
+|---|---|
+| avant | `versions de bibliothèques incompatibles` |
+| après | `versions de bibliothèques incompatibles — pandas : manifeste=2.2.2, runtime=2.2.3` |
+
+`pipeline._load_compatible_artifact` avait déjà été corrigé sur ce motif exact
+(« UN REFUS DOIT DIRE QUOI FAIRE ») — la correction n'avait pas été portée à la
+cause qu'il rapporte.
+
+### S9-3 — LIN-1 : deux statuts déclarés que rien ne produit — OUVERT
+
+Vérifié sur `src`, `api`, `tests`, `scripts`, `docs` : `validated_offline` et
+`rejected` n'apparaissent nulle part ailleurs que dans `PROMOTION_STATUSES`.
+`build_manifest` écrit toujours `candidate`; seuls les trois statuts de
+`RUNTIME_STATUSES` sont atteignables ensuite.
+
+Le vocabulaire annonce donc un cycle de vie dont le code n'implémente que la
+moitié. Et les deux intrus ne sont pas inoffensifs : `validate_model_manifest`
+les accepte comme statuts **connus**, si bien qu'un manifeste écrit à la main
+annonçant `rejected` franchit le contrôle de vocabulaire avant d'être refusé au
+suivant — pour un motif qui ne dit pas que ce statut n'a jamais pu être produit
+légitimement.
+
+**Non corrigé volontairement.** Trancher exige de lire
+`scripts/promote_model.py` pour savoir si le refus d'une promotion doit
+s'inscrire dans le manifeste ou rester hors artefact. Supprimer `rejected` à
+l'aveugle priverait un modèle refusé de tout moyen de le dire. Le constat est
+consigné, pas résolu.
+
+### S9-3 bis — LIN-1 CLOS après lecture de `scripts/promote_model.py` (199 lignes)
+
+Le constat laissé ouvert au lot précédent est tranché. Le script confirme
+**par deux gardes indépendantes** qu'aucun statut hors `RUNTIME_STATUSES` n'est
+écrivable :
+
+```python
+analyseur.add_argument("--statut", choices=sorted(RUNTIME_STATUSES), ...)
+...
+if statut not in RUNTIME_STATUSES:      # re-vérification dans promouvoir()
+```
+
+Le seul autre producteur est `build_manifest`, qui écrit toujours `candidate`.
+
+Et surtout, les deux statuts n'étaient pas seulement morts, ils étaient
+**redondants avec ce que le manifeste porte déjà** :
+
+| statut fantôme | équivalent déjà présent |
+|---|---|
+| `rejected` | `candidate` + `failed_mandatory_gates` non vide |
+| `validated_offline` | `candidate` + `failed_mandatory_gates` vide |
+
+C'est exactement la doctrine que le script énonce : un refus **ne s'écrit pas**,
+il se constate à l'absence de promotion. Les deux ont été retirés du
+vocabulaire. Effet concret : un manifeste écrit à la main annonçant `rejected`
+était refusé pour « statut non autorisé au runtime » — motif qui laisse croire
+à un réglage. Il l'est maintenant pour « statut de promotion inconnu », ce qui
+est le fait.
+
+**Verrou** (le patron, huitième emploi) —
+`test_tout_statut_de_promotion_declare_est_productible` établit par analyse du
+source qu'il n'existe que deux producteurs et que leur union couvre exactement
+le vocabulaire.
+
+**Preuve par mutation** : réintroduire `"rejected"` dans `PROMOTION_STATUSES`
+fait apparaître un orphelin et le test échoue. Vérifié.
+
+## Lot S10 — les indicateurs d'exploitation (340 lignes lues intégralement)
+
+`src/analytics/kpi.py`
+
+### S10-1 — KPI-1 : un champ devenu constante, et son exemple devenu fantôme
+
+L'en-tête déclare que `evidence_level` sépare `observed` de `derived`, et
+donne pour exemple de `derived` : « énergie évacuée en excès ».
+
+C'est **exactement le chiffre que `overcooling_regime` explique avoir retiré** :
+la méthode consacre douze lignes à dire pourquoi les MWh ont disparu — ils
+« déplaçaient un constat de conduite vers un registre économique que ce projet
+n'a pas les données pour traiter ».
+
+Le seul producteur de `derived` ayant été supprimé, **les six indicateurs
+annonçaient tous `observed`** : le champ ne distinguait plus rien, et sa
+documentation renvoyait à une grandeur qui n'existe plus. Même défaut que
+`uncertainty_level` sur le verdict du Judge (S5-3), à un détail près qui
+l'aggrave — ici le vocabulaire promet une distinction que le module considère
+comme une exigence de probité, pas comme un ornement.
+
+### S10-2 — Et trois résultats de modèle étaient présentés comme des mesures
+
+L'en-tête dit qu'une grandeur `derived` « ne doit **jamais** être présentée
+comme une mesure ». Trois indicateurs le faisaient :
+
+| indicateur | ce qu'il lit | déclarait |
+|---|---|---|
+| `overcooling_regime` | `regulation_effort_trend_14d`, résidu d'une régression apprise | `observed` |
+| `alert_load` | des épisodes issus des scores de l'Isolation Forest | `observed` |
+| `flag_rate` | des scores et un seuil, tous deux appris | `observed` |
+
+Le cas d'`alert_load` est le plus lourd de conséquence : le **« ~5 épisodes par
+mois »** cité ailleurs dans le projet est un résultat de modèle, sensible au
+choix de la période de référence dont `sensitivity` chiffre l'effet — et il
+était étiqueté comme un comptage.
+
+Les cinq figures concernées passent en `derived`; `measurement_availability` et
+`corrosion_exposure` restent `observed`, elles ne lisent que `DATA.xlsx` et
+`tags.yaml`.
+
+**Verrou** (neuvième emploi du patron) —
+`test_le_niveau_de_preuve_distingue_reellement_deux_natures` exige les deux
+natures dans la même restitution, puis vérifie par analyse du source que toute
+méthode lisant une grandeur issue d'un ajustement se déclare `derived`.
+**Preuve par mutation** : remettre `alert_load` en `observed` fait échouer le
+test. Vérifié.
+
+### S10-3 — Le test qui figeait le défaut ne justifiait que la moitié du critère
+
+`test_le_niveau_de_preuve_est_declare_pour_chaque_indicateur` affirmait
+`overcooling_regime().evidence_level == "observed"`, avec ce motif :
+
+> « Le régime de sur-refroidissement se lit sur l'écart de consigne mesuré :
+> c'est une observation. »
+
+L'écart de consigne est bien mesuré — mais ce n'est pas le critère.
+`overcooling_regime` en exige **deux**, et sa propre docstring le dit : « plus
+d'un demi-degré sous consigne **ET** une dérive confirmée de la référence ».
+
+```python
+sustained = (dev < -0.5) & (trend > 1.0)
+```
+
+`trend` est `regulation_effort_trend_14d`, résidu d'une régression apprise sur
+la période de référence — dont `sensitivity` chiffre l'effet du choix. **La
+seconde moitié du critère, celle que la justification passait sous silence, est
+exactement ce qui rend l'indicateur dérivé.**
+
+Retirer les MWh a supprimé un registre économique injustifiable ; cela n'a pas
+transformé la grandeur restante en mesure. Le test a été aligné avec la preuve
+plutôt que l'inverse.
+
+Effet visible : `app.js:1282` sait déjà afficher « grandeur dérivée » contre
+« grandeur observée ». Le poste portait ce libellé sans qu'aucune figure ne
+puisse jamais le déclencher — cinq cartes le porteront désormais.
+
+## Lot S11 — le registre des techniciens (363 lignes lues intégralement)
+
+`src/security/registry.py`
+
+### S11-1 — SEC-1 : le principe était énoncé onze lignes au-dessus des méthodes qui l'enfreignaient
+
+`load()` construit son dictionnaire à part puis le publie d'un coup, avec ce
+motif écrit dans le fichier :
+
+> « Publication ATOMIQUE. **Les accesseurs de lecture ne prennent pas le
+> verrou**; remplir le dictionnaire en place exposait un registre partiellement
+> chargé à un rechargement concurrent. »
+
+`add`, `set_password` et `remove` mutaient pourtant `self._operators` **en
+place** :
+
+```python
+self._operators[normalized] = operator      # add
+self._operators[normalized] = Operator(...) # set_password
+del self._operators[normalized]             # remove
+```
+
+Le verrou protège les écrivains les uns des autres, **pas les lecteurs** —
+c'est la prémisse même du commentaire. Or cinq accesseurs parcourent le
+dictionnaire sans verrou : `emails`, `roles`, `password_hashes`,
+`alert_recipients`, `listing`.
+
+FastAPI sert ses endpoints dans un pool de threads. Un `remove()` concurrent
+d'une authentification levait donc `RuntimeError: dictionary changed size
+during iteration` **au milieu de `password_hashes()`** — c'est-à-dire sur le
+chemin d'ouverture de session, et sur l'action « retirer une habilitation »,
+qu'on exécute précisément quand la situation est tendue.
+
+**Preuve par mutation** (quatre lecteurs, 400 suppressions) :
+
+| | RuntimeError levées |
+|---|---|
+| mutation en place | **4** — `dictionary changed size during iteration` |
+| publication atomique | 0 |
+
+Les trois méthodes passent par `_publier()`, qui construit un dictionnaire
+complet et le substitue par une seule affectation. Un lecteur voit l'ancien
+registre ou le nouveau, jamais un état intermédiaire.
+
+## Lot S12 — la validation du modèle (592 lignes lues intégralement)
+
+`src/governance/model_validation.py` · `api/static/app.js` (surfaces concernées)
+
+### S12-1 — CONSTAT OUVERT TRANCHÉ : le seuil PSI de 0,25, et pire que son origine
+
+Le constat laissé ouvert en phase 0.7 disait que **0,25 est la borne du
+*Population Stability Index* en scoring de crédit et n'a jamais été justifiée
+pour un procédé industriel**. C'est vrai, et ce n'était pas le principal.
+
+La mesure, pli par pli, sur les chiffres de l'artefact publié :
+
+| pli | apprentissage | test | heures de test **hors** de la plage d'eau de mer apprise | PSI |
+|---|---|---|---|---|
+| 1 | jan → 25 mars | 26 mars → 18 juin | 73,8 % | 1,989 |
+| 2 | jan → 17 juin | 19 juin → 10 sept | **100,0 %** | **3,745** |
+| 3 | jan → 10 sept | 11 sept → 5 déc | 5,9 % | 0,580 |
+| 4 | jan → 4 déc | 5 déc → 28 fév | **0,0 %** | **0,068** |
+
+La correspondance est **parfaite et monotone**. Le maximum publié — 3,7446, le
+chiffre que le rapport cite — tombe sur le seul pli dont la fenêtre de test est
+**entièrement** hors de la plage de température d'eau de mer vue à
+l'apprentissage. Le minimum tombe sur le seul pli qui n'extrapole pas.
+
+**Ce que cela réfute.** La preuve affichée par la porte attribuait ce chiffre à
+« deux excursions de sur-refroidissement » entre les deux moitiés de la période.
+Les plis 3 et 4 testent les périodes **les plus tardives**, donc les plus
+éloignées de la référence : cette explication prédit qu'ils dérivent le plus.
+Ils dérivent le moins, d'un facteur **cinquante-cinq**. Affirmation juste par
+ailleurs, écrite à côté de chiffres qui la démentent — le motif du dépôt.
+
+**Ce que cela établit.** Le PSI élevé des premiers plis mesure **l'année
+incomplète de la fenêtre d'apprentissage**. La température d'eau de mer est la
+seule entrée extérieure à toute boucle de régulation (ADR-002) et elle est
+cyclique sur douze mois ; le corpus en couvre quatorze. Un backtest à fenêtre
+croissante ne peut donc **pas**, par construction, offrir plus d'un pli
+saisonnièrement couvert. C'est une propriété du **plan d'expérience**, pas du
+modèle : aucun commit ne la déplacera, et aucun seuil, de quelque domaine qu'il
+vienne, n'est interprétable sur un pli qui extrapole.
+
+**Troisième occurrence du même motif.** Un dénominateur qui contient des essais
+où rien ne pouvait être mesuré : `judge_eval` comptait des mutations qui ne
+mutaient rien (S6-2), `fouling_injection` des fenêtres calmes parce que la ligne
+était à l'arrêt (S7-1), ce banc-ci des plis qui extrapolent. Trois bancs de
+gouvernance, trois fois la même faute, trois chiffres publiés.
+
+Correction : `seasonal_extrapolation` est mesurée et publiée par pli ; la porte
+`derive_de_distribution` ne retient que les plis couverts, et échoue faute de
+pli mesurable s'il n'y en a aucun. Elle reste **non bloquante** — mais le motif
+change : non plus « seuil non justifié » seulement, mais « la mesure n'est
+interprétable que sur un pli sur quatre, et le corpus ne peut pas en offrir
+davantage ». La limite est versée dans `limitations`.
+
+### S12-2 — Le PSI publié comptait des cellules vides multipliées par une constante
+
+`_population_stability_index` écrasait les deux distributions à `1e-6` sous le
+mot **« lissage »**. Sur des déciles de référence — donc `ref_p = 0,1` par
+construction — une seule cellule vide côté observé contribue
+
+```
+(1e-6 − 0,1) × ln(1e-6 / 0,1) = 1,1513
+```
+
+soit, à elle seule, **plus de quatre fois la borne de 0,25 opposée au total**.
+Le maximum publié, 3,7446, vaut 3,25 fois cette contribution.
+
+Et `1e-6` n'est pas une fréquence atteignable : sur les ~1 800 heures d'une
+fenêtre de test, la plus petite fréquence non nulle vaut 5,6 × 10⁻⁴. Le plancher
+est désormais **la moitié d'un comptage** — la correction de continuité usuelle
+— donc rattaché à la taille de l'échantillon au lieu d'être posé.
+
+**Preuve par mutation** (ancienne et nouvelle implémentation comparées) :
+
+| cas | ancien | nouveau | déciles vides |
+|---|---|---|---|
+| distributions identiques | 0,0047 | 0,0047 | 0 |
+| décalage d'un sigma | 0,9165 | 0,9165 | 0 |
+| trois déciles bas jamais visités | 0,0104 | 0,0104 | 0 |
+| **décalage massif** | **8,0542** | **5,7969** | **4** |
+
+Là où aucune cellule n'est vide, le chiffre est **inchangé** : la correction ne
+touche que ce qui était faux. Le nombre de déciles vides est désormais rendu
+avec la valeur — un PSI de 3,7 peut signifier une distribution déplacée ou trois
+déciles jamais visités, et ce n'est pas le même constat.
+
+### S12-3 — `causal_pipeline_refit` était un littéral, et son test le vérifiait
+
+Le fichier consacre onze lignes à dénoncer que `causalite_temporelle` « était un
+littéral `True` : aucune mesure, aucune possibilité d'échec ». Cent-soixante
+lignes plus haut, chaque pli publiait :
+
+```python
+"causal_pipeline_refit": True,
+```
+
+**Le même défaut, un cran plus bas, dans le fichier qui le dénonce.** Et
+`test_backtest_temporel_declare_les_limites` l'affirmait —
+`assert all(fold["causal_pipeline_refit"] ...)` — c'est-à-dire un test qui
+vérifiait une constante et ne pouvait pas échouer.
+
+Le champ mesure désormais les trois choses qui peuvent le démentir : la fin
+d'ajustement des **trois** références, celle du détecteur, et le gap calendaire
+**obtenu**. `gap_calendar_hours` était de même le paramètre reçu republié comme
+un constat ; c'est maintenant la valeur mesurée.
+
+Et surtout : un pli en défaut **n'était agrégé nulle part**. Il ne faisait
+échouer aucune porte. Les manquements de pli remontent maintenant à
+`causalite_temporelle`, qui est dans `MANDATORY_GATES` **et** `SOFTWARE_GATES`.
+
+### S12-4 — Le balayage de non-causalité excluait un répertoire, et ne le disait pas
+
+Le commentaire annonce « **LE PÉRIMÈTRE COUVRE TOUTE LA CHAÎNE, PAS TROIS
+FICHIERS** ». Le code portait `if "governance" not in chemin.parts`, sans un mot
+de justification.
+
+La raison réelle est mécanique : le motif contient l'alternative `backfill`,
+donc **la ligne de source qui porte le motif contient le mot `backfill`**. Le
+balayage se signalait lui-même. Vérifié : les trois seules occurrences dans tout
+`src/`, gouvernance comprise, sont aux lignes 149, 155 et 224 de ce fichier —
+la docstring qui cite `bfill()` et `shift(-1)` pour expliquer ce qu'elle
+cherche, et le littéral du motif.
+
+**Les trois étaient des chaînes de caractères, jamais du code.** Le filtre
+`not ligne.lstrip().startswith("#")` ne voyait ni un commentaire de fin de ligne
+ni le contenu d'une chaîne. Le balayage blanchit désormais littéraux et
+commentaires **par tokenisation**, et l'exclusion tombe : mesuré, le balayage
+sur `src/` entier ne rend aucun résultat.
+
+L'exclusion coûtait cher — `sensitivity.py`, `fouling_injection.py` et
+`judge_eval.py` produisent des chiffres publiés dans le rapport, et un
+`shift(-1)` introduit dans l'un d'eux n'aurait rien déclenché. Un module
+illisible est désormais déclaré **suspect**, jamais ignoré.
+
+### S12-5 — Le seuil de 0,25 écrit deux fois, à onze lignes du commentaire qui l'interdit
+
+`alert_rate_limit` avait été nommé en phase 0.7 « pour que la borne n'existe pas
+en deux exemplaires ». La porte voisine écrivait `0.25` dans son prédicat **et**
+`« pour 0,25 admis »` dans sa preuve. C'est S8-2, dans le fichier qui porte le
+principe. Une seule constante, `PSI_LIMIT`, avec sa provenance en commentaire.
+
+### S12-6 — FRONT : deux portes servies sans intitulé, et la réserve coupée à l'écran
+
+Le serveur publie **sept** portes depuis les phases 0.6 et 0.7. `GATE_LABEL`
+(`app.js`) en connaissait **cinq**. Les deux nouvelles tombaient sur le repli
+`g.gate.replace(/_/g, " ")` et s'affichaient « redondance hors modele » et
+« derive de distribution » — en minuscules et **sans accents**, c'est-à-dire
+exactement le défaut que le commentaire de `renderValidation`, trois lignes plus
+bas, déclare corrigé. **Dix-neuvième occurrence du motif**, toujours dans le
+même sens : le code de service porte la version juste, l'affichage la périmée.
+
+Pire, et jamais relevé : `renderValidation` coupait la preuve à **120
+caractères**. Les preuves font 300 à 500 caractères depuis qu'elles portent leur
+réserve — origine credit-scoring du seuil PSI, caractère algébrique de la
+redondance hors modèle, renvoi à ADR-001 — et **toutes ces phrases sont placées
+après la mesure, donc toutes tombaient**. L'exploitant lisait le chiffre nu,
+sans ce qui le rend défendable. C'est la partie de l'écran qu'un jury lit ligne
+à ligne. Le texte est rendu en entier.
+
+**Verrou** (le patron, dixième emploi) —
+`test_les_portes_publiees_ont_toutes_un_intitule_a_l_ecran` lit par AST les
+littéraux `{"gate": ...}` de `model_validation.py` et les clés de `GATE_LABEL`
+dans `app.js`, et exige l'égalité **dans les deux sens** : une porte sans
+intitulé est un affichage périmé, un intitulé sans porte est une surface morte.
+**Preuve par mutation** : retirer les deux intitulés ajoutés fait apparaître
+`derive_de_distribution` et `redondance_hors_modele`, et le test échoue. Vérifié.
+
+### Conséquences documentaires du lot S12 (pour la phase F1)
+
+- Le rapport cite un **PSI de 3,745** comme mesure de dérive. Ce n'en est pas
+  une : il faut publier le PSI du pli couvert (**0,068**) et dire que les trois
+  autres plis extrapolent.
+- Le nombre de portes publiées est **sept**, dont quatre en échec.
+- Le tableau des plis gagne trois colonnes : `seasonal_extrapolation`,
+  `score_psi_empty_deciles`, `gap_calendar_hours` mesuré.
+- `reports/model_validation.json` et `models/e7301_detector.manifest.json`
+  portent les **anciens** chiffres : ils doivent être régénérés par
+  `scripts/validate_release.py` avant toute relecture du rapport.
+
+### Constat resté OUVERT
+
+`derive_de_distribution` retient les plis à extrapolation **strictement nulle**.
+Le pli 3 en est à 5,9 % et porte un PSI de 0,580. Fixer une tolérance non nulle
+ferait échouer la porte ; la fixer à zéro la fait passer sur un seul pli. **Je
+ne choisis pas un critère en fonction du verdict qu'il produit** : le critère
+retenu est le seul qui se justifie sans référence au résultat — une comparaison
+de distributions n'a de sens que si l'échantillon comparé est dans le domaine
+appris. Mais le fait qu'il ne reste qu'**un pli sur quatre** est une faiblesse
+du corpus, pas une force de la porte, et la preuve affichée doit continuer à le
+dire aussi crûment.
+
+## Lot S13 — l'authentification (300 lignes lues intégralement)
+
+`src/security/auth.py` · surfaces suivies dans `api/main.py`,
+`src/security/registry.py`, `scripts/manage_operators.py`
+
+### S13-1 — SEC-2 : le verrou ne protégeait pas ce que le commentaire croyait protéger
+
+`rotate()` portait ceci :
+
+```python
+with self._lock:
+    # LE JETON CSRF ETAIT REMPLACE HORS VERROU, donc pendant qu'une requete
+    # concurrente pouvait le lire [...] : la rotation faisait echouer des
+    # requetes legitimes.
+    session.csrf_token = secrets.token_urlsafe(24)
+```
+
+**Le diagnostic était juste, le correctif ne le traitait pas.** Déplacer
+l'affectation sous le verrou ne change rien, parce que **le lecteur ne prend
+jamais le verrou**. Suivi jusqu'à son point d'usage — `api/main.py:299` :
+
+```python
+and request.headers.get("X-CSRF-Token") != session.csrf_token
+```
+
+La comparaison porte sur l'objet que `validate()` a rendu, verrou déjà relâché.
+Un verrou sérialise les écrivains entre eux ; il n'a jamais protégé personne
+d'une mutation en place.
+
+**C'est SEC-1 du lot S11, mot pour mot, sur une autre structure.** Le registre
+des techniciens mutait `self._operators` en place sous un commentaire qui
+expliquait onze lignes plus haut pourquoi il ne fallait pas. Ici le commentaire
+est *dans* la méthode fautive. La doctrine établie en S11 est la **publication
+atomique** : on ne modifie pas l'objet que d'autres tiennent, on en publie un
+nouveau. Elle n'avait pas été portée.
+
+Déroulé, avec `/api/auth/refresh` appelé pendant qu'une écriture est en vol :
+la requête A obtient sa session ; la requête B fait tourner le jeton et écrase
+`csrf_token` sur l'objet que A tient toujours ; A compare son en-tête — l'ancien
+jeton — à la valeur nouvelle.
+
+**Preuve par mutation :**
+
+| | requête légitime en vol |
+|---|---|
+| mutation en place | **403 Jeton de session invalide** |
+| publication atomique | **200 OK** |
+
+**Second défaut fermé au passage.** `rotate()` appelait `self.validate()`, qui
+prend puis **relâche** le verrou, avant de le reprendre. Deux rotations
+concurrentes du même jeton produisaient donc **deux cookies valides pour une
+seule ouverture de session**. `threading.Lock` n'étant pas réentrant, la
+validation et la publication tiennent maintenant dans une seule prise de verrou,
+via `_valider_sous_verrou`. Mesuré : la seconde rotation du même jeton rend
+`None`, un seul cookie survit.
+
+### S13-2 — SEC-3 : la politique de mot de passe écrite trois fois, et mal située
+
+| lieu | écriture |
+|---|---|
+| `registry.MIN_PASSWORD_LENGTH` | `12` — la constante nommée |
+| `auth.hash_password` | `if len(password) < 12:` — **en dur** |
+| son message | `« au moins 12 caracteres »` — **en dur, une troisième fois** |
+| `registry.py:335` (commentaire) | `# leve si < 12 caracteres` — une quatrième |
+
+`hash_password` est le **dernier verrou** : `registry.add()` et
+`registry.set_password()` y passent toutes deux. Et la dépendance interdisait de
+faire autrement — `registry` importe `auth`, jamais l'inverse : **le module qui
+applique la règle ne possédait pas la valeur.**
+
+Conséquence mesurable : porter la politique à 14 caractères dans `registry`
+aurait changé ce que `manage_operators.py` exige et ce que `add()` vérifie, et
+laissé `hash_password` accepter 12. **Une politique de mot de passe à moitié
+appliquée, sans que rien ne le signale.** Motif d'A-5 et de S8-2.
+
+La constante vit désormais dans `auth`, et ses deux lecteurs l'y importent.
+Aucun alias n'est laissé dans `registry` : un nom réexporté sans lecteur est
+précisément ce que ce travail retire partout.
+
+### S13-3 — SEC-4 : le seul événement qui signale une attaque taisait sa cible
+
+`LOGIN_RATE_LIMITED` était consigné avec une **chaîne vide** en guise d'adresse.
+Le journal d'authentification disait qu'une limite avait été atteinte, jamais
+**contre quel compte** — alors que `LOGIN_FAILED` et `LOGIN_SUCCEEDED`
+consignent tous deux l'adresse, et que la valeur était dans la portée : seule la
+normalisation était écrite dix lignes plus bas. Elle est remontée avant le
+verrou. Mesuré : `'vise@example.test'` au lieu de `''`.
+
+### S13-4 — Le test verrouillait la faute d'orthographe (troisième occurrence de S6-4)
+
+`test_mot_de_passe_trop_court_refuse` exigeait `match="12 caracteres"`.
+Accentuer « caractères » — ce que la règle du dépôt impose à tout texte affiché
+— le faisait échouer. Le contrôle rendait donc la correction typographique
+impossible sans le modifier.
+
+La règle est appliquée des deux côtés : le texte **comparé** est dépouillé par
+`sans_accents`, le texte **affiché** reste accentué, et le test exige désormais
+les deux. La longueur n'y est plus écrite non plus. Trois chaînes de
+`manage_operators.py` sont accentuées au passage (**SCR-1**).
+
+### S13-5 — Vérifié, sans correction
+
+- **`_purger`** construit ses listes avant de supprimer : pas de mutation en
+  cours d'itération. `defaultdict` crée bien une entrée à la lecture ligne 216,
+  mais elle est périmée au bout de 300 s. Conforme à ce que le commentaire dit.
+- **`client_key`** vaut `request.client.host`, **pas** un en-tête que le client
+  contrôle : la limitation n'est pas contournable par `X-Forwarded-For`.
+  Derrière un reverse proxy, en revanche, tous les clients s'effondreraient sur
+  une seule clé — sans objet sur un poste mono-worker, à retenir si le
+  déploiement change.
+- **`_decoy_hash`** : l'égalisation des temps de réponse est fausse **exactement
+  une fois par processus** — la première tentative sur une adresse inconnue paie
+  deux dérivations, celle du leurre puis la comparaison. La fenêtre est d'un
+  unique essai et n'est pas rejouable ; le préchauffage coûterait une
+  demi-seconde au démarrage sur un poste qui tourne le plus souvent sans
+  authentification. Écart **assumé et écrit dans la docstring**, plutôt que tu.
+- **Le filtre `if role in VALID_ROLES`** de `__init__` dégrade silencieusement
+  un rôle inconnu en `reader`. Ses deux producteurs le valident déjà bruyamment
+  — `registry.load()` depuis le lot S11, `config.validate()` ligne 302 — il
+  n'est donc plus atteignable, et reste comme défense en profondeur.
+
+### Conséquence pour la phase F2 (interface)
+
+**`/api/auth/refresh` n'a aucun appelant dans le poste.** `app.js` lit
+`S.csrf` une fois (ligne 323) au retour de l'authentification et ne le rafraîchit
+jamais. La route est testée et documentée — ce n'est pas une surface morte — mais
+si un exploitant la déclenche hors du poste, la page ouverte enverra
+indéfiniment un jeton périmé. À trancher en F2 : soit le poste consomme la
+rotation, soit la route dit qu'elle est réservée à l'exploitation.
+
+## Lot S14 — le rejeu temps réel (430 lignes lues intégralement)
+
+`src/realtime/replay.py` · surfaces suivies dans `src/pipeline.py`,
+`src/models/detector.py`, `src/agents/judge_agent.py`
+
+### S14-1 — La promesse centrale du projet est VRAIE, et n'est pas tenue ici
+
+L'en-tête affirmait :
+
+> « Le simulateur ne voit jamais le futur : à l'instant t, seule la fenêtre
+> [début, t] **est transmise** à la détection. C'est cette contrainte qui rend
+> la démonstration honnête. »
+
+**Ce module ne transmet aucune fenêtre.** Il appelle `pipeline.analyze_at(ts)`,
+qui passe `self.features` — la table **entière** — à ses trois étages :
+
+```python
+detection = self.detector.analyze(self.features, timestamp)
+decision  = self.agent.analyze(detection, use_llm=use_llm)
+verdict   = self.judge.judge(decision, self.features, use_llm=use_llm)
+```
+
+**Vérification menée jusqu'au bout, étage par étage** — la propriété tient :
+
+| étage | ce qu'il reçoit | ce qu'il en fait |
+|---|---|---|
+| `detector.analyze` | table complète | `history = features.loc[:ts]` ✔ |
+| `_recent_exceedances` | table complète | `s.index <= ts` ✔ |
+| `judge.judge` | table complète | uniquement via `detector.analyze` **au même horodatage** ✔ |
+
+Aucune lecture de l'aval. Mais la propriété tient par **la discipline des
+appelés**, et rien dans ce fichier ne l'impose. C'est la situation de S7-2 —
+« vrai par accident, pas par construction ». Ajouter à `analyze_at` un
+consommateur qui lirait un quantile sur la table entière suffirait à la rompre,
+et `replay.py` continuerait de l'affirmer, en tête de fichier, comme ce qui
+« rend la démonstration honnête ».
+
+L'en-tête dit maintenant **où la propriété vit réellement**, et le verrou est
+comportemental : `test_le_rejeu_ne_lit_jamais_l_aval` rejoue la même analyse sur
+la table complète et sur la table tronquée à `t`, et exige un résultat
+identique. C'est la technique de `model_validation._causality_audit`, appliquée
+à l'analyse plutôt qu'aux features.
+
+**Et `replay.py` n'avait AUCUN test.** Vingt-deux fichiers dans `tests/`, aucun
+pour le module qui porte la promesse d'honnêteté du projet. `tests/test_replay.py`
+est créé.
+
+### S14-2 — Le cache de faits du Judge ne distinguait pas deux tables
+
+```python
+key = decision.timestamp
+facts = self._facts_cache.get(key)
+```
+
+**La clé ne porte que l'horodatage.** Deux tables de features différentes
+interrogées au même instant reçoivent donc les mêmes faits : la seconde se voit
+servir ceux de la première.
+
+C'est **mot pour mot S3-4**, corrigé dans `detector._cache_key` — dont le
+commentaire porte le raisonnement : « un piège qui ne se déclenche pas encore
+reste un piège, d'autant qu'il rendrait un résultat FAUX sans rien signaler ».
+**La correction n'avait pas été portée à son jumeau**, et la conséquence y est
+plus lourde : `VerifiedFacts` est la vérité *indépendante* du Judge, celle
+contre laquelle il met la décision à l'épreuve. Servir des faits issus d'une
+autre table revient à valider une décision contre les preuves d'un autre monde.
+
+La clé réutilise `detector._cache_key`, qui porte déjà l'empreinte de contenu —
+un prédicat recopié dérive de son original (S8-3).
+
+**Conséquence directe et vérifiable** : le contrôle de causalité de S14-1 aurait
+été **vacueux** sans cette correction. Le second appel, sur la table tronquée,
+aurait reçu les faits mémoïsés du premier, et la comparaison aurait comparé un
+résultat avec lui-même. Les deux corrections se tiennent.
+
+### S14-3 — `limit=0` rejouait le corpus entier
+
+```python
+if limit:
+    idx = idx[:limit]
+```
+
+L'idiome que `src.domain.knowledge.seuil` existe pour abolir — « le repli teste
+l'absence, pas la fausseté ». La signature annonce `int | None` : `0` est une
+demande légitime de zéro instant, et elle rejouait les dix mille heures. Même
+famille que M-1.
+
+`positions` était par ailleurs un jeu d'**horodatages**, alors que le
+commentaire de `_instants_incontournables` insiste vingt lignes plus haut sur
+cette distinction exacte (« On retient des HORODATAGES, pas des positions »).
+Renommé `ordinaires`.
+
+### S14-4 — Un `except Exception` protégeait la garantie contre le silence… en silence
+
+`_instants_incontournables` existe pour une raison écrite dans sa docstring :
+sans elle, **le seul instant critique de quatorze mois disparaissait** par une
+règle de performance. Sa lecture de seuil portait :
+
+```python
+def seuil(alias, cle):
+    try:
+        return domaine.get(alias).threshold(cle)
+    except Exception:
+        return None
+```
+
+Un alias mal orthographié, un référentiel mal chargé, une erreur d'attribut :
+tout devenait « pas de seuil déclaré », donc « aucun instant à protéger », donc
+la disparition exacte que la fonction existe pour empêcher — sans une ligne de
+journal. Seule l'absence déclarée (`KeyError`, `AttributeError`) est désormais
+tolérée.
+
+La fonction s'appelait de surcroît `seuil`, nom de la fonction canonique de
+`src.domain.knowledge`. Elle n'est pas importée ici, donc **rien n'était masqué**
+— mais c'est le piège exact de M-1, où une locale de ce nom rendait la fonction
+importée inaccessible à l'endroit même où le défaut se reproduisait. Le nom est
+libéré (`borne_d_alarme`).
+
+### S14-5 — Un arrêt qui n'arrête pas se déclarait arrêté
+
+`stop()` remettait `running` à faux **sans vérifier que le thread avait fini**.
+Passé le délai de garde de cinq secondes, l'état annonçait donc un rejeu arrêté
+pendant qu'un thread continuait d'émettre — et `start()`, qui ne se protège que
+par ce booléen, en aurait lancé un **second**, deux boucles alimentant le même
+`ReplayState`. Le cas exige qu'une analyse dépasse cinq secondes ; il n'est pas
+atteint aujourd'hui, et il ne signalerait rien s'il l'était. `stop()` journalise
+maintenant en `error` et laisse l'état à « en cours ».
+
+### S14-6 — Vérifié, sans correction
+
+- Le délai de temporisation vaut bien `1 / speed` et non `analyze_every / speed`
+  (correction antérieure) ; `REPLAY_SPEED=120` et `REPLAY_STEP=3` cités dans le
+  commentaire correspondent aux valeurs de `config.py` lignes 121-122. Verrouillé
+  par `test_la_vitesse_publiee_est_celle_qui_est_appliquee`.
+- L'exemple « une journée de process défile en 0,4 seconde » à 60 h/s est exact.
+- `_obligatoires` est calculé sur `pipeline.features` entier alors que `_index`
+  peut être tronqué par `start` : les entrées surnuméraires sont simplement
+  jamais atteintes, `isin` les filtre. Sans conséquence.
+- `_emit` appelle les abonnés **hors** verrou et les lecteurs (`recent`,
+  `alerts`, `disagreements`) le prennent : pas de réentrance possible.
+
+## Lot S15 — le service HTTP (1 759 lignes lues intégralement, en deux appels contigus)
+
+`api/main.py` · confronté à `api/static/app.js`, `api/static/twin.js`,
+`api/dashboard.html`
+
+**Réserve de méthode, dite franchement.** La consigne impose un appel de lecture
+unique. Elle n'était pas satisfaisable ici : 1 759 lignes représentent 26 419
+jetons pour un plafond de 25 000. Le fichier a été lu en **deux tranches
+contiguës** (1-1415, 1416-1760), sans recouvrement, sans trou, et sans qu'aucune
+recherche n'ait guidé le découpage. C'est la seule entorse du travail, elle est
+technique, et elle est signalée plutôt que dissimulée.
+
+### S15-1 — FRONT : cinq routes d'exploitation servies, aucune interface
+
+Confrontation route par route des **47 routes servies** aux chemins réellement
+appelés par le poste :
+
+| route servie | appelée par le poste |
+|---|---|
+| `GET /api/workflows` | **non** |
+| `GET /api/workflows/{id}` | **non** |
+| `POST /api/workflows` | **non** |
+| `PATCH /api/workflows/{id}/steps/{step_id}` | **non** |
+| `POST /api/workflows/{id}/complete` | **non** |
+| `GET /api/workflows/templates` | oui — seule consommée |
+
+Le poste ne sait afficher que les **modèles**. Le panneau de `dashboard.html`
+s'intitule « Modèles d'intervention » et se réduit à un sélecteur et une liste
+d'étapes. Créer une intervention, faire avancer une étape, la clôturer par
+signature : **rien de tout cela n'est atteignable depuis l'interface**, alors
+que le serveur porte les cinq routes, le contrôle de rôle, la persistance
+SQLite, le verrouillage optimiste (`expected_version`) et les tests.
+
+**Et le commentaire qui documente la correction du jumeau nomme ce qui n'a été
+corrigé qu'à moitié.** `dashboard.html` ligne 366 :
+
+> « 849 lignes de code testé, six routes, et aucune interface : le rapport
+> annonçait "**le cycle de vie des alarmes ET LES GAMMES DE MAINTENANCE**" que
+> rien n'affichait. »
+
+Le cycle de vie des alarmes a reçu son écran. Les gammes de maintenance ont reçu
+un lecteur de modèles. Le commentaire qui énonce le principe est écrit trois
+pouces au-dessus de la moitié qui l'enfreint — motif du dépôt, dans le fichier
+même qui le corrigeait.
+
+### S15-2 — Les autres routes non appelées par le poste : vérifiées une à une
+
+Rule 2 appliquée — aucune absence établie par recherche de nom seule :
+
+| route | consommateur réel | verdict |
+|---|---|---|
+| `/api/health/ready` | `docker-compose.yml:101`, `ci.yml:200`, runbook | **vivante** |
+| `/api/health/live`, `/model`, `/database`, `/version` | runbook, `test_api.py:49-53` | **vivantes** (orchestration) |
+| `/api/config` | runbook ligne 32 et 156 | **vivante** |
+| `/` | le navigateur | vivante |
+| `/api/auth/refresh` | tests seuls — voir S13 | à trancher |
+| `/api/auth/audit` | **aucun**, hors liste d'endpoints | **à trancher** |
+| `/api/notable` | **aucun**, nulle part | **à trancher** |
+
+`/api/auth/audit` sert le journal d'authentification réservé à l'administrateur
+— celui-là même dont S13-3 vient de corriger la cible manquante sur
+`LOGIN_RATE_LIMITED`. Il n'a **ni écran, ni entrée de runbook** : le seul journal
+qui signale une attaque n'est consultable par aucun chemin documenté. Ce n'est
+pas une surface morte à retirer, c'est une surface morte à **brancher**.
+
+`/api/notable` analyse jusqu'à cent instants et n'a aucun lecteur.
+
+### S15-3 — `/api/health` est « degraded » par construction, définitivement
+
+```python
+"status": "degraded" if p and not model_promoted else ("ok" if p else "starting")
+```
+
+`model_promoted` exige un statut de promotion autorisé. Or la promotion est
+**légitimement impossible sur ce corpus** — `labels_gmao` et `validation_externe`
+échouent définitivement faute de vérité terrain, et le dépôt le démontre. La
+route principale de santé renvoie donc `degraded` à chaque appel, pour toujours.
+
+C'est honnête et c'est inexploitable : `degraded` annonce conventionnellement un
+défaut réparable. Le dépôt a déjà tranché cette question deux fois — pour
+`redondance_hors_modele` et `derive_de_distribution` — avec la même doctrine :
+**une propriété qu'aucun commit ne peut franchir se publie avec son motif, elle
+ne se confond pas avec ce qui est réparable.** Le raisonnement n'a pas été porté
+ici. À reprendre en F2, avec le rendu de `/api/health` par le poste.
+
+### S15-4 — Deux bancs de gouvernance, un seul protégé
+
+| route | coût | contrôle de rôle |
+|---|---|---|
+| `/api/judge/evaluation` | élevé | `reliability_engineer`, `administrator` |
+| `/api/detection/fouling-bench` | élevé | **aucun** |
+| `/api/sensitivity` | élevé | **aucun** |
+| `/api/model/validation` | très élevé (backtest) | **aucun** |
+
+**Constat laissé OUVERT, volontairement.** Trancher exige de savoir si la page
+Contrôle doit rester lisible par un `reader` : `app.js:2180` appelle
+`fouling-bench` au chargement de cette page, donc y poser un contrôle de rôle la
+casserait pour les lecteurs. Le choix relève de la politique d'habilitation, pas
+de la lecture du code, et il se prend en F2 avec l'écran sous les yeux.
+
+### S15-5 — `/api/health/database` annonce une vérification qui ne décide de rien
+
+La docstring dit « Vérifie **par lecture** les registres locaux ». La lecture a
+bien lieu — mais son résultat n'est jamais consulté :
+
+```python
+alarm_ok = STATE.get("alarm_store") is not None   # verdict fixé AVANT
+if alarm_ok:
+    await run_in_threadpool(_alarm_store().list, limit=1)
+```
+
+Le verdict publié ne mesure que la **construction** de l'objet. Si la lecture
+échoue — base verrouillée, fichier corrompu — l'exception remonte et la route
+répond **500**, là où `/api/health/ready` répond proprement 503 avec le détail.
+Une sonde de santé qui renvoie 500 au lieu de « indisponible » n'apprend rien à
+un orchestrateur.
+
+### S15-6 — Deux écritures de l'identité « Poste local »
+
+Le bloc `{"username": "Poste local", "email": "", "role": "local",
+"csrf_token": ""}` est écrit **deux fois**, lignes 503-509 et 521-527, dans deux
+routes voisines. Motif S8-2. De même, `alarm_transition` replie sur
+`role = "administrator"` quand l'authentification est inactive, tandis que
+`_require_roles` traite le même cas par un retour anticipé : une même politique,
+deux écritures, dont une seule bougerait si elle changeait.
+
+### Ce qui reste à faire sur ce fichier
+
+Les constats S15-1 à S15-6 sont **établis et non corrigés**. Ils touchent tous
+au rendu, donc ils appartiennent à la phase F2, qui se conduit le poste ouvert —
+pas à une session de lecture. La lecture de `api/main.py` est en revanche
+terminée et complète.
+
+## Lot S16 — corrections serveur des constats de S15
+
+Trois des six constats de S15 se corrigent sans ouvrir le poste : ils sont
+entièrement côté serveur, et donc prouvables ici. Les trois autres (interface
+des interventions, `/api/auth/audit` et `/api/notable` sans chemin, rôle sur les
+bancs) restent pour F2.
+
+### S16-1 — `/api/health/database` : la vérification n'entrait pas dans le verdict
+
+```python
+alarm_ok = STATE.get("alarm_store") is not None   # verdict figé AVANT
+if alarm_ok:
+    await run_in_threadpool(_alarm_store().list, limit=1)   # résultat jeté
+```
+
+Le verdict ne mesurait que la **construction** de l'objet au démarrage. La
+lecture avait bien lieu, et n'était jamais consultée. Surtout : quand elle
+échouait — fichier verrouillé, base corrompue, disque plein, **c'est-à-dire les
+seules pannes qu'une sonde de base de données existe pour voir** — l'exception
+remontait au gestionnaire générique et la route répondait **500**,
+indiscernable d'un bogue applicatif.
+
+`/api/health/ready`, la route voisine, traitait déjà le cas correctement en
+répondant 503 avec le détail par registre. Le même contrat est appliqué, avec le
+motif nommé.
+
+| | base verrouillée |
+|---|---|
+| avant | **500** `internal_server_error` |
+| après | **503** `{"status": "unavailable", "alarm_store": false, "reasons": {...}}` |
+
+### S16-2 — `/api/health` reste `degraded`, et dit désormais pourquoi il l'est
+
+La promotion est légitimement impossible sur ce corpus, donc `status` vaut
+`degraded` **définitivement**.
+
+**La correction tentante a été écartée.** Ramener `status` à l'état du service
+et renvoyer la gouvernance vers `ready_for_production` aurait rendu la route
+verte — et c'est exactement la faute que la phase 0 a documentée sur
+`redondance_features` : « restreindre le critère aurait **remasqué** ce que
+l'auteur avait délibérément rendu visible ». `degraded` est une visibilité
+voulue, et un jury doit la lire.
+
+Ce qui manquait n'était pas la nuance mais la **raison** : rien ne distinguait
+« dégradé par un défaut réparable » de « dégradé par une limite définitive du
+corpus ». C'est la distinction que `redondance_hors_modele` et
+`derive_de_distribution` publient depuis la phase 0.7, et elle n'avait pas été
+portée jusqu'à la sonde de santé. `status_reason` la porte.
+
+### S16-3 — L'identité « Poste local » était écrite deux fois
+
+Le bloc `{"username": "Poste local", "email": "", "role": "local",
+"csrf_token": ""}` figurait à l'identique dans `auth_status` et `auth_login`, à
+quinze lignes d'écart. Renommer le rôle local, ou changer ce que le poste
+affiche faute de session, n'aurait bougé qu'à un endroit. Motif de S8-2 et A-5.
+
+**Verrou** (le patron, onzième emploi) —
+`test_l_identite_du_poste_local_n_existe_qu_en_un_exemplaire` compte par AST les
+littéraux « Poste local » dans le module.
+
+**Preuve par mutation** :
+
+| | littéraux comptés |
+|---|---|
+| après correction | **1** — le test passe |
+| doublon réintroduit | **2** — le test échoue |
+
+### Reste de S15, pour F2
+
+- l'interface des interventions : cinq routes servies, aucun écran ;
+- `/api/auth/audit` : le journal qui signale une attaque n'est atteignable par
+  aucun chemin documenté — à **brancher**, pas à retirer ;
+- `/api/notable` : aucun lecteur, à trancher ;
+- le contrôle de rôle sur les trois bancs de gouvernance non protégés — décision
+  d'habilitation, à prendre l'écran sous les yeux.
+
+## Lot S17 — WF-2 et WF-3 tranchés (`src/operations/workflows.py`, 345 lignes lues intégralement)
+
+Les deux constats laissés ouverts par la session précédente sur ce fichier. Ils
+se tranchent ensemble : c'est le même vocabulaire, vu par ses deux bouts.
+
+### S17-1 — WF-2 : `CANCELLED` existait partout sauf dans le code qui le pose
+
+Lecture intégrale : le statut d'une intervention n'a que **trois** producteurs.
+
+| producteur | statut écrit |
+|---|---|
+| `create` | `PLANNED` |
+| `update_step` | `BLOCKED` si une étape l'est, sinon `IN_PROGRESS` |
+| `complete` | `COMPLETED` |
+
+`CANCELLED` figurait dans `WORKFLOW_STATES`, dans `TERMINAL_STATES` et dans le
+`CHECK` du schéma. **Nulle part ailleurs.** C'est la forme exacte de LIN-1
+(lot S9) : un vocabulaire qui annonce un cycle de vie plus riche que ce que le
+code sait produire.
+
+**Et il n'était pas inoffensif**, pour trois raisons :
+
+1. `TERMINAL_STATES` le contenait, donc les gardes de `update_step` et de
+   `complete` — `if workflow["status"] in TERMINAL_STATES` — testaient une
+   valeur impossible : **la moitié de chaque garde était morte.**
+2. Un lecteur, ou un jury, en déduit qu'un chemin d'annulation existe.
+3. Le `CHECK` l'acceptait, si bien qu'une base éditée à la main pouvait porter
+   un statut qu'aucun processus légitime n'a produit — et l'intervention se
+   retrouvait **définitivement figée**, les deux gardes la refusant, sans
+   qu'aucun message ne dise pourquoi. Même structure que le manifeste annonçant
+   `rejected`, refusé pour un motif qui laissait croire à un réglage.
+
+**Ce que le retrait rend visible, et qui était masqué.** Une intervention
+planifiée puis abandonnée n'a aujourd'hui **aucune représentation** : elle reste
+`PLANNED` indéfiniment. C'est une lacune fonctionnelle réelle. Déclarer l'état
+sans écrire le chemin la rendait invisible ; la retirer la donne à voir.
+Rétablir `CANCELLED` suppose `cancel()`, sa route, son contrôle de rôle et sa
+trace au journal — et le verrou le rappellera à quiconque le remettrait seul.
+
+### S17-2 — WF-3 : `WORKFLOW_STATES` était déclaré et lu par personne
+
+Vérifié sur tout le dépôt : **aucun lecteur**. `update_step` valide contre
+`STEP_STATES`, jamais contre `WORKFLOW_STATES`. La seule contrainte réellement
+appliquée était le littéral SQL du `CHECK`, que rien ne rattachait à la
+constante — **deux écritures du même vocabulaire**, libres de diverger sans
+bruit. Motif de S8-2.
+
+Les deux `CHECK` sont désormais **dérivés des constantes** par `_contrainte()`.
+La constante a enfin un lecteur, et le schéma suit toute modification du
+vocabulaire. Mesuré sur une base neuve :
+
+```
+CHECK genere    : CHECK(status IN ('BLOCKED','COMPLETED','IN_PROGRESS','PLANNED'))
+schema reel     : CHECK(status IN ('BLOCKED','COMPLETED','IN_PROGRESS','PLANNED'))
+ecriture directe CANCELLED : REFUSEE par le schema — IntegrityError
+```
+
+*Réserve honnête* : `CREATE TABLE IF NOT EXISTS` n'altère pas une table déjà
+créée. Les bases existantes conservent l'ancien `CHECK`, plus permissif — sans
+conséquence, puisque aucun code n'écrit `CANCELLED`, mais il faut le savoir.
+
+### S17-3 — La docstring de WF-4 annonçait une couverture qu'elle n'avait pas
+
+`test_les_etats_non_nominaux_sont_atteignables` déclarait couvrir « `BLOCKED`,
+`NOT_APPLICABLE` et `CANCELLED` ». Il en exerçait **deux**. Il ne pouvait pas
+faire autrement : rien ne produisait le troisième. Le test qui existait pour
+prouver que trois états déclarés sont atteignables **en affirmait un qui ne
+l'était pas** — la faute qu'il était censé interdire, dans son propre texte.
+
+### Verrous (le patron, douzième et treizième emplois)
+
+`test_tout_etat_declare_est_productible` conduit la boutique par son **API
+publique** et exige que l'ensemble des statuts observés soit **exactement**
+l'ensemble déclaré, dans les deux sens.
+
+**Preuve par mutation :**
+
+| vocabulaire déclaré | orphelins | verdict |
+|---|---|---|
+| après correction | **aucun** | le test passe |
+| `CANCELLED` réintroduit | `['CANCELLED']` | **le test échoue** |
+
+`test_le_schema_derive_son_vocabulaire_des_constantes` vérifie que le `CHECK`
+d'une base neuve porte exactement les états déclarés, et pas `CANCELLED`.
+
+### Reste ouvert sur ce module
+
+`update_step` remet `completed_by` et `completed_at` à `None` dès qu'une étape
+quitte `COMPLETED` : la ligne courante perd le nom du signataire. La trace
+survit dans `workflow_history`, qui conserve l'événement `STEP_COMPLETED` — donc
+rien n'est perdu, mais la lecture du détail et celle du journal ne racontent pas
+la même histoire. **Signalé, non corrigé** : trancher demande de savoir laquelle
+des deux vues le bordereau d'intervention fait foi, et cette question se prend
+avec l'écran de F2.
+
+## Lot S18 — J-2 élargi, volet « périmètre » (`tests/test_typographie.py`, 441 lignes lues intégralement)
+
+La phase 0.9 avait recensé deux corrections à porter et n'en avait fermé
+aucune : **élargir le lexique**, et **élargir le périmètre**. La première a été
+faite au fil des lots (51 mots aujourd'hui). Voici la seconde.
+
+### S18-1 — Le diagnostic : onze contrôles qui n'inspectent que des sorties
+
+Les onze contrôles du fichier lisent tous des **sorties d'exécution** : ils ne
+voient une chaîne que si un appel la produit. Une chaîne qui ne traverse aucune
+API leur est structurellement invisible — quel que soit le lexique.
+
+Les **messages de refus** sont la famille la plus visible de cet angle mort. Un
+`detail` de 401, 403, 404 ou 422 n'apparaît dans **aucune réponse nominale**,
+donc dans aucun corpus de test typographique — alors que c'est exactement ce
+qu'un exploitant lit quand quelque chose ne va pas. Idem pour la description
+OpenAPI, qui ne sort dans aucune réponse métier et qui est la **première page
+qu'un jury ouvre** sur `/docs`.
+
+Corrigé : « Authentification **operateur** requise », « **Severite** hors
+plage », « **Severites** illisibles », « Au moins une **severite** est
+requise », « Horodatage absent des **donnees** », la description du paramètre
+`severities`, et l'en-tête OpenAPI (« Rejeu historique **accelere** […]
+**Detection** hybride **regles** applicatives + **modele** statistique »).
+
+### S18-2 — Le verrou, et pourquoi il lit le source
+
+`test_les_textes_de_refus_de_l_api_sont_accentues` lit `api/main.py` **par
+AST** au lieu d'appeler une route. C'est le patron du dépôt appliqué à la
+typographie. Trois familles sont écartées, chacune pour une raison qui lui est
+propre et écrite dans le code :
+
+| écarté | motif |
+|---|---|
+| docstrings et commentaires | l'en-tête du fichier les exclut depuis l'origine — ils s'adressent au relecteur |
+| arguments de `logger.*` | le journal serveur n'est pas une surface d'exploitation |
+| chaînes de plus de 400 caractères | ce sont les **prompts** des agents : les accentuer modifierait l'entrée d'un modèle de langage, donc son comportement — une modification de fond déguisée en correction de forme |
+
+**Preuve par mutation :**
+
+| | corpus inspecté | fautes |
+|---|---|---|
+| après correction | **61 chaînes** | **aucune** — le test passe |
+| « opérateur » remuté en « operateur » | 61 | `['operateur']` — **le test échoue** |
+
+### S18-3 — RÉTRACTATION EN COURS DE LOT : `knowledge.py` n'est pas une surface d'affichage
+
+Le balayage désignait six chaînes de `src/domain/knowledge.py` — « Echangeur a
+faisceau tubulaire », « PARTIELLEMENT OBSERVES », « criticite », « preventif ».
+J'allais les corriger.
+
+Vérification avant édition : elles appartiennent à `briefing_equipment()` et
+`briefing_*`, dont la docstring dit **« injectée dans les prompts des agents »**.
+Ce sont des instructions à un modèle de langage — « ne jamais les
+diagnostiquer » — et elles ne sont affichées nulle part. Les accentuer aurait
+modifié l'entrée des deux agents sans qu'aucun test ne le signale, sous
+l'apparence d'une correction typographique.
+
+C'est la règle 2 qui a payé : suivre la chaîne jusqu'à son point de rendu avant
+de conclure. Le motif du dépôt aurait été reproduit **par l'audit**, pour la
+troisième fois.
+
+### S18-4 — Ce que la mesure établit, et qui reste ouvert
+
+Balayage complet de `src/`, `scripts/` et `api/`, exclusions appliquées :
+**49 chaînes** portant au moins un mot du lexique sans son accent, réparties en
+familles qui ne relèvent pas du même traitement :
+
+| famille | volume | verdict |
+|---|---|---|
+| refus et description de l'API | 7 | **corrigées** (S18-1) |
+| prompts des agents (`knowledge`, `detection_agent`, `judge_agent`) | ~8 | **hors périmètre** — modifier une entrée de modèle |
+| libellés et descriptions des pièges du Judge (`judge_eval`) | 14 | **à instruire** : `by_trap` est servi et rendu par `renderBench`, mais certaines chaînes sont des charges volontairement fautives et ne doivent pas être touchées |
+| sorties console des `__main__` et des scripts (SCR-1) | ~10 | à trancher : lues par un opérateur en ligne de commande, jamais par le poste |
+| messages d'exception internes (`Modele introuvable`, `Periode de reference trop courte`) | ~10 | à trancher : remontent en 500 ou au démarrage |
+
+**Ces quatre dernières familles ne se tranchent pas au balayage.** Chacune exige
+de suivre la chaîne jusqu'à son point de rendu, et c'est précisément ce que la
+famille « prompts » vient de démontrer. Le constat J-2 passe donc d'une note
+vague à une **liste comptée et catégorisée** ; il reste ouvert sur quatre
+familles, avec le critère de décision écrit.
+
+## Lot S19 — M-3 rouvert, revérifié et clos
+
+Le dernier constat que le brief laissait explicitement à rouvrir.
+
+### S19-1 — Le constat tient, mot pour mot, à l'endroit annoncé
+
+Vérifié sur le code courant : `_MODE_BY_THRESHOLD` portait toujours quatre
+entrées, dont **trois avec un tag et un seuil vides**.
+
+```python
+"conc_min":      ("FAISCEAU_CORROSION", "C_ACID_1100", "alarm_low"),
+"conc_drop_24h": ("FAISCEAU_FUITE",  "", "")
+"d_conc":        ("FAISCEAU_FUITE",  "", "")
+"flow_per_load": ("CALANDRE_FUITE",  "", "")
+```
+
+`_mode_for_feature` sort sur `if not tag_name: return None` : **trois entrées
+sur quatre rendaient invariablement `None`**. La table paraissait rattacher
+quatre grandeurs à trois modes de défaillance, et n'en rattachait qu'une —
+exactement la « couverture illusoire » que le commentaire condamne **quinze
+lignes plus haut**, à propos de la table d'à côté. La correction avait été
+portée à `_MODE_BY_RESIDUAL` et pas à sa jumelle.
+
+### S19-2 — Le comportement était juste ; c'est la forme qui mentait
+
+C'est ce qui distingue M-3 de LIN-1 et de WF-2, et ce qui interdisait la
+correction évidente. Les trois grandeurs sont des **variations**, et la règle
+déterministe correspondante porte déjà son seuil de matérialité : le modèle
+statistique ne doit pas la doubler. C'est une décision, motivée sur huit lignes
+au-dessus de la table.
+
+**Les supprimer aurait effacé cette décision** et laissé croire à un oubli — un
+futur relecteur les aurait rattachées, et le modèle se serait mis à accuser une
+pièce là où la règle tranche déjà. C'est l'inverse de WF-2, où l'état déclaré
+n'était soutenu par aucune intention.
+
+Les deux natures sont donc **séparées**, comme les portes de la phase 0.7 et les
+plis de S12 : `_MODE_BY_THRESHOLD` ne contient plus que ce qui peut réellement
+accuser, et `_FEATURES_SANS_ACCUSATION` déclare les trois autres pour ce
+qu'elles sont. `_mode_for_feature` teste l'ensemble nommé au lieu d'une chaîne
+vide.
+
+### S19-3 — Le test verrouillait l'appartenance, pas l'atteignabilité
+
+Le journal l'avait déjà noté :
+`test_le_rattachement_ne_cite_que_des_features_du_modele` vérifiait que chaque
+entrée porte une grandeur de `MODEL_FEATURES` — **pas qu'elle puisse produire un
+rattachement**. Une entrée à tag vide franchissait donc le contrôle.
+
+`test_toute_entree_de_rattachement_peut_reellement_accuser` exige les quatre
+propriétés qui manquaient :
+
+1. aucune entrée à tag ou seuil vide ;
+2. chaque seuil cité **existe** dans le référentiel ;
+3. chaque mode cité **existe** dans l'AMDEC ;
+4. les deux ensembles sont **disjoints** — une grandeur ne peut pas à la fois
+   accuser et ne pas accuser.
+
+Le test d'origine est étendu à `_FEATURES_SANS_ACCUSATION` : le nouvel ensemble
+est soumis à la même exigence d'appartenance à `MODEL_FEATURES`.
+
+**Preuve par mutation :**
+
+| `_MODE_BY_THRESHOLD` | entrées | inertes | verdict |
+|---|---|---|---|
+| avant | 4 | `conc_drop_24h`, `d_conc`, `flow_per_load` | **le test échoue** |
+| après | 1 | aucune | le test passe |
+
+### Où en sont les constats ouverts du brief
+
+| constat | état |
+|---|---|
+| seuil PSI 0,25 | **tranché** — S12-1, par la mesure |
+| WF-2 / WF-3 | **tranchés** — S17 |
+| M-3 | **clos** — ce lot |
+| libellés des huit contrôles du Judge | lexique complété; **périmètre** mesuré et catégorisé en S18-4, quatre familles restent à instruire |
+
+## Lot S20 — Ce que le dépôt versionne réellement (phase F3, volet sécurité)
+
+Vérifié **avant** toute autre chose, parce que c'est le seul point de ce travail
+dont une erreur serait irréversible : ce qui est poussé une fois l'est pour
+toujours.
+
+### S20-1 — Les secrets : sains, et vérifiés sur l'historique entier
+
+Balayage des **3 101 objets** de `git rev-list --all --objects` :
+
+| fichier | suivi aujourd'hui | a-t-il existé dans l'historique |
+|---|---|---|
+| `.env` | non ✔ | **jamais** ✔ |
+| `data/runtime/operators.json` | non ✔ | **jamais** ✔ |
+| toute clé (`*.key`, `*.pem`, `id_rsa`, `credential*`) | non ✔ | **aucune** ✔ |
+
+C'est le point le plus important de la section sécurité, et il est propre. Le
+`.gitignore` porte d'ailleurs déjà la correction d'un piège subtil :
+`data/runtime/` excluait le répertoire et non son contenu, ce qui rendait la
+négation `!data/runtime/.gitkeep` **inerte** — Git ne descend jamais dans un
+répertoire exclu.
+
+La révocation des deux clés Gemini côté Google reste à faire : elles ont été
+exposées hors du dépôt, et rien ici ne peut le constater.
+
+### S20-2 — La contrainte la plus lourde du projet n'était écrite nulle part
+
+`data/raw/DATA.xlsx` est versionné **délibérément** — le `.gitignore` le dit et
+le justifie : « il fait partie du livrable et permet à quiconque clone le dépôt
+de reproduire tous les résultats ». C'est un choix défendable.
+
+Mais ce fichier porte **quatorze mois d'exploitation réelle** d'une installation
+d'OCP Group. Le choix n'est acceptable qu'à une condition : **le dépôt distant
+doit rester privé.**
+
+**Cette condition ne figurait dans aucun des 162 fichiers versionnés.** Le
+README s'ouvre au contraire sur « OCP Group », « 10 180 horodatages DCS » et
+« AMDEC OCP du 23/09/2019 », sans un mot sur la confidentialité. Le commentaire
+du `.gitignore` justifiait le versionnement **sans jamais énoncer sa
+contrepartie**.
+
+C'est la doctrine de ce dépôt appliquée à lui-même : *une décision qui n'est pas
+écrite est une décision perdue*. À une différence près, et elle est décisive —
+les dix-neuf lots précédents corrigeaient des défauts rattrapables. **Celui-ci
+ne l'est pas** : publié une fois, un fork ou un miroir suffit.
+
+Corrigé aux deux endroits : une section « Ce dépôt ne peut pas être public » en
+tête de README, et la contrepartie écrite dans le commentaire du `.gitignore`
+qui portait la justification.
+
+### S20-3 — 93 % de l'historique est un `node_modules` mort
+
+| famille | objets | part |
+|---|---|---|
+| `frontend/node_modules/` | **2 887** | 93,1 % |
+| `frontend/` (total) | 2 890 | 93,2 % |
+| tout le reste du projet | 211 | 6,8 % |
+
+`frontend/` **n'existe plus** dans l'arbre de travail — le poste est
+`api/static/` — et n'est plus suivi. Mais l'historique le porte intégralement,
+et un `push` le transfère.
+
+L'arbre courant est en revanche propre : **162 fichiers suivis**, aucun
+`alembic`, aucun `frontend/`, aucun `dashboard/` — la phase A avait fait ce
+travail sur l'arbre, pas sur l'historique.
+
+**Non corrigé, et délibérément.** Réécrire l'historique (`git filter-repo`,
+BFG) est une opération destructive qui invalide le tag `v3.0.0` et toute copie
+existante. Elle ne se fait pas depuis une session d'audit, et elle ne se fait
+pas sans que le propriétaire ait décidé s'il veut un dépôt léger ou un
+historique intact. Les deux options se défendent ; la mesure est publiée pour
+que le choix soit informé.
+
+### S20-4 — DÉCISION DU PROPRIÉTAIRE : le dépôt ne sera pas publié
+
+Ce lot s'était conclu sur quatre actions à mener avant un `push`. **Le
+propriétaire a tranché : le projet ne part pas sur GitHub.** Deux des quatre
+tombent, et il faut le dire ici plutôt que de laisser une consigne périmée —
+c'est le défaut que ce travail corrige depuis vingt lots.
+
+| action | état |
+|---|---|
+| visibilité du dépôt distant | **sans objet** — aucun distant, `git remote -v` vide |
+| historique `frontend/` (S20-3) | **sans objet** — 2 887 objets morts dans un `.git` local, sans conséquence |
+| clés Gemini | **non révoquées, décision assumée.** Le risque est borné et n'est pas celui du dépôt : une clé Gemini ne donne accès ni au code ni à `DATA.xlsx`, seulement au quota et à la facturation du compte Google. Vérifier qu'aucune facturation n'est attachée au projet neutralise le seul risque réel |
+| régénérer les artefacts | **reste à faire** — seule action ouverte |
+
+**Ce que la décision de ne pas publier change au dossier.** Le constat S20-2 — la
+contrainte de confidentialité écrite nulle part — n'est pas annulé pour autant.
+Il devient même plus utile : la section du README documente désormais *pourquoi*
+le dépôt ne peut pas être publié, ce qui protège la décision contre un futur
+relecteur qui, ne voyant aucune raison écrite, la croirait arbitraire. Une
+décision non écrite est une décision perdue, y compris quand elle consiste à ne
+rien faire.
+
+**Risque résiduel, hors périmètre d'audit** : le dépôt n'existe qu'en un
+exemplaire, sur un poste. Une sauvegarde hors ligne relève de la conservation du
+mémoire, pas de la sécurité des données — mais l'absence de distant la rend
+nécessaire.
+
+## Lot S21 — Les artefacts régénérés : une correction confirmée, une affirmation à retirer
+
+`scripts/validate_release.py` a été relancé après S12. `reports/model_validation.json`
+et le manifeste portent désormais les chiffres du code corrigé. Suite complète
+verte.
+
+### S21-1 — S12-2 confirmé au dix-millième
+
+Le plancher des cellules vides prédisait un effet exact et chiffrable. Mesuré
+sur l'artefact réel :
+
+| | valeur |
+|---|---|
+| pli 2 — `n_test` | 1 837, et **1 décile vide** — le seul des quatre plis |
+| contribution d'une cellule vide, plancher `1e-6` | 1,1513 |
+| contribution d'une cellule vide, plancher `0,5/n` | 0,5890 |
+| écart **prédit** | **0,5622** |
+| écart **mesuré** — 3,7446 → 3,1826 | **0,5620** |
+
+**Prédiction confirmée à 0,0002 près.** Le PSI publié contenait bien, pour
+0,56 point sur 3,74, une constante arbitraire et non une distance entre
+distributions. Et l'instrumentation ajoutée le dit maintenant : un décile vide,
+sur ce pli, et zéro sur les trois autres.
+
+### S21-2 — RETRACTATION : « un pli sur quatre est couvert » était faux, il n'y en a AUCUN
+
+Le lot S12 annonçait, sur la foi d'un calcul mené hors du dépôt, que le pli 4
+n'extrapolait pas et fournissait la seule mesure de dérive interprétable
+(PSI 0,068). **C'est faux.**
+
+| pli | annoncé en S12 | mesuré par le code |
+|---|---|---|
+| 1 | 73,8 % | 76,5 % |
+| 2 | 100,0 % | 100,0 % |
+| 3 | 5,9 % | 5,2 % |
+| 4 | **0,0 %** | **12,8 %** |
+
+**Cause de l'erreur, et elle est instructive.** Mon calcul comparait les
+températures d'eau de mer sur le CALENDRIER — `pd.date_range(début, fin, 'h')`.
+Le code compare `train.index` et `test.index`, c'est-à-dire la **matrice du
+modèle** : heures de marche établie uniquement, `dropna` appliqué. La plage
+apprise n'est donc pas celle du calendrier, c'est celle des heures où la ligne
+tournait réellement.
+
+Le pli 4 apprend de janvier à début décembre, ce qui couvre le calendrier
+presque entier — mais si la ligne était à l'arrêt pendant les journées les plus
+froides de janvier-février 2024, ces valeurs d'eau de mer **n'ont jamais été
+apprises**. Sa fenêtre de test, qui va jusqu'au 28 février, y redescend :
+12,8 % de ses heures sont hors de la plage vue.
+
+**Et c'est le code qui a raison.** Le modèle n'a pas appris sur ces valeurs,
+donc les scorer est bien une extrapolation, que le calendrier les ait contenues
+ou non. La plage apprise est une propriété du **régime de marche de l'atelier**,
+pas de l'année. Ma mesure hors dépôt était plus grossière que l'instrument que
+je venais d'écrire.
+
+### S21-3 — Conséquence : la porte dit « aucun pli mesurable », et je ne l'assouplis pas
+
+`max_score_psi_seasonally_covered` vaut `None`, `n_seasonally_covered_folds`
+vaut **0**, et `derive_de_distribution` échoue en publiant « aucun des 4 plis
+n'est mesurable ».
+
+La tentation est évidente : poser une tolérance — 5 %, 15 % — pour qu'au moins
+un pli qualifie. **Elle est refusée**, et le motif est écrit noir sur blanc dans
+S12 : « je ne choisis pas un critère en fonction du verdict qu'il produit ».
+Introduire la tolérance maintenant, parce que le critère strict donne une
+réponse gênante, serait exactement la faute que la phase 0 a documentée sur
+`redondance_features`.
+
+Le résultat est donc plus dur que ce que j'annonçais, et il est plus vrai :
+**sur ce corpus, aucune fenêtre de test n'est saisonnièrement couverte par son
+apprentissage.** Un backtest à fenêtre croissante sur quatorze mois, pour un
+cycle d'eau de mer de douze, avec une ligne qui s'arrête, ne peut pas en
+produire. La porte reste publiée et non bloquante — ce qui est son statut depuis
+la phase 0.7 — et la promotion reste refusée pour les deux seules raisons qui
+valent.
+
+### S21-4 — Les deux autres corrections de S12, confirmées
+
+| champ | avant | après |
+|---|---|---|
+| `causal_pipeline_refit` | littéral `True` | **mesuré** — vrai sur les 4 plis, références et détecteur bornés à `train_end` |
+| `gap_calendar_hours` (par pli) | le paramètre reçu, `24` | **mesuré**, `25,0` h — l'écart réel de `TimeSeriesSplit` |
+
+Les sept portes sont publiées, trois franchies, quatre en échec avec leur
+preuve. `causalite_temporelle` passe, balayage tokenisé compris, `governance`
+désormais dans le périmètre.
+
+### Ce que F1 devra écrire, et qui a changé depuis S12
+
+- le PSI maximal n'est plus 3,7446 mais **3,1826**, et la différence a une cause
+  nommée ;
+- le rapport ne peut pas citer « 0,068 comme mesure de dérive » : **aucun pli
+  n'est interprétable** ;
+- la limite à publier n'est pas « un seul pli couvert » mais « aucun », et la
+  raison est physique, pas méthodologique.
+
+## Lot S22 — le registre d'alarmes (561 lignes lues intégralement)
+
+`src/operations/alarms.py`
+
+### S22-1 — AL-1, première moitié : réellement close, vérifiée jusqu'au producteur
+
+Le constat portait sur `_trigger`, qui identifiait l'alarme par `findings[0]`,
+c'est-à-dire par l'ordre d'écriture des règles — `_rule_sensor_health` passant
+en premier, un capteur qui dérive volait son identité à un percement de tube.
+
+**Corrigé, et pas seulement en apparence.** `_trigger` lit
+`analysis.decision.lead_finding`, et ce champ est genuinement peuplé :
+`detection_agent.py:316` écrit `lead_finding=lead.code` avec
+`lead = max(actionable, key=_priorite)`. Le barème est donc **réutilisé**, pas
+recopié — ce que le correctif annonçait. Vérifié du consommateur au producteur.
+
+### S22-2 — AL-2 : un désaccord du Judge résolvait une alarme critique
+
+```python
+accepted_alarm = severity in {"WARNING", "CRITICAL"} and verdict.agreement
+```
+
+La négation de ce test partait vers `_return_matching_to_normal` dans **deux cas
+de natures opposées** :
+
+| cas | ce qui se passait |
+|---|---|
+| la condition a cessé | résolution — légitime |
+| la condition **persiste**, le Judge a rejeté la décision | **résolution — absurde** |
+
+**Preuve par mutation**, sur le registre réel :
+
+| | statut de l'alarme |
+|---|---|
+| t1 — CRITICAL, Judge d'accord | ACTIVE |
+| t2 — CRITICAL, **Judge en désaccord**, même constatation | **RETURNED_NORMAL** ✘ |
+| t2 après correction | **ACTIVE** ✔ |
+| t3 — condition cessée | RETURNED_NORMAL ✔ — la voie légitime est intacte |
+
+C'est précisément ce que l'en-tête du module interdit — « le registre ne déduit
+jamais qu'une alarme a disparu parce qu'une **autre** analyse est normale » — en
+pire : il le déduisait d'un désaccord de gouvernance. Le Judge conteste la
+**rédaction** d'un diagnostic; il ne dit rien du procédé. Les deux questions sont
+désormais séparées : la présence de la condition se lit sur la sévérité, l'accord
+du Judge décide seulement si l'alarme mérite d'être **levée**. Une condition
+présente et contestée ne fait rien bouger, ni dans un sens ni dans l'autre.
+
+### S22-3 — AL-3 : une justification fausse masquait la seconde moitié d'AL-1
+
+Le repli de `_trigger` portait :
+
+> « L'ordre des règles y est sans conséquence : la clé recherchée est celle
+> **déjà enregistrée**. »
+
+**C'est l'inverse.** `observe` calcule `key = self._key(analysis)` sur l'analyse
+**courante**, puis cherche `WHERE alarm_key=?` avec cette clé. L'ordre des règles
+décide donc exactement quelle alarme sera retrouvée.
+
+**Mesuré, sur trois instants :**
+
+| | |
+|---|---|
+| t1 — `CONC_DROP_SEVERE` dominant | alarme `::CONC_DROP_SEVERE` **ACTIVE** |
+| t2 — nominal, `SENSOR_FAULT` en INFO | clé cherchée `::SENSOR_FAULT` → aucune ligne, **alarme intacte** |
+| t3 — plus aucune constatation | `_key` rend `None`, `observe` sort → **alarme intacte** |
+| clôture manuelle | **REFUSÉE** — `close` n'est permis que depuis `RETURNED_NORMAL` |
+
+**L'alarme ne peut ni se résoudre ni être close.** Elle reste ACTIVE
+indéfiniment, et le registre ISA-18.2 n'accumule que des ouvertures. La voie de
+résolution ne fonctionne que pour une règle qui réémet le **même code** à une
+sévérité plus basse — cas rare.
+
+Et le principe qui produit cela est énoncé comme une prudence dans l'en-tête :
+« une analyse sans constatation ne possède pas la preuve permettant de résoudre
+une alarme, elle est donc volontairement sans effet ». Or l'absence de
+constatation **est** le cas nominal le plus fréquent. Une règle présentée comme
+prudente garantit ici l'inverse de la prudence.
+
+**NON CORRIGÉ, ET C'EST UNE DÉCISION.** Balayer les alarmes ouvertes dont la
+condition n'est plus observée suppose trois arbitrages de sécurité :
+
+1. une analyse sans constatation vaut-elle preuve de retour à la normale —
+   l'en-tête dit non, et c'est ce non qui bloque tout ;
+2. que fait-on d'une **ligne à l'arrêt** ? Le balayage y viderait le registre,
+   c'est le piège de S7-1 ;
+3. comment un capteur en défaut interagit-il avec le balayage ?
+
+Ces trois décisions engagent la sécurité d'exploitation et modifient un test
+existant (`test_alarm_store.py:160`, qui verrouille le comportement actuel). Les
+prendre en fin de session, sans pouvoir jouer la suite complète, serait fermer au
+jugé. **AL-1 est donc close sur sa première moitié, et sa seconde moitié est
+reformulée en AL-3 avec sa mesure et ses trois questions.**
+
+## Lot S23 — le poste de surveillance (2 407 lignes lues intégralement)
+
+`api/static/app.js`, lu en deux tranches contiguës (1-1200, 1201-2407) — même
+réserve technique qu'`api/main.py`, le fichier dépasse le plafond d'un appel.
+
+Le fichier est de très bonne facture : la charte est résolue depuis le CSS, les
+codes machine sont traduits par sept tables de libellés, la zone morte de
+l'indicateur de tendance est calculée sur la dispersion résiduelle, et
+l'accessibilité clavier suit WAI-ARIA. Les quatre constats ci-dessous portent
+sur des **écarts entre ce que l'écran affirme et ce que le serveur fait**.
+
+### S23-1 — « Session expirée » annoncé dans trois situations, dont deux fausses
+
+`showGate()` posait invariablement `setLink("down", "Session expirée — écran
+figé")`. Elle est appelée depuis trois endroits :
+
+| appelant | situation réelle | message affiché |
+|---|---|---|
+| `api()`, sur un 401 | session expirée | juste ✔ |
+| `boot()`, accès protégé, jamais identifié | **aucune session n'a existé** | « Session expirée » ✘ |
+| `boot()`, poste local sans authentification | **il n'existe pas de session** | « Session expirée » + « Prise de quart » ✘ |
+
+Le commentaire de cette même fonction dénonce le message précédent — « le
+bandeau annonçait *Service injoignable*. C'est FAUX […] un diagnostic erroné
+envoie l'exploitant vérifier le réseau au lieu de se reconnecter » — et la
+correction avait remplacé un message faux par un autre message faux, dans deux
+cas sur trois. **Corrigé** : le motif et l'état de liaison sont des paramètres,
+et `down` n'est plus posé que lorsque l'écran est réellement figé sur des
+données périmées.
+
+### S23-2 — Les huit pondérations du contrôleur sont écrites en dur à l'écran
+
+Le fichier s'ouvre sur trois principes. Le deuxième :
+
+> « Aucun chiffre affiché n'est en dur. La version précédente affichait
+> *seuil 0,487* et *R² 0,968* dans le HTML alors que les valeurs réelles
+> étaient 0,973. »
+
+`CHECKS`, ligne 1 563, écrit les huit pondérations en clair — « 22 % », « 16 % »,
+« 14 % »… — dans le panneau qui explique **à un jury** comment la note globale
+du contrôleur est composée. Rien ne les rattache à `JudgeVerifier.WEIGHTS`, qui
+est la seule source appliquée.
+
+**Elles coïncident aujourd'hui** — vérifié, les huit valeurs correspondent. Le
+défaut est donc latent, et c'est le traitement retenu pour la clé du cache de
+scores en S3-4 : *un piège qui ne se déclenche pas encore reste un piège,
+d'autant qu'il rendrait un résultat faux sans rien signaler*.
+
+**Verrou** (le patron, quatorzième emploi) —
+`test_les_poids_affiches_sont_ceux_que_le_juge_applique` lit `CHECKS` dans
+`app.js` et `WEIGHTS` dans `judge_agent.py`, et exige l'égalité.
+
+**Preuve par mutation** : porter V1 à 0,17 et V5 à 0,20 côté serveur fait
+échouer le test. Vérifié.
+
+### S23-3 — La prise de quart déclarative ne trace rien
+
+Sur un poste sans authentification, l'écran d'accueil affiche :
+
+> « Renseignez votre adresse pour **tracer la prise de quart** ; aucun mot de
+> passe ne peut être vérifié. »
+
+La deuxième moitié de la phrase est honnête. La première ne l'est pas :
+
+```js
+S.shiftOperator = email;      // ligne 424
+```
+
+Vérifié sur tout le fichier et sur `dashboard.html` : **`shiftOperator` est
+écrit une fois et lu nulle part.** Aucun appel serveur, aucune entrée de
+journal, rien qui survive à un rechargement de page. L'écran promet une
+traçabilité qui n'existe pas — sur un projet dont le journal d'actions est
+l'argument central.
+
+**Non corrigé** : le rendre vrai suppose une décision — soit retirer la promesse
+du texte, soit ouvrir une route qui consigne la prise de quart, ce qui pose la
+question de ce que vaut une identité non authentifiée dans un journal
+d'exploitation. Elle rejoint le chantier de S15-1.
+
+### S23-4 — L'écran doit deviner un indicateur à partir de son libellé français
+
+```js
+const figure = (kpi?.figures || []).find((f) => f.label.includes("signalement"));
+```
+
+`renderFlagRate` cherche l'indicateur de taux de signalement **par sous-chaîne
+de son intitulé affiché**. Ce n'est pas de la négligence : la dataclass `Figure`
+de `src/analytics/kpi.py` ne porte **aucun identifiant stable** — `label`,
+`value`, `unit`, `note`, `evidence_level`, et c'est tout.
+
+Le front n'a donc pas le choix : il doit apparier sur de la prose destinée à un
+humain. Or le lot S10 a réécrit ces libellés, et toute réécriture future casse
+le rattachement **en silence** — le bandeau se vide sans qu'aucune erreur ne
+soit levée.
+
+**Non corrigé** : la correction est côté serveur — ajouter un `key` stable à
+`Figure` et le publier — et touche la forme de `/api/kpi`. À faire avec S15-1.
+
+### S23-5 — Vérifié, sans constat
+
+- `twinStateFrom` lit `finding_map` servi par `/api/topology` : aucune règle
+  métier réimplémentée, un code inconnu n'allume rien (confirme S2-6).
+- `OBSERVABILITE` porte bien les trois états et se replie sur le booléen
+  seulement si `observabilite` est absent — la correction de S2-5 est en place.
+- `GATE_LABEL` et le rendu intégral des preuves : corrections de S12-6 en place.
+- `renderCoverage` tronque la liste des angles morts à **cinq**, sans « et N
+  autres ». Le référentiel en déclare huit au total, tous états confondus : la
+  troncature est silencieuse par construction, même si elle ne mord pas
+  forcément aujourd'hui. Signalé, non corrigé.
+- `generated_from.gap_calendar_hours` affiché par `renderValidation` reste le
+  **paramètre** (24 h), alors que les plis publient désormais la valeur mesurée
+  (25,0 h) depuis S12-3. Écart d'une heure, sans conséquence de lecture, mais
+  c'est la même distinction « affirmé / constaté ».
+
+### S23-6 — ERREUR DE L'AUDIT : un nom inféré au lieu d'être lu
+
+`test_les_poids_affiches_sont_ceux_que_le_juge_applique` importait
+`JudgeVerifier`. **Cette classe n'existe pas.** La classe qui porte `WEIGHTS`
+s'appelle `VerificationLayer`.
+
+Je l'avais déduite de `self.verifier.run(decision, facts)`, lu au site d'appel
+dans `judge()` — c'est-à-dire que j'ai construit un nom à partir d'un nom
+d'attribut au lieu de suivre la référence jusqu'à sa définition. C'est la
+**règle 2 de la méthode**, appliquée à mon propre code et enfreinte : *aucune
+recherche n'établit un nom, il faut suivre la donnée jusqu'à son point de
+définition*.
+
+Aggravant : le nom correct figurait **435 lignes plus haut dans le fichier même
+que j'étais en train de compléter** —
+`test_poids_des_controles_somment_a_un` importe `VerificationLayer` depuis
+toujours. Je n'avais pas lu `test_agents_judge.py` intégralement, et c'est
+précisément le trou de couverture que l'inventaire du lot précédent a chiffré :
+21 fichiers de tests sur 23 jamais lus.
+
+Corrigé. Le test mesure bien ce qu'il annonce — vérifié hors dépôt, les huit
+poids coïncident et leur somme vaut 1,0.
+
+**Ce que cela confirme** : la lecture des tests n'est pas une formalité de fin de
+liste. C'est la couche où quatre défauts de ce travail ont été trouvés (S6-4,
+S13-4, S19-3, WF-4), et celle où j'ai commis le mien.
+
+## Lot S24 — la couche de vérification (835 lignes lues intégralement)
+
+`tests/test_agents_judge.py` (699) · `tests/conftest.py` (136)
+
+Lot ouvert par une **erreur de l'audit** : S23-6, un nom de classe inféré au
+lieu d'être lu, dans le fichier même que je complétais. Le propriétaire l'a
+relevé, et il a raison — c'est la démonstration de sa consigne. Ce lot est donc
+la lecture qui aurait dû précéder.
+
+### S24-1 — Quatre contrôles pouvaient passer sans rien vérifier
+
+Le fichier se présente comme « le cœur de la garantie apportée par le projet ».
+Quatre de ses tests portent leur assertion **à l'intérieur d'une boucle ou
+d'une condition**, sans jamais vérifier qu'un cas a été examiné :
+
+| test | condition | si elle n'est jamais vraie |
+|---|---|---|
+| `..._action_avec_arret_mentionne_la_consignation` | `if requires_shutdown` | passe, **zéro assertion** |
+| `..._un_defaut_de_mesure_ne_domine_jamais...` | `if dominant is not None and len(severites) == 1` | passe, zéro assertion |
+| `..._la_tache_preventive_citee_est_la_plus_frequente` | `if len(refs) < 2: continue` | passe, zéro assertion |
+| `..._un_seul_bareme_de_confiance_existe` | boucle sur `notable_timestamps(15)` | passe si la liste est vide |
+
+**Et le dépôt porte déjà la doctrine, écrite deux fois.**
+`test_typographie._exiger` impose un corpus minimal avec ce motif : « un
+contrôle qui réussit d'autant plus sûrement qu'il ne lit rien ne contrôle
+rien ». Et **ce fichier l'applique lui-même trois fois** —
+`test_une_action_en_marche_conforme...` et
+`test_judge_detecte_une_severite_sous_estimee` par `pytest.skip`,
+`test_aucune_decision_native_ne_declenche_la_sur_confiance` par
+`assert instants`. Sept tests exposés au même risque, trois protégés, quatre
+non. Le motif du dépôt, dans la couche censée l'empêcher.
+
+Corrigé : chacun compte ce qu'il a réellement mis à l'épreuve, et **déclare**
+par `skip` quand le corpus ne lui offre rien — plutôt que de rendre un vert
+silencieux.
+
+### S24-2 — Et l'une des deux moitiés de ce test était morte
+
+```python
+txt = d.recommended_action.description.lower()
+assert "consign" in txt or "arret" in txt
+```
+
+Le texte comparé est **accentué** depuis S4-2 : les actions écrivent « arrêt ».
+`"arret" in txt` était donc **toujours faux**, et seule la première moitié de la
+disjonction pouvait valoir. Une action qui dirait « Arrêter la ligne » sans le
+mot « consignation » serait passée.
+
+C'est S6-4 une nouvelle fois — comparer une chaîne dépouillée à un texte
+accentué — et le fichier importe `sans_accents` depuis sa vingtième ligne. Il ne
+s'en servait que dans un test sur onze. Le texte comparé est désormais dépouillé.
+
+### S24-3 — Deux tests mutent une fixture de session sans la restituer
+
+`pipeline` est de portée **session**. `test_le_banc_ne_pollue_pas_l_auto_surveillance`
+remplaçait l'auditeur du Judge :
+
+```python
+pipeline.judge.auditor = type(pipeline.judge.auditor)()
+```
+
+sans jamais le restituer. Toutes les décisions accumulées par les tests
+précédents disparaissaient, et le nouvel auditeur restait en place pour tous les
+suivants. `test_auto_surveillance_du_judge` exige `n > 0` : **il ne passe que
+parce qu'il est déclaré plus haut dans le fichier**, donc exécuté avant. Une
+sélection par `-k`, une exécution en parallèle ou un simple déplacement de
+fonction le casse — et le message ne dirait rien de la cause.
+
+Le bon patron est **dix lignes plus bas** dans le même fichier :
+`suspended_audit()` restitue l'état antérieur même en cas d'exception, et
+`test_l_auto_surveillance_reprend_apres_le_banc` le vérifie explicitement.
+
+Corrigé par `try/finally`. **Y compris sur mon propre test** de S14-2, qui
+vidait `_facts_cache` sans le restituer : même défaut, commis par l'audit, deux
+lots plus tôt.
+
+### S24-4 — Vérifié, sans constat
+
+- **`conftest.py`** neutralise `AUTH_ENABLED`, `SMTP_HOST` et `ALERT_EMAIL_TO`,
+  et construit le pipeline `use_llm=False`. Ma crainte d'une dépendance à
+  `GEMINI_API_KEY` du poste — la famille ENV-1 — est **infondée** : vérifiée,
+  pas supposée. Le mode « règles » ne dépend pas du `.env`.
+- `test_agent_fonctionne_sans_cle_api` vérifie en réalité qu'un pipeline
+  construit `use_llm=False` est en mode règles. Ce n'est pas ce que son nom
+  annonce — « sans clé API » — et le chemin réel, clé absente avec
+  `use_llm=True`, n'est testé nulle part. Observation mineure, non corrigée :
+  la propriété utile (démontrable hors ligne) est bien tenue.
+- Les seuils d'acceptation du banc (`0,85`, `0,20`, `2,0`) sont le contrat, et
+  ils sont écrits à un seul endroit.
+
+## Lot S25 — les contrôles de documentation (802 lignes lues intégralement)
+
+`tests/test_documentation.py` (345) · `tests/test_project_metrics.py` (121) ·
+`tests/helpers.py` (24) · plus la mesure du rapport qu'ils balaient.
+
+### S25-1 — RETRACTATION : le rapport ne cite pas le PSI. Je l'ai affirmé deux fois.
+
+Les lots S12 et S21 écrivent, comme conséquence documentaire à porter en F1 :
+
+> « Le rapport cite un **PSI de 3,745** comme mesure de dérive. »
+> « Le PSI maximal n'est plus 3,7446 mais **3,1826**, et le rapport doit le
+> réécrire. »
+
+**Mesuré sur `docs/rapport_technique.md`, 996 lignes : le mot « PSI » n'y
+figure pas.** Ni « 3,745 », ni « dérive de distribution », ni « portes de
+déploiement », ni « pli ». Le rapport est **entièrement muet** sur l'appareil
+de validation.
+
+J'ai donc décrit le contenu d'un fichier que je n'avais pas lu, dans le journal
+que le jury lira. C'est la **troisième fois de cette session** :
+
+| # | affirmation | ce qui était vrai |
+|---|---|---|
+| S21-2 | pli 4 à 0 % d'extrapolation | 12,8 % — j'avais calculé sur le calendrier, le code compte les heures de marche |
+| S23-6 | classe `JudgeVerifier` | `VerificationLayer`, nommée 435 lignes plus haut dans le fichier que je complétais |
+| S25-1 | le rapport cite le PSI | il n'en parle pas |
+
+Les trois ont la même cause : **avoir conclu sur un fichier non lu**. C'est la
+consigne centrale du propriétaire, et c'est moi qui l'ai enfreinte trois fois en
+auditant les autres sur ce point exact.
+
+### S25-2 — Et le vrai constat est plus lourd que celui que j'avais inventé
+
+Le rapport ne se trompe pas sur le PSI : **il n'en parle pas du tout.** Or le
+poste affiche en page Contrôle « 3 / 7 portes franchies », avec les preuves de
+chacune, et `validate_release.py` en fait son code de retour.
+
+Un jury qui lit le rapport puis ouvre le poste trouve un dispositif de
+gouvernance — sept portes, quatre en échec, un backtest à quatre plis, une
+analyse de dérive — dont **aucune ligne du document ne parle**. Ce n'est pas un
+chiffre faux à corriger, c'est un chapitre absent à écrire. Il porte pourtant
+ce que le projet a de plus défendable : la promotion est refusée, et elle l'est
+pour deux raisons nommées.
+
+### S25-3 — Trois chiffres du résumé exécutif n'ont aucun verrou
+
+`test_aucun_chiffre_cle_ne_contredit_les_artefacts` couvre cinq termes :
+features, épisodes agrégés, heures atypiques, généralisation du contrôleur, part
+du risque couverte. Le résumé exécutif en publie trois autres, non couverts :
+
+| ligne 33 du rapport | verrou |
+|---|---|
+| « **290 cas de test** côté Python » | **aucun** |
+| « **98 vérifications** des bancs du poste » | aucun — mais mesuré vert : 54 + 35 + 9 = 98 ✔ |
+| « **87,15 %** de couverture de lignes » | `test_project_metrics` exige seulement `>= 85,0` |
+
+**Et cette session a ajouté une dizaine de tests.** « 290 » est donc
+vraisemblablement périmé, et rien ne le dira : `project_metrics.json` n'a pas
+été régénéré — seul `validate_release.py` l'a été. La commande manquante est
+`scripts/generate_project_metrics.py`, avec la boucle d'amorçage que
+`test_project_metrics` documente sur dix-huit lignes.
+
+### S25-4 — Ce que ces contrôles font bien, et qu'il faut garder
+
+Quatre balayages complémentaires, chacun né d'un défaut réel : endpoints
+documentés et supprimés, tests cités et inexistants, commandes `make` absentes,
+chemins fantômes (`legacy/`), liens Markdown morts. `docs/audits/` est écarté
+avec un motif écrit — un journal décrit une **histoire**, pas un système —
+et la contrepartie est assumée.
+
+`helpers.py` ne fait plus que réexporter `sans_accents` depuis `src.formatting`
+au lieu d'en porter une copie : « on réexporte, on ne recopie pas ». C'est la
+correction FMT-2, et elle est exemplaire.
+
+### Ce que F1 doit faire, révisé
+
+1. **écrire le chapitre absent** sur les portes de déploiement et le backtest —
+   ce n'est pas une réécriture, c'est un ajout ;
+2. régénérer `project_metrics.json` puis confronter « 290 cas de test » ;
+3. élargir `test_aucun_chiffre_cle_ne_contredit_les_artefacts` **après** avoir
+   lu le rapport, pas avant — cinq termes couverts sur les dizaines qu'il
+   publie.
+
+## Lot S26 — le rapport technique (997 lignes lues intégralement)
+
+`docs/rapport_technique.md`, lu en deux tranches contiguës (1-732, 733-997).
+C'est l'objectif n° 2 du propriétaire et le document que le jury lira.
+
+**Six constats vérifiés avant d'être écrits. Deux de mes suspicions étaient
+fausses** — et c'est le point le plus utile du lot, après trois erreurs de ce
+type dans cette session.
+
+| suspicion | mesure | verdict |
+|---|---|---|
+| « 45 routes `/api/` » serait périmé | **45** exactement | **juste, aucun constat** |
+| les chiffres du § 8.3 dateraient d'avant S6 | l'artefact donne 12, 9,91, 0 %, 118, 5,78, 5, 4,13 | **tous exacts** |
+
+### S26-1 — Une grandeur supprimée du code décrite au § 5.2
+
+Le tableau des grandeurs dérivées publie `duty_per_load`, et le paragraphe
+suivant en tire un principe : « la normalisation par la charge soufre est
+indispensable ». **Cette colonne a été retirée en S1-3** — aucun lecteur, nulle
+part — et le test qui la maintenait en vie a été réaligné sur `flow_per_load`.
+
+L'annexe B, elle, **avait été corrigée** : elle liste bien `flow_per_load`. Le
+§ 5.2 ne l'avait pas été. Corrigé à un endroit, pas à son jumeau — dans le
+document où ce motif est le plus coûteux.
+
+### S26-2 — Le § 4.1 décrit un booléen, le § 10.4 lui donne trois états
+
+§ 4.1 : « un indicateur `observable` déclarant s'il est détectable **ou non** ».
+§ 10.4, soixante pages plus loin : « le référentiel les déclare
+`observable: partial` ».
+
+Un booléen ne vaut pas `partial`. Le champ à trois états s'appelle
+`observabilite` depuis S2-5, et le booléen n'est conservé que pour compatibilité
+d'affichage — c'est lui qui faisait afficher « non — angle mort » sur la
+corrosion du faisceau. **Le rapport se contredit à l'intérieur de lui-même.**
+Corrigé, et le § 4.1 renvoie désormais au § 10.4.
+
+### S26-3 — « 511 » avait survécu en changeant de mot
+
+Le docstring de `test_aucun_chiffre_cle_ne_contredit_les_artefacts` recense,
+parmi ses huit prises : « **511 heures atypiques** à trois lignes de 530 ».
+
+La première occurrence a bien été corrigée. La **seconde**, trois lignes plus
+bas, écrivait : « un opérateur ne traite pas **511 points d'alarme** ». Le motif
+`(\d+)\s+heures atypiques` ne la voyait pas — **elle désigne la même grandeur
+sous un autre nom**, et elle est restée fausse.
+
+C'est le motif dominant du dépôt appliqué au contrôle censé l'empêcher.
+
+**Verrou** : le terme `points d'alarme` est ajouté aux `attendus`, adossé au
+même champ d'artefact. **Preuve par mutation** : « 511 points d'alarme » →
+écart détecté, le test échoue ; « 530 » → conforme. Le nombre de routes `/api/`
+du § 12.2 est verrouillé au passage — juste aujourd'hui, mais rien ne le
+maintenait.
+
+### S26-4 — Trois indicateurs déclarés `observed` que le code déclare `derived`
+
+Le tableau du § 10.5 publie le niveau de preuve de cinq indicateurs. `kpi.py`
+en déclare **deux `observed` et cinq `derived`** depuis S10-2. Trois lignes se
+contredisent :
+
+| indicateur | rapport | code |
+|---|---|---|
+| Marche durablement sous consigne | `observed` | **`derived`** |
+| Charge d'alertes pour l'exploitant | `observed` | **`derived`** |
+| Taux horaire de signalement | `observed` | **`derived`** |
+| Exposition corrosive cumulée | `derived` | **`observed`** |
+
+Les quatre étaient faux, **dont un dans l'autre sens**. Or l'en-tête de `kpi.py`
+pose qu'une grandeur `derived` « ne doit jamais être présentée comme une
+mesure » : le rapport faisait exactement cela pour la charge d'alertes, c'est-à-dire
+pour le « 5 épisodes/mois » qu'il publie deux sections plus haut. Corrigé.
+
+### S26-5 — Le § 12.2 décrit le poste d'avant la correction scientifique
+
+« **Six familles de courbes** couvrent […] performance observée/attendue. »
+
+Le poste en compte **dix**. Les quatre manquantes sont précisément celles
+ajoutées par S1-4 et API-2 : coefficient d'échange observé contre attendu,
+résistance d'encrassement, température d'entrée observée contre attendue, source
+froide. **Ce sont les quatre qui portent le diagnostic** — celles que toute la
+correction d'ADR-002 existe pour rendre traçables.
+
+Et « performance observée / attendue » est **mot pour mot le libellé que
+`app.js` a explicitement corrigé** : « Le titre disait *Performance observée /
+attendue*. C'est ce que cette paire n'est pas : le résidu de duty vaut l'écart
+de consigne changé de signe. » Le rapport portait encore le libellé fautif.
+Corrigé, avec le renvoi au § 5.3.
+
+### S26-6 — Constat OUVERT : ce que mesure `trap_detection_rate`
+
+L'artefact publie `trap_detection_rate: 0.958` et `trap_missed: 5`. Le rapport
+présente **100 %** comme taux de détection et **95,8 %** comme « détection ET
+sanction suffisante », avec « 5 cas détectés mais insuffisamment sanctionnés ».
+
+Les deux lectures sont cohérentes entre elles **si** le champ nommé
+`trap_detection_rate` mesure en réalité détection + sanction. Le nom dit le
+contraire, et `renderBench` l'affiche sous « pièges conçus (non-régression) ».
+**Trancher exige de lire `judge_eval.py` intégralement** — 759 lignes, lues par
+une session antérieure, pas par moi. Constat laissé ouvert plutôt que fermé au
+jugé.
+
+### Ce que le rapport fait bien, et qu'il ne faut pas toucher
+
+Le § 5.3 démontre la circularité algébrique du duty avec ses chiffres. Le
+§ 5.3 bis expose la climatologie de Safi et **dit franchement** que UA est
+apparent. Le § 9.2 documente une erreur d'analyse commise puis corrigée. Le
+§ 10.5 explique le retrait du chiffrage économique au lieu de le supprimer en
+silence. L'annexe B porte sa propre note de correction. **C'est un rapport
+honnête** ; ses défauts sont des retards de propagation, pas des complaisances.
+
+### Reste pour F1
+
+- écrire le chapitre absent sur les **portes de déploiement** et le backtest
+  (S25-2) — le document n'en dit rien ;
+- régénérer `project_metrics.json` et confronter « 290 cas de test » ;
+- trancher S26-6 après lecture intégrale de `judge_eval.py`.
+
+## Lot S27 — RAP-17 clos (759 lignes lues intégralement)
+
+`src/governance/judge_eval.py`
+
+### S27-1 — Le constat que j'ai retrouvé sans l'avoir lu
+
+S26-6 laissait ouverte la question de ce que mesure `trap_detection_rate`. La
+lecture intégrale tranche en une ligne :
+
+```python
+"trap_detection_rate": round(float(traps_raw["success"].mean()), 3),
+#                                            ^^^^^^^ = caught AND penalised
+```
+
+**Le champ contient un taux de SUCCÈS, pas de détection.** Et dix lignes plus
+haut, `by_trap` publie un `detection_rate` qui, lui, vaut bien `caught.mean()`.
+**Deux champs, le même mot, deux grandeurs.**
+
+**Ce constat existait déjà dans ce journal, sous le nom RAP-17, gravité
+« haute »**, écrit lors de la phase de diagnostic — ligne 3715 :
+
+> « La clé publiée porte le mauvais nom […] Trois consommateurs lisent cette clé
+> en croyant lire une détection : la porte d'intégration continue, ADR-004, et
+> tout lecteur de l'artefact. »
+> « Le 100 % n'est publié nulle part dans le résumé. »
+
+Il n'a jamais été corrigé. Je l'ai retrouvé indépendamment, par lecture — ce qui
+valide la méthode, mais je l'aurais trouvé plus vite en lisant le journal en
+entier plutôt que ses onze derniers lots.
+
+### S27-2 — Ce que le mauvais nom coûtait
+
+Sur ce corpus, l'écart est de **4,2 points** : 100 % de détection pour 95,8 % de
+succès. Un lecteur de l'artefact concluait « 4,2 % des fautes ne sont pas
+vues ». **C'est faux : elles sont toutes vues.** Les cinq cas sont détectés et
+insuffisamment sanctionnés, sur deux familles seulement — et cette distinction
+est précisément ce que le rapport § 8.3 explique correctement.
+
+**Le rapport était donc plus juste que l'artefact qu'il cite.** C'est l'inverse
+de l'ordre de fraîcheur établi par cet audit sur dix-huit occurrences
+(`code/artefacts → README → ADR → rapport`). Première exception recensée.
+
+Quatre consommateurs lisaient la clé mal nommée, dont **la porte d'intégration
+continue** (`ci.yml:114`) et `test_api.py:522`. Fonctionnellement le seuil de
+0,85 opposé au taux le plus strict reste correct — le risque était
+interprétatif, et il portait sur le chiffre que le jury regardera.
+
+### S27-3 — Correction : trois situations, trois champs
+
+Le résumé ne distinguait pas « jamais vue » de « vue mais peu sanctionnée » :
+`trap_missed` comptait les deux.
+
+| champ | mesure |
+|---|---|
+| `trap_detection_rate` | `caught` — les fautes réellement identifiées |
+| `trap_success_rate` | `caught ET penalised` — l'ancien contenu, sous son vrai nom |
+| `trap_caught_not_sanctioned` | vues, pas assez sanctionnées |
+| `trap_missed` | **jamais vues** |
+
+**Preuve par mutation**, sur quatre cas construits (2 succès, 1 vue-non-sanctionnée,
+1 jamais vue) :
+
+| | ancien | nouveau |
+|---|---|---|
+| `trap_detection_rate` | 0,500 — nommé « détection » | **0,750** — réellement vues |
+| `trap_success_rate` | absent | 0,500 |
+| `trap_caught_not_sanctioned` | absent | **1** |
+| `trap_missed` | **2** — deux natures confondues | **1** |
+
+Portés : le producteur, `report()` (qui écrivait « rappel global … fautes
+correctement identifiées » sur le taux de succès), `ci.yml`, `test_api.py`,
+`test_agents_judge.py`, le poste, et la fixture du banc front. Le poste affiche
+désormais **les deux** chiffres — « pièges conçus : vus » et « vus ET
+sanctionnés » — au lieu du seul taux mal nommé.
+
+`test_agents_judge.py` gagne l'invariant qui manquait :
+`trap_detection_rate >= trap_success_rate`. Il est vrai par construction
+(`success ⊆ caught`) et il échouerait si quelqu'un réintervertissait les deux.
+
+### À régénérer
+
+`reports/judge_eval_summary.json` porte encore l'ancien vocabulaire. La commande
+est `make eval-judge`, ou `.\.venv\Scripts\python.exe -m src.governance.judge_eval`.
+Le § 8.3 du rapport reste juste sur le fond, et pourra désormais **citer les
+champs par leur nom**.
+
+## Lot S28 — README et ADR-004 (643 lignes lues intégralement)
+
+`README.md` (556) · `docs/decisions/ADR-004-controleur-de-coherence.md` (87)
+
+Lot déclenché par la régénération de S27 : le banc republié donne
+**8,6 % (n = 58)** de généralisation, contre « 10 % (n = 60) » dans les
+documents. Le contrôle étendu en S26 l'a signalé — **le dispositif a fonctionné
+avant moi**.
+
+### S28-1 — Le même chiffre publié trois fois, verrouillé une seule
+
+Le README publie le taux de généralisation **trois fois** : dans la synthèse
+d'ouverture, dans le tableau du banc, et dans la phrase de mise en avant
+« **10 %**, et c'est le chiffre à retenir ». Le motif du contrôle exigeait
+`(n = …)` : il n'en voyait **qu'une**.
+
+C'est exactement le motif de « 511 » (S26-3) : la valeur survit là où le
+contrôle ne regarde pas. Un second motif est ajouté, adossé à la phrase de mise
+en avant.
+
+**Et il a immédiatement trouvé ce que je n'avais pas vu** : deux occurrences de
+plus dans **ADR-004**, un fichier que je n'avais pas lu. Je l'ai lu avant d'y
+toucher.
+
+### S28-2 — La précision publiée n'était pas celle de l'artefact
+
+L'attendu était arrondi à l'entier (`:.0f`) : le banc mesure 0,086, le contrôle
+attendait « 9 » et lisait « 8 » dans « 8,6 % ». **Arrondir à l'entier un taux de
+gouvernance qui vaut moins de dix fait perdre un demi-point sur le chiffre que
+le projet met le plus en avant.** Attendu et motif passent à la décimale
+française.
+
+### S28-3 — ADR-004 se contredit à neuf lignes d'intervalle
+
+L'ADR liste les cinq mutations non ciblées :
+
+> « bruit sur les valeurs, sévérité permutée, raisonnement tronqué, modes
+> permutés, confiance déplacée. **Aucune ne vise un contrôle.** »
+
+Neuf lignes plus bas, le même document explique que **trois de ces cinq
+visaient trois contrôles nommés** et ont été retirées pour cette raison —
+« bruiter une valeur de 3 à 25 % franchit toujours la tolérance de 1 % ».
+
+**Le paragraphe qui corrige le défaut est imprimé sous la liste qui le porte.**
+La liste réelle est celle de `_blind_mutations` : diagnostic et raisonnement
+intervertis, raisonnement tronqué, action d'un autre mode, service destinataire
+erroné, check-list erronée. Corrigée, avec le renvoi au test qui la verrouille.
+
+### S28-4 — Un fragment de tableau échoué en plein texte
+
+Le tableau du banc portait **deux colonnes sur trois** :
+
+```
+| Faux positifs sur cas sains | 0 % |
+```
+
+et sa dernière cellule se trouvait **neuf lignes plus bas**, collée à la fin
+d'un paragraphe :
+
+```
+dispositif du tout. ne rejette pas le correct |
+```
+
+Une coquille de copie, dans une décision d'architecture destinée au jury. Le
+tableau est reconstitué, et il publie désormais **les deux** taux distingués par
+S27 : « pièges conçus — vus » à 100 %, « vus ET sanctionnés » à 95,8 %.
+
+### S28-5 — Les plafonds de sécurité, incomplets dans l'ADR
+
+L'ADR cite cinq manquements plafonnés à 4/10 et **omet l'état de marche erroné,
+plafonné à 5/10** — que le README comme le rapport mentionnent tous deux, et
+que `_apply_safety_cap` applique. Ajouté, avec son motif.
+
+### S28-6 — Six corrections au README
+
+| # | ce qui était écrit | mesure |
+|---|---|---|
+| variance partagée | **90,6 %** | **88 %** — le même document publie 88 % trente lignes plus bas, et r = −0,94 donne r² = 88,4 % |
+| bases de détermination | quatre | **cinq** — `climatology` manquait, celle qui fonde la température d'eau de mer, donc toute la correction d'ADR-002 |
+| « 5 épisodes par mois » | présenté comme un comptage | **`derived`** (S10-2) — le README énonce la distinction trente lignes plus bas sans se l'appliquer |
+| généralisation ×3 | 10 % | 8,6 % |
+| accord | « aucune des quatorze mois » | « aucun » |
+
+Le **90,6 %** est le plus net : il est contredit par l'arithmétique du document
+lui-même. `r = −0,94` publié deux lignes au-dessus donne `r² = 88,4 %`, et le
+tableau d'indépendance trente lignes plus bas écrit **88 %**. Une seule des deux
+valeurs pouvait être vraie.
+
+### État des quatre motifs après correction
+
+**Zéro écart** sur `README.md`, les onze ADR, `architecture.md`,
+`rapport_technique.md`, le runbook et la matrice de traçabilité.
+
+## Lot S29 — le point d'entrée et le rédacteur d'escalade (367 lignes lues intégralement)
+
+`api/__main__.py` (73) · `src/notifications/redaction.py` (294)
+
+Les deux derniers fichiers de `src/` et `api/` que le brief listait comme jamais
+lus, hors `email.py`.
+
+### S29-0 — `api/__main__.py` : rien à reprendre
+
+Lu en entier. Il tient exactement sa promesse d'en-tête — rendre `API_HOST` et
+`API_PORT` effectifs, là où trois sources de vérité coexistaient et où la seule
+documentée était inerte. `config.validate()` échoue **avant** l'import
+d'uvicorn, `workers=1` porte son motif, et la double validation avec
+`api/main.py` est un filet assumé pour le lancement direct par uvicorn. **Aucun
+constat.**
+
+### S29-1 — Le courriel d'escalade expédiait les codes bruts que l'écran traduit
+
+`app.js` porte une table de **vingt** réserves traduites, avec ce motif :
+
+> « Le poste affichait le code brut — OVERCONFIDENCE — dans un encadré destiné à
+> l'exploitant. **Un code de programme n'est pas une réserve** : il faut dire ce
+> qui a été constaté et ce que cela change. »
+
+`rediger_gouvernance` publiait, sous le titre « Réserves les plus fréquentes sur
+les décisions » :
+
+```
+  • OVERCONFIDENCE — 12 cas
+  • HALLUCINATED_VALUE — 3 cas
+```
+
+**Et c'est le canal le plus asymétrique du système.** L'écran se lit devant le
+poste, avec le contexte sous les yeux. Le courriel se lit sur un téléphone, la
+nuit, sans rien d'autre — c'est précisément la situation où un code de programme
+ne veut rien dire.
+
+Le module condamne pourtant cela dans son propre en-tête, et porte **trois**
+tables de traduction pour les régimes, les origines et les modes d'agent. Il en
+manquait une, sur la surface qui en avait le plus besoin.
+
+### S29-2 — Et l'état du contrôleur, première ligne du rapport
+
+```python
+statut = juge.get("status") or "—"
+lignes.append(f"État : {statut}")
+```
+
+`status` vaut `ALERTE`, `OK` ou **`EN_ATTENTE`** — un identifiant à tiret bas,
+exactement ce que l'en-tête reproche à `running` et `rules`. C'est la première
+ligne de la section que le module désigne comme « l'information à agir ».
+
+### S29-3 — Deux formats de date dans un rapport d'une page
+
+La date d'édition passait par `_horodatage` — « 01/01/2024 à 07h00 ». La période
+analysée sortait brute — « 2024-01-01 07:00:00 ». **L'aide existe dans ce
+fichier et n'était appelée qu'une fois sur trois.**
+
+### S29-4 — Une suspicion vérifiée et retirée
+
+Je soupçonnais `step_nominal` d'être expédié sous sa forme pandas
+« 0 days 01:00:00 », par symétrie avec la fonction `duree()` que `app.js` porte
+pour ce cas. **Faux** : `dcs_loader.py:543` applique déjà `duree_pas()`, et son
+commentaire documente précisément cette correction — « deux implémentations
+d'une même règle, dans deux langages, dont la seule vivante était celle que
+l'ADR dit ne pas exister ». Vérifié avant d'écrire.
+
+### Correction et verrou
+
+La table des vingt libellés vit désormais dans `src/agents/schemas.py`, auprès
+du contrat de décision. Le poste garde la sienne — **on ne partage pas un
+dictionnaire entre Python et JavaScript** — et deux contrôles ferment l'écart :
+
+- `test_les_reserves_sont_traduites_des_deux_cotes` (le patron, quinzième
+  emploi) exige l'égalité des deux jeux de codes, dans les deux sens ;
+- l'extension de `test_les_identifiants_internes_sont_traduits` — voir S29-5.
+
+### État de la lecture
+
+Il ne reste, hors documentation et tests, que `src/notifications/email.py`
+(512 lignes) et le front `twin.js` (2 167) + `dashboard.html` (586).
+
+### S29-5 — DEUX ERREURS DE L'AUDIT SUR CE MEME LOT
+
+**Première.** J'ai écrit `test_le_courriel_ne_publie_aucun_identifiant_machine`
+avec un critère de **forme** : toute chaîne en majuscules de six lettres ou
+plus. Il a échoué sur `['AFFIRME', 'SERVICE', 'VERDICT']` — des mots français.
+`_titre()` met les intitulés de section en majuscules : « VERDICT DU
+CONTRÔLEUR », « CE QUE CE RAPPORT N'AFFIRME PAS ».
+
+**Une heuristique de forme ne distingue pas un identifiant d'un titre.** Le
+contrôle interroge désormais les **vocabulaires réels** : pour chaque code
+soumis, le libellé doit être présent et le code absent. Il ne peut plus produire
+de faux positif.
+
+C'est la quatrième fois de cette session que j'écris un prédicat sans avoir
+observé la sortie réelle — après le nom de classe, le calcul d'extrapolation et
+le contenu du rapport. La cause est chaque fois la même.
+
+**Seconde, et plus grave.** J'ai ajouté **deux tests à un fichier que je n'avais
+pas lu**. Il contenait déjà `test_les_identifiants_internes_sont_traduits`,
+dont le nom couvre exactement ma correction. Mon ajout faisait doublon sur trois
+vocabulaires, et sa fixture recopiait un `PAYLOAD` déjà défini au module.
+
+**Ce que la lecture a révélé, et qui vaut mieux que mon doublon** : le test
+existant portait **un nom plus large que sa couverture**. Il vérifiait trois
+vocabulaires sur cinq, et les deux manquants sont précisément ceux qui
+échappaient à la règle. C'est le motif du dépôt, et il ne se voyait qu'en
+lisant le fichier.
+
+Le doublon est retiré ; le test existant est étendu aux cinq vocabulaires, à la
+mise en forme de la période, et il réutilise le `PAYLOAD` du module — qui portait
+déjà `NO_QUANTITATIVE_EVIDENCE` et `ALERTE` sans que personne ne les vérifie.
+
+## Lot S30 — le canal d'escalade (512 lignes lues intégralement)
+
+`src/notifications/email.py` — dernier fichier de `src/` jamais lu.
+
+Le module est de très bonne facture : `diagnostiquer_echec` traduit chaque
+panne SMTP en cause actionnable plutôt qu'en nom de classe, le verrou sur les
+destinataires est justifié par une mesure (« 200 000 retraits, un observateur
+concurrent l'a vu vide 54 098 fois »), et `status()` dit **pourquoi** le canal
+est muet au lieu d'afficher « désactivé ». Les deux constats ci-dessous portent
+sur la même promesse d'en-tête, prise au mot.
+
+> « Si le canal sortant tombe, il faut pouvoir dire **APRÈS COUP** quelles
+> alertes auraient dû partir. »
+
+### S30-1 — La correction réintroduisait le défaut qu'elle corrige, par l'ordre de deux appels
+
+Le bloc « aucun destinataire » a été écrit pour un motif explicite : *une alerte
+critique sans destinataire disparaissait sans trace*. Il faisait :
+
+```python
+self._deposer(orphelin)          # peut lever
+self._tracer(orphelin, ...)      # jamais atteint si le dépôt lève
+```
+
+`_deposer` lève `RuntimeError("aucun dépôt configuré")` dès que `self.spool`
+vaut `None`. **Ce cas est atteignable** : le garde d'entrée n'exige que
+`transport_ready OU journal_ready`, donc un relais SMTP configuré **sans** dépôt
+passe ; `EmailNotifier` construit sans `spool` est exactement ce que font les
+tests ; et un système de fichiers en lecture seule annule le dépôt au démarrage.
+
+**Vérifié plutôt qu'affirmé** : l'exception ne tue pas le rejeu —
+`replay._emit` enveloppe ses abonnés dans un `try/except`. Mais elle empêche
+`_tracer`, et **l'alerte critique disparaît du journal d'escalade**, ne laissant
+qu'un « Abonné en erreur » dans le journal serveur, que l'exploitant ne lit pas.
+
+C'est le défaut exact que ce bloc existe pour corriger, réintroduit par l'ordre
+des deux appels.
+
+**Preuve par mutation** — relais configuré, aucun dépôt, aucun destinataire :
+
+| | journal d'escalade |
+|---|---|
+| avant | **0 entrée** — l'alerte disparaît |
+| après | **1 entrée** : « non distribué — aucun destinataire actif […] **— dépôt local indisponible (RuntimeError)** » |
+
+La trace passe avant le dépôt : c'est elle la garantie, le fichier n'en est que
+la copie durable. Et l'échec du dépôt est **nommé dans la trace** plutôt qu'avalé.
+
+### S30-2 — La seule perte d'alerte qui ne laissait aucune trace
+
+Les trois issues du worker — `envoye`, `depose`, `echec` — passent toutes par
+`_tracer`. Une quatrième existe et n'y passait pas : la **file saturée**.
+
+```python
+except queue.Full:
+    self._failed += 1
+    self._last_error = "file de notification saturee"
+    logger.warning(...)          # journal SERVEUR, pas journal d'escalade
+```
+
+Or la saturation survient **précisément quand le relais est lent ou tombe**,
+c'est-à-dire au moment où le plus d'alertes se perdent d'un coup. Le compteur
+`failed` montait ; l'exploitant voyait un nombre sans savoir lesquelles.
+
+**Preuve par mutation** : file de taille 1 déjà pleine, message critique soumis
+— 0 entrée avant, **1 entrée « echec — file de notification saturée : le relais
+ne suit pas, ce message n'a pas été mis en file »** après.
+
+### S30-3 — Vérifié, sans constat
+
+- **`_emit` enveloppe ses abonnés** : aucun abonné en erreur n'arrête le rejeu.
+  Ma crainte d'un plantage du fil de rejeu était infondée.
+- **`_recipients` est le seul état réellement partagé par trois fils**, et il
+  porte son verrou. `journal`, `_pending_keys` et `_last_sent_by_key` sont
+  manipulés par des opérations atomiques sous le GIL, ou n'ont qu'un écrivain.
+- **`stop()` renonce si la file est pleine** — le worker est un thread démon,
+  le processus se termine quand même. Sans conséquence, non corrigé.
+- `self.recipient` (affichage masqué) prend le **dernier** destinataire par ordre
+  alphabétique, tandis que `_premier_destinataire` prend le premier. Deux
+  conventions, mais la première ne sert qu'à l'affichage d'une adresse masquée.
+
+### État de la lecture de `src/` et `api/`
+
+**Terminé.** Tous les fichiers Python de `src/`, `api/` et `scripts/` producteurs
+de code ont été lus intégralement, par cette session ou les précédentes. Il ne
+reste que le front (`twin.js` 2 167, `dashboard.html` 586), la documentation
+(`architecture.md`, dix ADR) et une quinzaine de fichiers de tests.
+
+## Lot S31 — l'architecture et les deux ADR du cœur analytique (395 lignes lues intégralement)
+
+`docs/architecture.md` (196) · `ADR-001` (105) · `ADR-002` (75) ·
+`decisions/INDEX.md` (19)
+
+### S31-1 — ADR-002 portait trois chiffres périmés, et incohérents entre eux
+
+L'ADR qui fonde toute la correction scientifique — la climatologie de Safi qui
+rend UA calculable — publiait :
+
+> « R² = 0,92 avec un écart-type résiduel de **0,70 kW/K**, soit **3,6 %** de la
+> valeur de UA »
+
+| source | R² | σ | part de UA |
+|---|---|---|---|
+| **ADR-002** | 0,92 | **0,70 kW/K** | **3,6 %** |
+| rapport § 5.3 bis | 0,924 | 0,63 kW/K | 3,5 % |
+| README | 0,924 | 0,63 kW/K | 3,5 % |
+| artefact (`validate_release`) | **0,924** | **0,63 kW/K** | — |
+
+**Et les chiffres de l'ADR ne tiennent pas entre eux** : 0,70 rapporté à la
+référence de 17,77 kW/K donne **3,9 %**, pas 3,6 %. Le rapport et le README
+étaient déjà corrigés ; seul cet ADR portait l'ancien jeu — et c'est celui qu'un
+jury ouvre pour comprendre d'où vient l'indicateur.
+
+### S31-2 — Une couche entière absente de l'architecture
+
+Le schéma de chaîne et le tableau des responsabilités listent `domain`,
+`ingest`, `features`, `models`, `agents`, `governance`, `analytics`, `realtime`,
+`api`, `security`, `notifications`. **`src/operations/` n'y figure nulle part.**
+
+C'est pourtant 967 lignes, **deux bases SQLite**, le cycle de vie ISA-18.2 des
+alarmes, la traçabilité des interventions, six routes et un écran du poste. Un
+lecteur de l'architecture ne peut pas savoir que cette couche existe.
+
+Ajoutée au schéma et au tableau.
+
+### S31-3 — La commande de lancement contredisait le module écrit pour l'abolir
+
+`architecture.md` documentait :
+
+```
+.venv\Scripts\python -m uvicorn api.main:app --host 127.0.0.1 --port 8000
+```
+
+Or `api/__main__.py` existe **précisément** pour supprimer cette forme, et son
+en-tête nomme les coupables :
+
+> « Le Dockerfile écrivait `--host 0.0.0.0 --port 8000` en dur, **le README et
+> le runbook passaient leurs propres valeurs sur la ligne de commande**. Trois
+> sources de vérité pour une même décision, dont la seule documentée comme telle
+> était inerte. »
+
+**`architecture.md` était la quatrième**, et elle n'était pas citée. Remplacée
+par `python -m api`, avec la raison écrite et la forme uvicorn conservée comme
+alternative explicite.
+
+### S31-4 — Une date de vérification sans périmètre n'engage rien
+
+L'en-tête portait « **état vérifié le 2 août 2026** ». Cinq jours et une
+trentaine de lots plus tard, la mention affirmait une fraîcheur que le document
+n'avait plus — et elle ne disait pas **ce qui** avait été vérifié. La preuve est
+S31-2 : le document portait cette date alors qu'une couche entière y manquait.
+
+Remplacée par une mention qui nomme son périmètre, et qui cite l'omission comme
+raison d'être de ce format.
+
+### S31-5 — Vérifié, sans constat
+
+- **ADR-001** est exact de bout en bout : R² 0,968 / 0,962 / +0,006, r = −0,94,
+  variance partagée 88 % puis 29 %, et le tableau du banc d'injection correspond
+  au README. Le seul ADR du cœur analytique qui n'avait pas dérivé.
+- **INDEX** recense onze décisions, onze fichiers existent.
+- L'affirmation « `REFERENCE_FRACTION` définie une seule fois dans
+  `src/features/thermal.py` » est vraie — vérifiée en S1 et S8.
+- Les six invariants de sûreté correspondent au code, y compris le sixième dont
+  la note d'édition explique pourquoi un lecteur en comptait cinq.
+
+### Reste du corpus documentaire
+
+Huit ADR non lus (ADR-003, 005 à 011, 610 lignes) et le runbook.
+
+## Lot S32 — quatre ADR (291 lignes lues intégralement)
+
+`ADR-003` (73) · `ADR-005` (49) · `ADR-009` (82) · `ADR-011` (87)
+
+### S32-1 — La charge d'alertes était sur-estimée de 22 %, et c'est l'ADR qui avait raison
+
+ADR-003 conclut : « 58 épisodes agrégés sur quatorze mois, soit environ **4,1
+par mois** ». Le README et le rapport publiaient tous deux **5 épisodes/mois**.
+
+L'arbitre est le code. `kpi.alert_load` :
+
+```python
+span_days = (self.f.index.max() - self.f.index.min()).days
+per_month = len(episodes) * 30.0 / span_days
+```
+
+soit **58 × 30 / 424 = 4,10**. ADR-003 est exact ; les deux documents les plus
+lus sur-estimaient de **22 %**.
+
+**C'est la seconde exception à l'ordre de fraîcheur** que cet audit a établi sur
+dix-huit occurrences — `code/artefacts → README → ADR → rapport_technique`.
+Après S27-2, où le rapport était plus juste que l'artefact qu'il cite, voici un
+ADR plus juste que le README. L'ordre est une tendance forte, pas une loi : il
+ne dispense pas de vérifier.
+
+Le brief avait signalé ce chiffre pour sa **nature** — « le ~5 épisodes/mois est
+un résultat de modèle, le rapport doit le dire ». C'était vrai, et corrigé en
+S26-4 et S28-6. **Sa valeur était fausse en plus**, et personne ne l'avait vu :
+qualifier un chiffre ne le vérifie pas.
+
+**Verrou** : le terme est ajouté à `test_aucun_chiffre_cle_ne_contredit_les_artefacts`,
+calculé depuis `project_metrics` par la formule du KPI. Mesuré après correction :
+aucun écart sur le README et le rapport.
+
+### S32-2 — ADR-009 : les heures d'apprentissage avaient bougé
+
+Le tableau « avant / après » du rebasage publiait **3 487 h** d'apprentissage.
+L'artefact courant et le rapport § 5.3 bis disent **3 505 h**. Les cinq autres
+lignes du tableau — UA 17,77, R² 0,924, σ 0,63, corr −0,54 — sont exactes.
+Corrigée.
+
+### S32-3 — Vérifié, sans constat
+
+- **ADR-003** : « dix-sept règles », « trois des six dernières heures »
+  (`MODEL_PERSIST_MIN = 3`, `MODEL_PERSIST_WIN = 6`), « onze features »,
+  « 6,2 % » — tous conformes au code.
+- **ADR-005** : les quatre contrôles d'intégration continue qu'il annonce
+  existent, et le défaut qu'il documente — le rattachement d'une anomalie à une
+  pièce improvisé par sous-chaîne côté interface — est bien celui que S2-6 a
+  vérifié comme corrigé.
+- **ADR-009** : l'énoncé de la fuite de données est exact, et le test
+  d'alignement des trois périodes existe.
+- **ADR-011** : « le banc frontend passe de 36 à 54 vérifications » — mesuré,
+  `frontend_smoke` en compte **54**. Les cinq fonctions de `src/formatting` sont
+  exactes.
+
+Ces quatre ADR sont d'une qualité remarquable : chacun énonce l'option écartée
+et la raison de l'écarter, et ADR-009 publie l'effet mesuré de sa propre
+correction. **Deux chiffres périmés sur 291 lignes**, et l'un des deux
+corrigeait les documents plus lus que lui.
+
+### Reste du corpus documentaire
+
+Quatre ADR non lus — 006, 007, 008, 010 (284 lignes) — et le runbook.
+
+## Lot S33 — les quatre derniers ADR (284 lignes lues intégralement)
+
+`ADR-006` (48) · `ADR-007` (58) · `ADR-008` (91) · `ADR-010` (87).
+**Le corpus décisionnel est entièrement lu.**
+
+### S33-1 — ADR-010 annonçait deux plafonds de sécurité : les deux étaient faux
+
+> « une action `EN_MARCHE` alors que la tâche exige la consignation est
+> sanctionnée `UNSAFE_ACTION`, note plafonnée à **1/10** ; une action réclamant
+> un arrêt que le plan n'exige pas est sanctionnée `ACTION_OVERSIZED`, note
+> plafonnée à **4/10**. »
+
+Confronté à `_apply_safety_cap` :
+
+| plafond annoncé | plafond appliqué |
+|---|---|
+| `UNSAFE_ACTION` → **1/10** | **4,0** |
+| `ACTION_OVERSIZED` → **4/10** | **aucun** |
+
+Le second est le plus lourd. `ACTION_OVERSIZED` n'apparaît qu'**une fois** dans
+`judge_agent.py` — ligne 533, ajouté à `issues` — et il est **absent de
+l'ensemble bloquant**. Un arrêt injustifié ne coûte donc que le poids de V4,
+soit 14 %. **L'ADR annonce une barrière qui n'existe pas.**
+
+Le rapport § 7.3 et le README listent correctement les six plafonds, et aucun
+des deux ne mentionne `ACTION_OVERSIZED`. Troisième document isolé du corpus —
+et cette fois l'ADR est celui qui se trompe, à l'inverse de S32-1.
+
+**La question de fond est posée, pas tranchée.** Faut-il plafonner
+`ACTION_OVERSIZED` ? L'argument de l'ADR — « immobiliser une ligne sans
+nécessité est aussi une faute » — plaide pour. Le faire modifie le comportement
+du contrôleur et les chiffres du banc : c'est une décision, pas une correction
+documentaire. Elle est écrite dans l'ADR, à l'endroit où elle se pose.
+
+*La docstring de `test_une_action_en_marche_conforme_a_sa_tache_n_est_pas_sanctionnee`
+portait le même « 1/10 ». Corrigée.*
+
+### S33-2 — La commande de lancement, cinquième et sixième occurrences
+
+`api/__main__.py` a été écrit pour supprimer trois sources de vérité
+concurrentes, et son en-tête les nomme : « le Dockerfile […], **le README et le
+runbook** passaient leurs propres valeurs sur la ligne de commande ».
+
+Recensement après lecture :
+
+| document | ce qu'il écrivait | état |
+|---|---|---|
+| `architecture.md` | `-m uvicorn … --host … --port …` | corrigé en S31-3 |
+| **`ADR-006`** | `uvicorn api.main:app --port 8000` | **corrigé ici** |
+| **`README.md`** | `uvicorn api.main:app --reload --port 8000` | **corrigé ici** |
+| `docs/runbooks/runbook-operations.md` | `-m uvicorn … --host 0.0.0.0 --port 8000` | **reste** — fichier non lu |
+
+**Le module a été écrit pour mettre fin à cette dispersion, et aucun document ne
+l'avait adopté.** Quatre au lieu de trois, puisque `ADR-006` s'ajoutait à la
+liste que l'en-tête dressait. ADR-006 affirmait de surcroît « une seule commande
+le démarre » en publiant celle qui ignore la configuration.
+
+Le runbook n'est **pas corrigé** : je ne l'ai pas lu. Il fera son propre lot.
+
+### S33-3 — ADR-007 et ADR-008 : exacts
+
+- **ADR-007** : 600 000 itérations, douze caractères minimum, cinq tentatives,
+  dérivation PBKDF2 même sur adresse inconnue, session opaque + CSRF + double
+  expiration, registre hors dépôt — **tout est conforme au code lu en S13**. La
+  seule nuance non dite est l'écart d'égalisation d'une fois par processus
+  (S13-5), désormais écrit dans la docstring de `_decoy_hash` ; l'inscrire dans
+  un ADR relèverait de la sur-précision.
+- **ADR-008** : les cinq principes ISA-101 correspondent au code lu en S23 —
+  glyphe + mot + couleur (`sevMark`), troisième niveau d'Endsley (`trendOf`),
+  cache de série (`loadSeries`), moteur suspendu hors vue (`setPaused`),
+  dégradation automatique du rendu. Le banc frontend vérifie le contraste AA.
+  **Aucun constat.**
+
+### Bilan du corpus décisionnel — onze ADR lus
+
+| ADR | état |
+|---|---|
+| 001, 005, 007, 008 | exacts |
+| **002** | trois chiffres périmés et incohérents (S31-1) |
+| **003** | **plus juste que le README et le rapport** (S32-1) |
+| **004** | liste de mutations contredite neuf lignes plus bas, tableau amputé (S28-3, S28-4) |
+| **006** | commande de lancement obsolète |
+| **009** | heures d'apprentissage périmées (S32-2) |
+| **010** | deux plafonds faux, dont une barrière inexistante |
+| 011 | exact |
+
+**Quatre ADR sur onze sont exacts.** Les sept autres portent des chiffres ou des
+affirmations que le code a dépassés — et dans un cas, c'est l'ADR qui avait
+raison contre les deux documents les plus lus.
+
+## Lot S34 — runbook et documents de traçabilité (316 lignes lues intégralement)
+
+`docs/runbooks/runbook-operations.md` (248) · `data_dictionary_E7301.md` (40) ·
+`traceability_matrix_E7301.md` (28).
+**Le corpus documentaire est entièrement lu**, hors notebook.
+
+### S34-1 — Le canal d'escalade ne fait pas ce que le runbook annonce
+
+> « `ALERT_EMAIL_TO` reste un destinataire de repli facultatif ; **dès la
+> connexion, l'e-mail de la session le remplace**. »
+
+**Faux, et vérifié par la mesure.** `add_recipient` **ajoute** l'adresse du
+technicien à l'ensemble sans en retirer aucune, et `notify` boucle sur tous les
+destinataires :
+
+```
+ALERT_EMAIL_TO seul        : ['astreinte@ocpgroup.ma']
+après ouverture de session : ['astreinte@ocpgroup.ma', 'mounir@ocpgroup.ma']
+après déconnexion          : ['astreinte@ocpgroup.ma']
+```
+
+**Le comportement du code est le bon** — une astreinte permanente ne doit pas
+cesser d'être prévenue parce qu'un technicien s'est connecté. C'est le runbook
+qui décrivait l'inverse, et un exploitant qui le lit croit que l'adresse
+d'astreinte se tait dès qu'une session s'ouvre. Corrigé, avec la mesure.
+
+### S34-2 — Le compte des portes ne correspondait pas à l'écran
+
+Le runbook explique très bien pourquoi `/api/health` est `degraded` par
+construction, puis nomme « les trois portes que le code décide » et les deux en
+échec définitif. **Cinq.** Le poste en affiche **sept**.
+
+Les deux absentes — `redondance_hors_modele` et `derive_de_distribution` — sont
+publiées et en échec **sans bloquer**, et un exploitant qui lit « 3 / 7 portes
+franchies » sans les connaître y voit deux incidents. Ajoutées avec leur nature :
+l'une algébriquement infranchissable, l'autre non interprétable faute de pli
+saisonnièrement couvert.
+
+### S34-3 — Le dictionnaire des tags publiait un vocabulaire disparu
+
+La colonne « Statut » portait `inferred` et `unknown`, et la note d'en-tête une
+règle à leur sujet. **Ces trois valeurs — `confirmed`, `inferred`, `unknown` —
+apparaissent zéro fois dans `src/domain/tags.yaml`.** Le référentiel porte
+désormais `basis`, la liste des bases indépendantes.
+
+C'est exactement ce que le commentaire d'`app.js` documentait depuis longtemps :
+« `confidence` a **gardé son nom en changeant de sens** […] le rapport promet
+encore `confirmed` / `inferred` / `unknown` : ces trois valeurs n'existent
+plus ». Le poste avait été corrigé ; le dictionnaire gouverné, non.
+
+La colonne est remplacée par les bases réelles, tag par tag, lues dans le YAML.
+Les unités et les rôles y sortaient en codes bruts — `degC`, `m3/h`, `primary`,
+`degraded` — ce qu'ADR-011 règle 1 interdit : traduits.
+
+### S34-4 — CONSTAT OUVERT : `stoichio` est déclaré et utilisé par aucun tag
+
+`DeterminationBasis` (`knowledge.py:52`) déclare cinq bases. Mesuré sur
+`tags.yaml`, toutes sections :
+
+| base | tags |
+|---|---|
+| `isa_5_1` | 12 |
+| `data` | 12 |
+| `process` | 8 |
+| `climatology` | **1** — `T_SEAWATER`, sous `external_inputs` |
+| **`stoichio`** | **0** |
+
+**Cinquième occurrence du motif** après `rejected`/`validated_offline` (LIN-1),
+`CANCELLED` (WF-2), `derived` avant S10-2 et `uncertainty_level` (J-5) : une
+valeur déclarée qu'aucun producteur n'écrit.
+
+**Et elle n'est pas gratuite.** Le rapport § 2.2 fait explicitement l'argument
+stœchiométrique pour `LOAD_SULFUR` — « 1 t de soufre donne 3,06 t de H₂SO₄, soit
+~1 370 t/j à 18,6 t/h ». **Le raisonnement est tenu dans le rapport et n'est pas
+consigné dans le référentiel.** Deux issues, et je ne tranche pas : ajouter
+`stoichio` au `basis` de `LOAD_SULFUR` — ce qui rend le vocabulaire productible
+et aligne le référentiel sur son propre argument — ou retirer la valeur. La
+première est probablement la bonne, mais **`tags.yaml` est une donnée gouvernée**
+et son édition engage la provenance, pas la mise en forme.
+
+*Au passage, ma correction de S28-6 est confirmée : `climatology` est bien
+utilisé, par l'entrée qui rend UA calculable. La matrice de traçabilité, elle,
+listait quatre bases en omettant `climatology` et en incluant `stoichio` —
+fausse dans les deux sens. Corrigée.*
+
+### S34-5 — Vérifié, sans constat
+
+- **L'empreinte SHA-256** de `DATA.xlsx` est identique dans le fichier réel,
+  `project_metrics.json` et le dictionnaire. Septième suspicion vérifiée et
+  écartée.
+- **« cinq figures » sur `/api/kpi`** : `summary()` en rend quatre,
+  `api/main.py` ajoute `flag_rate` — **cinq**. Le runbook, le README et le
+  rapport disent tous cinq. Exact.
+- La fenêtre de référence à 40 %, les 600 000 itérations PBKDF2, les cinq
+  tentatives, le registre en droits 600 : conformes au code lu en S13.
+
+### S34-6 — La commande de lancement : recensement clos
+
+Après S31, S33 et ce lot, **les quatre documents qui prescrivaient
+`uvicorn api.main:app` ont adopté `python -m api`**. Les occurrences restantes
+sont des mentions explicatives — « ce document écrivait auparavant », « reste
+utilisable en développement ». Le module écrit pour supprimer trois sources de
+vérité concurrentes est enfin celui que la documentation désigne.
+
+## Lot S35 — la page du poste (586 lignes lues intégralement)
+
+`api/dashboard.html`, confrontée aux 2 407 lignes d'`app.js` lues en S23.
+
+### S35-0 — Le câblage est complet : 98 identifiants cherchés, aucun manquant
+
+C'est le contrôle que la phase F2 réclamait, et il est **vert** : chaque
+`$("id")` d'`app.js` et de `twin.js` correspond à un élément de la page.
+
+| | |
+|---|---|
+| identifiants dans la page | 110 |
+| cherchés par le poste | **99** |
+| **manquants** | **aucun** |
+
+Un identifiant manquant produirait la panne d'interface la plus silencieuse
+qui soit — `getElementById` rend `null`, le panneau ne s'affiche pas, aucune
+erreur n'apparaît. **Verrouillé** par
+`test_tout_identifiant_cherche_par_le_poste_existe_dans_la_page`.
+
+Le sens inverse n'est **pas** verrouillé, et c'est délibéré : cinq identifiants
+existent sans être atteints — `shell`, `who`, `friezeTrack` (ancrages de mise
+en page), `benchReading` (texte statique). Exiger l'égalité stricte
+transformerait un point d'accroche CSS en défaut.
+
+### S35-1 — Deux affirmations contradictoires sur le tout premier écran
+
+Le cinquième orphelin n'en était pas un. `gateAlertNote` porte :
+
+> « **Cette adresse recevra les états critiques.** Chaque décision de sévérité
+> critique retenue par le contrôleur déclenche un courriel dédoublonné vers le
+> technicien connecté. »
+
+`setGateMode(secured)` masque `passwordField` et révèle `gateDisclaimer` quand
+l'accès n'est pas protégé — **mais ne touche jamais `gateAlertNote`**. Sur un
+poste sans authentification, l'écran affiche donc simultanément :
+
+| élément | ce qu'il dit |
+|---|---|
+| `gateAlertNote` | « cette adresse recevra les états critiques » |
+| `gateDisclaimer` | « cette identification est **déclarative** » |
+
+**C'est le second qui a raison.** La branche déclarative de `login()` ne fait
+aucun appel serveur (S23-3) : `add_recipient` n'est jamais appelé, et l'adresse
+ne reçoit rien.
+
+Le défaut compose avec S23-3 et le rend plus lourd que je ne l'avais écrit. Je
+notais alors que la prise de quart « ne trace rien » ; **elle promet en plus une
+escalade qui n'aura pas lieu**, sur l'écran que le technicien voit avant tous
+les autres. Deux promesses fausses, côte à côte, à l'entrée du poste.
+
+`gateAlertNote` suit désormais le même sort que `passwordField` : visible
+seulement quand l'accès protégé est actif — c'est-à-dire quand elle est vraie.
+
+### S35-2 — Troisième occurrence de la même faute d'accord
+
+« la règle ne se déclenche sur **aucune** des quatorze mois » — corrigée dans le
+README en S32, présente à l'identique dans la page. Le texte a manifestement été
+copié d'un document à l'autre, la correction non.
+
+### S35-3 — Ce que la page fait remarquablement bien
+
+- **Chaque commentaire HTML dit quel défaut il corrige** : l'onglet vide
+  (`data:,`), la coque à opacité nulle pendant le démarrage, les deux textes de
+  pied de scène qui se chevauchaient, les dimensions intrinsèques de la
+  photographie qui déplaçaient les tableaux.
+- La **photographie de la plaque tubulaire cite sa source** — gamme OCP
+  FO09-PSS01-IDS/C — au lieu de passer pour une image de banque.
+- La **légende de provenance AMDEC** est présente : sans elle, le marqueur
+  serait un ornement.
+- Le **menu Signaux publie les dix familles**, les quatre du diagnostic en tête
+  — ce que le rapport § 12.2 ignorait encore avant S26-5.
+- Le panneau de score explique **pourquoi** il met en avant l'écart plutôt que
+  le taux de détection : « un contrôle qui ne rate jamais rien ne contrôle
+  rien ».
+
+### État de la lecture
+
+Il ne reste que `twin.js` (2 167 lignes) côté front, une quinzaine de fichiers
+de tests, et le notebook.
+
+## Lot S36 — topologie et sensibilité (256 lignes lues intégralement)
+
+`tests/test_topology.py` (109) · `tests/test_sensitivity.py` (147)
+
+### S36-1 — Le contrôle de couverture des codes en manquait un, et le compte fautif avait essaimé
+
+`test_tous_les_codes_du_detecteur_sont_couverts` cherchait
+`code="([A-Z_]+)"`. Or `detector.py` écrit :
+
+```python
+code="MODEL_ANOMALY" if persistent else "MODEL_ANOMALY_ISOLATED",
+```
+
+**Le second membre de la conditionnelle n'était jamais confronté à la table.**
+Mesuré : le motif voit **17** codes, le détecteur en émet **18**.
+
+Sans conséquence aujourd'hui — `MODEL_ANOMALY_ISOLATED` figure bien dans
+`finding_map`, vérifié — mais le test promet qu'« un code émis sans entrée
+passerait inaperçu », et pour celui-là c'était exactement l'inverse.
+
+**Et le compte fautif s'était propagé dans la documentation.** Mesure complète :
+
+| | |
+|---|---|
+| codes émis par le détecteur | **18** — tous rattachés, aucun orphelin |
+| dont règles déterministes | 15, produits par **6 méthodes** `_rule_*` |
+| dont étage statistique | 3 |
+
+| document | ce qu'il annonçait | mesure |
+|---|---|---|
+| README | « chacun des **dix-sept** codes du détecteur » | **18** |
+| ADR-003 | « **Dix-sept** règles déterministes » | **6 règles**, 15 codes |
+
+« Dix-sept » n'est juste sous aucune lecture — ni les codes, ni les règles, ni
+les méthodes. Les deux documents ont vraisemblablement recopié le chiffre que
+ce test produisait. **Un contrôle qui compte mal ne se contente pas de manquer
+sa cible : il devient une source citée.**
+
+Corrigé aux trois endroits, et le test **exige désormais un minimum de 18 codes
+lus** — sans quoi il signale que son propre motif a cessé de suivre le code.
+
+### S36-2 — Un chemin relatif, troisième variante du piège ENV-1
+
+```python
+source = Path("src/models/detector.py").read_text(encoding="utf-8")
+```
+
+Tous les autres contrôles par analyse de source du dépôt partent de
+`Path(__file__).resolve().parents[1]`. Celui-ci dépendait du **répertoire
+courant** : il passe lancé depuis la racine — ce que fait le propriétaire — et
+lève `FileNotFoundError` lancé depuis `tests/`.
+
+C'est le piège d'ENV-1 (« le test décrit la machine, pas le système »)
+transposé à l'invocation, après le `.env` du poste et le registre d'opérateurs.
+
+### S36-3 — Vérifié, sans constat
+
+- **`test_sensitivity.py`** est exemplaire. Son
+  `test_le_rapport_est_serialisable` porte la trace d'une correction rare : il
+  appelait `json.dumps` **sans rien affirmer** — « sérialisable et non vide sont
+  deux propriétés distinctes ; seule la première était couverte, et elle l'était
+  par accident ». Et
+  `test_la_periode_de_reference_change_la_conclusion` documente qu'il
+  verrouillait *deux formes verbales, pas une propriété*, puis exige désormais
+  la famille lexicale **et** l'absence d'abstention. C'est exactement la
+  distinction fond/forme que ce travail cherche partout.
+- **`test_topology.py`** verrouille les bonnes propriétés : un code inconnu ne
+  désigne rien, l'anode non instrumentée est déclarée avec sa criticité 112, et
+  les douze capteurs sont tous situés.
+
+## Lot S37 — indicateurs et domaine (396 lignes lues intégralement)
+
+`tests/test_kpi.py` (191) · `tests/test_domain.py` (205)
+
+### S37-1 — Le « 5 épisodes/mois » avait laissé deux traces de plus
+
+Après le README, le rapport et ADR-003 (S32-1), la valeur périmée subsistait
+dans deux fichiers de tests :
+
+- **`test_kpi.py`**, dans la docstring du contrôle qui verrouille
+  `evidence_level` : « le ~5 épisodes par mois cité ailleurs dans le projet est
+  un résultat de modèle, pas un comptage ». La qualification était juste, la
+  valeur non.
+- **`test_documentation.py`**, dans le commentaire qui explique pourquoi le
+  motif « épisodes » a été restreint : il écartait « 5 épisodes/mois » en la
+  qualifiant explicitement **« une autre grandeur, juste »**.
+
+**Ce second cas est le plus instructif de tout ce travail sur les chiffres.**
+Le fichier qui arbitre les valeurs publiées croisait la mauvaise, l'écartait de
+son motif — décision correcte, ce n'est pas la même grandeur — et **la déclarait
+juste au passage**. Écarter une valeur d'un contrôle n'est pas la vérifier ; la
+qualifier de juste sans la mesurer lui a donné vingt lots de survie, dans quatre
+documents.
+
+Les deux sont corrigés, et le terme « charge d'alertes » ajouté en S32-1
+confronte désormais la valeur à l'artefact.
+
+### S37-2 — Où le verrou de S34-4 devra vivre
+
+`test_domain.py:25` déclare `VALID_BASES = {isa_5_1, process, data, stoichio,
+climatology}` et exige `bases <= VALID_BASES`. Le contrôle vérifie donc qu'aucune
+base **inconnue** n'apparaît — jamais qu'une base déclarée soit **utilisée**.
+
+C'est exactement l'asymétrie que `test_tout_statut_de_promotion_declare_est_productible`
+(S9-3 bis) et `test_tout_etat_declare_est_productible` (S17) ont fermée ailleurs.
+Le verrou manquant est le symétrique :
+
+```python
+assert not VALID_BASES - bases_utilisees
+```
+
+**Il échouerait aujourd'hui** — `stoichio` n'est utilisé par aucun tag (S34-4) —
+et je ne l'ajoute donc pas : un test rouge ajouté sciemment ne verrouille rien,
+il masque une décision non prise. La décision reste celle de S34-4 : inscrire
+`stoichio` au `basis` de `LOAD_SULFUR`, dont le rapport § 2.2 fait explicitement
+l'argument stœchiométrique, ou retirer la valeur du `Literal`. **Le verrou
+s'écrit une ligne après.**
+
+### S37-3 — Vérifié, sans constat
+
+- `test_kpi.py` couvre les deux natures d'`evidence_level` par analyse du
+  source, et son commentaire explique pourquoi `threshold` est **exclu** de la
+  liste des marqueurs : le mot désigne deux choses opposées — le seuil appris du
+  détecteur et `Tag.threshold("alarm_low")`, qui lit le référentiel. « Un
+  contrôle qui produit un faux positif sur une figure correcte sera désactivé au
+  premier échec. » C'est le raisonnement le plus fin de la suite.
+- `test_domain.py` verrouille C = F × G × N, l'ordre des seuils, l'inclusion des
+  plages, la conservation des cotations OCP d'origine, et le fait que tout angle
+  mort porte une couverture préventive. Douze tags, deux bases minimum chacun,
+  six tags de périmètre ancrés sur la physique — conformes à la mesure de S34.
+- `test_le_niveau_de_preuve_est_declare_pour_chaque_indicateur` confirme
+  `corrosion_exposure = observed`, ce qui valide la correction S26-4 du § 10.5
+  du rapport.
+
+## Lot S38 — ingestion et banc d'encrassement (403 lignes lues intégralement)
+
+`tests/test_ingest.py` (190) · `tests/test_fouling_injection.py` (213)
+
+### S38-1 — Une union masquait une décision de causalité (et mon assertion était fausse)
+
+```python
+assert "TRANSIENT" in set(state.iloc[95:105]) | set(state.iloc[148:158])
+```
+
+La phrase au-dessus dit « les instants **encadrant** un arrêt doivent être
+marqués TRANSIENT ». L'union rend **une seule** des deux bornes suffisante.
+
+Et les deux ne viennent pas du même critère : l'entrée en arrêt procède du seuil
+de charge, la reprise procède de `is_down.shift(1)` — un critère ajouté plus
+tard, et que S2-2 a dû inscrire dans `process_states` parce qu'il n'y figurait
+pas. **J'ai donc scindé l'assertion en deux — et la moitié « entrée » a échoué.**
+
+La lecture de `classify_process_state` donne la raison, et c'est le code qui a
+raison :
+
+```python
+state[is_trans & ~is_down] = "TRANSIENT"
+state[is_down]            = "STOPPED"
+```
+
+Sur une chute instantanée, l'instant où la charge tombe est **déjà** `is_down`,
+donc STOPPED. Le marquer transitoire exigerait `is_down.shift(-1)` — « l'instant
+t est transitoire parce que la ligne s'arrête en t+1 » — c'est-à-dire **la
+lecture du futur que `dcs_loader` documente avoir supprimée**, sur vingt-sept
+horodatages, « parce qu'une chaîne de détection ne peut pas être à demi
+causale ».
+
+**Cinquième fois que j'affirme une propriété sans avoir lu le code qui la
+produit.** Mais l'erreur a été productive : l'union rendait le test vrai sans
+rien garantir, et c'est en la scindant que la décision de causalité est
+redevenue visible.
+
+Le contrôle verrouille désormais **trois** propriétés, toutes vérifiées contre
+la logique réelle :
+
+| propriété | attendu | mesuré |
+|---|---|---|
+| reprise après arrêt | TRANSIENT | ✔ |
+| entrée sur chute instantanée | **jamais** TRANSIENT | ✔ — que du RUNNING |
+| descente progressive > 2 t/h en marche | TRANSIENT | ✔ |
+
+La troisième est nouvelle : elle éprouve `transient_rate`, le seul critère
+transitoire réellement causal, qu'aucun test n'atteignait.
+
+### S38-2 — Un `if` rendait un contrôle facultatif, troisième fichier
+
+```python
+if len(par_severite) >= 2:
+    assert fort <= faible + 1e-9
+```
+
+Sans deux scénarios détectés, l'assertion ne s'exécute pas et le test passe en
+n'ayant rien comparé. **Or c'est précisément quand la détection faiblit — donc
+quand un seul cas est vu — que la monotonie mérite d'être examinée.**
+
+C'est la troisième fois que ce motif apparaît, après les quatre contrôles de
+`test_agents_judge.py` (S24-1). Le dépôt porte pourtant la doctrine, écrite dans
+`test_typographie._exiger` : *un contrôle qui réussit d'autant plus sûrement
+qu'il ne lit rien ne contrôle rien.* Corrigé par `pytest.skip`, qui **déclare**
+l'absence de matière au lieu de rendre un vert silencieux.
+
+### S38-3 — Signalé, non corrigé
+
+`test_la_detection_est_tardive_et_le_projet_le_dit` porte :
+
+```python
+assert result.detection_rate > result.useful_detection_rate or (
+    result.useful_detection_rate == result.detection_rate == 1.0
+)
+```
+
+La seconde branche satisfait l'assertion dès que les deux taux valent 1,0 —
+c'est-à-dire quand la détection devient parfaite **et** utile. La docstring dit
+que ce test « fige ce constat pour empêcher de présenter le taux brut comme une
+performance » : dans ce cas-là, il ne fige plus rien.
+
+**Je ne le corrige pas** : l'échappatoire peut être délibérée — un détecteur
+devenu réellement bon ne doit pas faire échouer une suite. Trancher demande de
+savoir si l'on veut alors un `skip`, un avertissement, ou l'acceptation
+silencieuse. C'est une décision, pas une correction.
+
+### S38-4 — Ce que ces deux fichiers font remarquablement bien
+
+- **`test_gel_detecte_sur_signal_constant`** documente qu'il affirmait
+  auparavant **le contraire** du comportement voulu : il exigeait un marquage
+  rétroactif de tout le palier, « décidé avec une information que le système n'a
+  pas encore ». Il vérifie désormais la causalité — rien avant le seuil, tout
+  après. C'est le même raisonnement que S14-1, appliqué à l'ingestion.
+- **`test_le_predicat_du_banc_equivaut_a_la_regle`** est un « test que le code
+  prétendait avoir » qui a été **écrit** : `_fouling_hours` affirmait qu'un test
+  verrouillait son équivalence avec `_rule_thermal_drift`, et il n'existait pas.
+  Il compare maintenant les deux prédicats sur un échantillon déterministe.
+- **`test_le_temoin_mesure_les_declenchements_sans_faute`** remplace un
+  `0 <= taux <= 1` — que son commentaire appelle « une tautologie » — par une
+  exigence de **niveau**, avec le motif : un témoin bruyant rendrait toute
+  détection inattribuable.
+- **`test_les_limites_sont_declarees`** exige que le banc déclare être
+  **favorable** — il ne simule pas la compensation par la vanne d'eau de mer,
+  donc il est optimiste. Un banc qui déclare son propre biais est rare.
+
+## Lot S39 — le notebook d'analyse (29 cellules lues intégralement)
+
+`notebooks/01_analyse_E7301.ipynb` — jamais lu par cet audit, et pièce centrale
+de l'objectif F4 : **comprendre le projet, pas seulement le livrer.**
+
+### S39-1 — Deux sections numérotées 5, et la huitième absente du sommaire
+
+| sommaire | sections réelles |
+|---|---|
+| 7 questions annoncées | **8 sections** |
+| — | **deux portaient le numéro 5** : « Ce qui débloque tout » et « Que détecte le système » |
+
+Conséquence : tout ce qui suit la section 5 est décalé par rapport au sommaire,
+et **la huitième section n'y figure pas du tout**. Or c'est « Ce que le système
+ne voit pas » — les angles morts, c'est-à-dire la section qui porte l'honnêteté
+du projet, celle dont le rapport, le README, ADR-008 et le poste font tous un
+argument central. **Un lecteur qui suit le sommaire ne sait pas qu'elle existe.**
+
+Renumérotée, et la huitième question ajoutée au sommaire : « Que ne voit-il
+PAS, et pourquoi faut-il le dire ? »
+
+### S39-2 — Cinquième document portant une charge d'alertes fausse
+
+> « Un exploitant ne traite pas 530 points d'alarme, il traite **une dizaine
+> d'événements par mois**. »
+
+La mesure est **4,1** (S32-1). « Une dizaine » sur-estime de 2,4 fois — plus
+encore que le « ~5 » corrigé dans le README, le rapport, ADR-003, `test_kpi` et
+`test_documentation`. **Cinquième support, cinquième formulation différente**,
+et c'est cette variété qui a permis au chiffre de survivre : aucun motif ne les
+attrape tous.
+
+Le passage dit désormais la valeur **et sa nature** — dérivée, pas observée —
+avec la formule qui la produit. C'est un notebook d'apprentissage : y écrire
+d'où vient un chiffre vaut mieux que de l'y écrire juste.
+
+### S39-3 — Un chemin relatif qui suppose le répertoire de lancement
+
+```python
+sys.path.insert(0, "..")
+```
+
+Le notebook ne s'importe que si le noyau démarre dans `notebooks/`. Ouvert
+depuis la racine — ce que fait n'importe quel éditeur moderne — **aucun import
+du projet ne résout**, et l'utilisateur voit une pile d'erreurs sans rapport
+avec le sujet. Troisième variante du piège ENV-1, après le `.env` du poste et
+le chemin relatif de `test_topology` (S36-2). Le chemin remonte désormais depuis
+l'emplacement réel.
+
+### S39-4 — Ce que le notebook fait déjà très bien
+
+- Il **ne trace pas des courbes** : chaque section répond à une question qui a
+  décidé d'un choix technique. C'est exactement la forme que F4 doit prolonger.
+- La cellule des tags porte **le constat de S34-3 avant que je le trouve** :
+  « `Tag.confidence` a gardé son nom en changeant de sens […] `confirmed` /
+  `inferred` / `unknown`, valeurs qui n'existent plus ». Le notebook était à jour
+  là où le dictionnaire gouverné ne l'était pas.
+- La section 4 mesure l'apport réel du modèle — `effort.r2 - effort.naive_r2` —
+  **calculé, jamais recopié**. C'est la règle que F4 doit tenir partout.
+- Aucune sortie n'est enregistrée, conformément à `make notebook-clean`.
+
+### S39-5 — Ce qui reste à écrire pour F4
+
+Le notebook 01 couvre la démonstration. L'objectif du propriétaire est
+**l'apprentissage**, et deux sujets manquent — ce sont les deux plus difficiles
+du dossier, et ceux qu'un jury interrogera :
+
+1. **Pourquoi le PSI de 3,18 ne mesure pas une dérive** : la correspondance
+   parfaite entre extrapolation saisonnière et PSI (S12-1) se démontre en une
+   cellule, et elle explique la seule porte que le projet ne peut pas franchir ;
+2. **Pourquoi le taux de généralisation vaut 8,6 % et pas 95,8 %** : la
+   différence entre un piège conçu contre un contrôle et une mutation qui n'en
+   vise aucun (S27).
+
+Le découpage complet est dans `docs/audits/OBJECTIFS-FINAUX.md`.
+
+## Lot S40 — les portes du manifeste (233 lignes lues intégralement)
+
+`tests/test_model_governance.py` — fichier auquel **j'avais ajouté un test en
+S12 sans l'avoir lu**. La lecture confirme cette fois qu'il n'y avait pas de
+doublon, contrairement à `test_redaction_gouvernance` (S29-5).
+
+### S40-1 — La décision de gouvernance la plus délicate n'était verrouillée nulle part
+
+Les phases 0.6 et 0.7 ont scindé deux portes. `redondance_hors_modele` et
+`derive_de_distribution` sont désormais **publiées, en échec, et hors de
+`MANDATORY_GATES`** — parce qu'aucun commit ne peut les franchir : la première
+est une propriété algébrique d'ADR-001, la seconde n'est interprétable sur aucun
+pli de ce corpus (S21-3).
+
+Le journal s'en inquiétait explicitement, et c'est l'une des trois leçons de la
+phase 0 : restreindre un critère « pour qu'il puisse passer » **remasque** ce
+que l'auteur avait délibérément rendu visible.
+
+**Cette parade n'était vérifiée par aucun test.** `_validation()` ne construit
+que les cinq portes obligatoires, et le seul contrôle d'échec les fait **toutes**
+échouer ensemble. Deux régressions symétriques passaient donc inaperçues :
+
+| régression | conséquence |
+|---|---|
+| ajouter une des deux portes à `MANDATORY_GATES` | la promotion devient impossible **par construction**, et rien ne dit pourquoi |
+| retirer une porte obligatoire | un artefact est promu à tort |
+
+Le nouveau contrôle construit le cas **réel de production** — cinq portes
+obligatoires franchies, deux portes publiées en échec — et vérifie que le
+manifeste est accepté de bout en bout. **Preuve par mutation** : ajouter l'une
+des deux à `MANDATORY_GATES` le fait échouer.
+
+### S40-2 — Un résidu que j'avais introduit en S12
+
+En ajoutant `test_les_portes_publiees_ont_toutes_un_intitule_a_l_ecran`, j'avais
+hissé `ast`, `re` et `Path` au niveau du module. Le test voisin réimportait
+`ast` et `Path` dans son corps, et reconstruisait la racine par
+`Path(lineage.__file__).resolve().parents[2]` alors que `RACINE` existait
+désormais trois lignes plus haut.
+
+Deux chemins vers la même racine, dont l'un passe par le module audité — le
+genre de doublon que ce travail retire partout. Nettoyé.
+
+### S40-3 — Vérifié, sans constat
+
+`_validation()` construit exactement les cinq portes de `MANDATORY_GATES` :
+c'est cohérent, et la note de la phase 0.6 — « `test_model_governance.py` n'est
+pas affecté : il construit son propre bloc de cinq portes » — reste vraie. Le
+fichier verrouille correctement le refus d'un `candidate`, le blocage sur portes
+en échec, l'empreinte du modèle et l'ordre des variables.
+
+### Ce qui reste
+
+`api/static/twin.js` (2 167 l.), huit fichiers de tests dont `test_api.py`
+(1 043) et `test_features_detector.py` (860), et mon propre `test_replay.py`
+(124) que je n'ai pas relu depuis S14.
+
+## Lot S41 — relecture de mon propre test (124 lignes lues intégralement)
+
+`tests/test_replay.py`, écrit par cet audit en S14 et jamais relu.
+
+### S41-1 — J'avais écrit une tautologie, et c'est la règle 4 que j'ai enfreinte
+
+`test_les_instants_a_franchissement_ne_sont_jamais_sautes` calculait :
+
+```python
+ordinaires = set(index[::pas])
+rejoues    = set(index[index.isin(ordinaires | obligatoires)])
+assert not (obligatoires & set(index)) - rejoues
+```
+
+Il **réimplémentait la sélection de `run_sync`**, puis vérifiait sa propre
+réimplémentation. `isin` garantit par construction que tout élément
+d'`obligatoires` présent dans l'index se retrouve dans `rejoues` : **l'assertion
+ne pouvait pas échouer, quel que soit le code du rejeu.** Démontré sur un index
+synthétique — le résultat est vide en toutes circonstances.
+
+C'est la **règle 4 de la méthode** — *ne réimplémente pas pour tester, importe le
+prédicat réel* — enfreinte par le test censé la servir. Et c'est ma sixième
+erreur de cette session, la plus instructive : les cinq précédentes étaient des
+affirmations sur du code non lu ; celle-ci est un test **vert qui ne teste
+rien**, écrit en toute bonne foi pour combler l'absence de tests de `replay.py`.
+
+**Combler un trou avec un contrôle vide, c'est le refermer sans rien y mettre.**
+
+Le contrôle passe désormais par `run_sync` — donc par le vrai chemin de
+sélection — sur un franchissement dont la position n'est **pas** multiple du pas
+d'allègement, c'est-à-dire exactement le cas que la décimation faisait
+disparaître. Rejeu borné à six instants pour rester rapide.
+
+*Deux nettoyages au passage : un paramètre `combien` inerte — la liste étant
+construite à trois éléments avant d'être tronquée à `combien` — et une assertion
+nue sans message, seule du fichier.*
+
+### S41-2 — Ce que cette relecture confirme sur la méthode
+
+Le propriétaire a exigé sept fois la lecture intégrale. Sur ce lot, elle
+s'applique à **mon propre code**, et elle trouve un défaut qu'aucune exécution
+n'aurait révélé : un test qui passe toujours passe aussi quand il est faux.
+
+Le compte des erreurs de cet audit, tenu à jour :
+
+| # | lot | nature |
+|---|---|---|
+| 1 | S21-2 | calcul d'extrapolation sur le calendrier au lieu des heures de marche |
+| 2 | S23-6 | nom de classe inféré, présent 435 lignes plus haut |
+| 3 | S25-1 | contenu du rapport affirmé sans l'avoir lu |
+| 4 | S29-5 | prédicat de forme, et deux tests ajoutés à un fichier non lu |
+| 5 | S38-1 | symétrie affirmée contre une décision de causalité documentée |
+| 6 | **S41-1** | **tautologie : un test vert qui ne testait rien** |
+
+Les six ont la même cause — conclure avant d'avoir lu — et les six ont été
+trouvées par la lecture, jamais par l'exécution.
+
+### S41-3 — Et le test corrigé était faux à son tour : septième erreur
+
+Le remplacement de la tautologie a échoué au premier lancement, en accusant le
+rejeu d'avoir sauté le franchissement du 15/01/2024 15:00. **Le rejeu l'avait
+analysé.**
+
+```
+str(pd.Timestamp)         : '2024-01-15 15:00:00'
+DetectionResult.timestamp : '2024-01-15T15:00:00'   ← ISO 8601, dit par la docstring
+égalité de chaînes        : False
+```
+
+Je comparais **deux écritures du même instant**. `DetectionResult.timestamp`
+est déclaré « ISO 8601 » dans sa propre docstring — je ne l'avais pas lue.
+
+C'est le piège que `sans_accents` traite pour le texte, transposé aux dates :
+**un contrôle qui compare des représentations mesure la mise en forme, pas le
+fond.** Le dépôt a la règle, écrite dans ADR-011 et appliquée douze fois ; je ne
+l'ai pas appliquée aux horodatages. Les deux côtés passent désormais par
+`pd.Timestamp`.
+
+**Ce que cet enchaînement enseigne, et qui vaut d'être gardé.** La tautologie de
+S41-1 était verte : elle n'aurait jamais rien signalé. En la remplaçant par un
+contrôle qui éprouve le vrai chemin, j'ai immédiatement produit un **faux
+positif** — le test accusait un code correct. Les deux défauts sont opposés et
+ont la même racine :
+
+| | ce que le test faisait | ce qu'il aurait fallu |
+|---|---|---|
+| S41-1 | vérifier sa propre réimplémentation | appeler le code réel |
+| S41-3 | comparer deux formats | comparer deux instants |
+
+**Un test qui ne peut pas échouer et un test qui échoue à tort sont le même
+défaut** : dans les deux cas, ce qu'il mesure n'est pas ce qu'il annonce.
+
+| # | lot | nature |
+|---|---|---|
+| 7 | **S41-3** | **comparaison de représentations au lieu de valeurs** |
+
+## Lot S42 — `tests/test_alarm_store.py` lu intégralement (291 lignes)
+
+Dernier fichier auquel j'avais ajouté du code (S22, clôture d'AL-1) sans
+l'avoir lu en entier. La relecture en a montré la conséquence.
+
+### S42-1 — le sentinelle du constructeur masquait le chemin le plus fréquent
+
+```python
+lead_finding=lead if lead is not None else finding    # avant
+```
+
+`lead=None` signifiait « prends `finding` ». **Aucun appel du fichier ne pouvait
+donc produire une décision dont `lead_finding` vaut vraiment `None`.**
+
+Or c'est le cas NOMINAL en production — `detection_agent.py:376` :
+
+```python
+evidence_refs=[f.code for f in result.findings],
+lead_finding=None,
+```
+
+des constatations non vides, aucune dominante. `_trigger` retombe alors sur
+`findings[0]`, c'est-à-dire sur **l'ordre d'évaluation des règles** — le défaut
+exact qu'AL-1 corrige. Les deux tests d'AL-1 passent la dominante explicitement :
+ils vérifient la branche corrigée et **jamais le repli**, qui est pourtant le
+chemin le plus emprunté du système.
+
+Sentinelle remplacé par `_DEFAUT = object()`, qui ne peut entrer en collision
+avec aucune valeur du domaine. Nouveau test `test_sans_dominante_l_alarme_
+retombe_sur_l_ordre_des_regles` : le repli est désormais **atteignable et
+verrouillé**.
+
+**Le motif est celui de S41-3, un cran plus haut.** Là je comparais deux
+écritures d'un instant ; ici le constructeur confond « non fourni » et « fourni
+à None ». Dans les deux cas **une distinction du domaine est écrasée par une
+commodité d'écriture**, et ce qui disparaît est précisément le cas intéressant.
+C'est aussi la troisième forme du même interdit : `x or defaut`, `if limit:`,
+`if lead:` — le dépôt a la règle et l'énonce dans `knowledge.seuil`.
+
+### S42-2 — `if lead:` dans `_trigger`
+
+L'idiome banni, sur un champ déclaré `str | None`. Corrigé en `is not None`,
+comme `run_sync` sur `limit` en S14. Sans conséquence mesurable aujourd'hui
+(aucun producteur n'émet `""`), mais c'est la règle nommée du dépôt.
+
+### S42-3 — cosmétique
+
+`__import__("pytest").raises(...)` ligne 93 et un `import pytest` en corps de
+fonction ligne 132, faute d'import au module. Remontés en tête.
+
+### AL-4 — ouvert, pour l'auteur
+
+Faut-il que le chemin nominal de `detection_agent` désigne lui aussi une
+dominante, plutôt que de laisser le registre retomber sur l'ordre des règles ?
+Ce n'est pas une décision de test et je ne la prends pas. Elle rejoint AL-3
+(une alarme dont la condition cesse sans réémission ne se résout jamais).
+
+## Lot S43 — `tests/test_workflows.py` lu intégralement (312 lignes)
+
+### S43-1 — un nom plus large que la couverture, sur le test de WF-3
+
+`test_le_schema_derive_son_vocabulaire_des_constantes` annonce une DÉRIVATION,
+donc une **égalité**. Il vérifiait :
+
+```python
+for etat in WORKFLOW_STATES:
+    assert f"'{etat}'" in schema          # inclusion, un seul sens
+assert "'CANCELLED'" not in schema        # l'intrus, nommé
+```
+
+soit une inclusion et l'absence d'**un seul intrus désigné par son nom**. Un état
+ajouté au seul littéral SQL — ou une seconde valeur morte, `ABORTED`, `ON_HOLD` —
+passait sans bruit. C'est précisément la divergence Python/SQL que WF-3 prétend
+avoir refermée, et le test censé la verrouiller la laissait ouverte dans un sens.
+
+La contrainte `CHECK(status IN (...))` est désormais extraite et comparée par
+**égalité d'ensembles**. Cela subsume le cas `CANCELLED` au lieu de le nommer :
+le contrôle porte sur la propriété, non sur l'exemple qui l'a fait découvrir.
+
+**Troisième occurrence de ce motif précis** — après `test_les_identifiants_
+internes_sont_traduits` (S29-5, 3 vocabulaires sur 5) et la moitié « entrée » de
+S38-1. Le motif se dit simplement : *un test qui interdit le défaut connu n'interdit
+pas sa famille.* On corrige le cas rencontré, on nomme le test d'après la règle,
+et l'écart entre les deux ne se voit plus jamais.
+
+Reste que ce fichier est, à ce jour, le mieux tenu de la suite : WF-1, WF-2 et
+WF-4 sont éprouvés par l'API publique, et `test_tout_etat_declare_est_productible`
+est déjà bidirectionnel — c'est même lui qui donne la forme juste appliquée ici.
+
+## Lot S44 — `tests/test_access_notifications.py` lu intégralement (332 lignes)
+
+### S44-1 — une égalité qui gelait une absence
+
+`test_session_opaque_csrf_et_invalidation` appelle `rotate()` puis `destroy()`,
+et finit par :
+
+```python
+assert [event["event"] for event in manager.audit_events()] == [
+    "LOGIN_FAILED", "LOGIN_SUCCEEDED",
+]
+```
+
+L'égalité porte sur le journal **entier**, après ces deux opérations. Elle gèle
+donc l'**absence de toute trace** pour la rotation et la destruction de session :
+qui ajoute une ligne de déconnexion casse ce test, avec un message qui n'en dit
+pas la raison.
+
+Mesuré : `src/security/auth.py` ne contient **qu'un seul** `self._audit.append`,
+ligne 222, atteint depuis `authenticate` seul. `rotate()` et `destroy()`
+n'inscrivent rien.
+
+L'exactitude est conservée sur ce que le test dit examiner — les deux issues
+d'authentification, dans l'ordre — et ne s'étend plus au reste du journal.
+
+**Même famille que S43-1, sens inverse.** Là une assertion était plus étroite que
+son nom ; ici elle est plus large que son objet. Dans les deux cas la portée de
+l'assertion et celle de l'intention ne coïncident pas — et c'est toujours le
+même prix : le test devient un obstacle à la correction qu'il devrait appeler.
+
+### SEC-3 — ouvert, pour l'auteur
+
+Faut-il consigner la fin de session (déconnexion, expiration, rotation) au
+journal d'audit ? Un exploitant qui enquête sur un accès veut savoir quand la
+session s'est terminée, et `/api/auth/audit` est le seul endroit qui pourrait le
+dire. Je ne tranche pas : c'est une décision de périmètre, pas de test. À joindre
+à AL-3, AL-4 et aux quatre décisions déjà en attente.
+
+## Lot S45 — `tests/test_service_invariants.py` lu intégralement (389 lignes)
+
+Le meilleur fichier du dépôt : « le patron » appliqué systématiquement, onze
+invariants vérifiés par AST sans démarrer le service. Il porte quand même le motif.
+
+### S45-1 — trois codes nommés, deux vérifiés, et par comparaison de chaînes
+
+`test_les_en_tetes_de_securite_sont_poses_en_un_seul_endroit` :
+
+```python
+for chemin in ("_durcir(\n            JSONResponse(\n                status_code=401",
+               "_durcir(\n            JSONResponse(\n                status_code=403"):
+    assert chemin in source, "un refus ne passe plus par `_durcir`"
+```
+
+Sa docstring nomme « LES REFUS **401, 403 ET 500** ». Le **500 n'était pas
+vérifié** — et c'est le seul des trois qu'un attaquant obtient sans authentification.
+
+Pire que la lacune : la comparaison porte sur **l'indentation exacte**, 12 puis
+16 espaces. Un `ruff format` la casse, et le message d'échec annonce alors « un
+refus ne passe plus par `_durcir` » — **ce qui serait faux**.
+
+> **Un contrôle dont le message ment quand il échoue est pire qu'absent :** il
+> envoie corriger un défaut qui n'existe pas, et le vrai reste.
+
+Remplacé par la propriété générale, en AST : *toute `JSONResponse` portant un code
+d'erreur littéral doit être enveloppée par `_durcir`*. Elle subsume les trois
+exemples et couvrira tout refus ajouté demain. Mesuré sur `api/main.py` :
+**aucune réponse d'erreur non durcie ; codes durcis = {401, 403, 500}**.
+
+**Quatrième occurrence du motif** — après S29-5, S43-1 et S44-1. Il se dit
+maintenant sous sa forme complète :
+
+| forme | exemple |
+|---|---|
+| assertion plus étroite que le nom | S29-5, S43-1, **S45-1** |
+| assertion plus large que l'objet | S44-1 |
+| assertion qui ne peut pas échouer | S41-1 |
+| assertion qui échoue à tort | S41-3 |
+
+Les quatre disent la même chose : **la portée de l'assertion et celle de
+l'intention ne coïncident pas.** C'est le défaut de test le plus fréquent du
+dépôt, loin devant l'absence de test.
+
+Ce fichier en donne d'ailleurs lui-même le remède, deux fonctions plus bas :
+`test_aucun_outil_de_qualite_declare_n_est_inerte` porte le commentaire « CE TEST
+NE VERIFIAIT QUE DEUX TIERS DE SON PROPRE ENONCE » et a été élargi pour cette
+raison exacte. L'auteur avait vu le motif sur un test et ne l'a pas cherché sur
+son voisin.
+
+### Faits relevés pour la bibliothèque
+
+- **32 handlers sur 47** étaient `async def` sans `await` : leur corps entier
+  s'exécutait sur la boucle d'événements unique — dont `auth_login` (PBKDF2,
+  **600 000 itérations**) et `analyze` (appel au modèle de langage).
+- Rejeu : valeurs par défaut **REPLAY_SPEED=120, REPLAY_STEP=3** ⇒ défilement
+  réel **40 h/s** pendant que l'API publiait 120.
+- **6 en-têtes de sécurité**, posés en un seul endroit (`_durcir`).
+- `fit()` doit appeler `invalidate_cache()` : la clé de `score_series` ne décrit
+  que les données, jamais le modèle.
+- **84 vérifications** des bancs du poste ; CI : `frontend_smoke.mjs`,
+  `twin_smoke.mjs`, `boot_smoke.mjs`, avec `needs: [qualite, tests, frontend]`.
+
+### API-2 — ouvert
+
+Six `JSONResponse` ne passent pas par `_durcir`, dont deux qui peuvent rendre
+**503** (`200 if ready else 503`, lignes 699 et 761 — sondes de disponibilité).
+Ce sont des sondes, pas des refus : faut-il les durcir aussi ? Décision de
+périmètre, laissée à l'auteur.
+
+## Lot S46 — le garde documentaire attrape la bibliothèque neuve
+
+`docs/BIBLIOTHEQUE-RAPPORT.md` (1 519 lignes, apportée par l'auteur) a fait
+échouer deux contrôles de `test_documentation.py` **au premier lancement**.
+C'est le meilleur résultat possible : le dispositif que ce dépôt s'est donné a
+fonctionné sur un document qu'il n'avait jamais vu.
+
+### S46-1 — « 2 000 points d'alarme » : la bibliothèque citait fidèlement une source fausse
+
+`test_aucun_chiffre_cle_ne_contredit_les_artefacts` : « 2 000 » écrit, **530**
+mesuré (`project_metrics.json → alert_hours_historical`).
+
+**Le défaut n'est pas dans la bibliothèque.** Elle cite `src/models/detector.py:1236`
+mot pour mot :
+
+> « Un exploitant ne traite pas 2 000 points d'alarme : il traite une dizaine
+> d'evenements. »
+
+Les deux nombres sont faux : **530** heures atypiques, **58** épisodes. Presque
+quatre fois trop pour le premier, un ordre de grandeur trop peu pour le second.
+
+Et le commentaire du test raconte l'histoire complète : la phrase disait
+auparavant « 511 points d'alarme », le jumeau de « 511 heures atypiques ». La
+première occurrence a été corrigée, **la seconde a survécu en changeant de mot**
+— « points d'alarme » au lieu de « heures atypiques » — puis quelqu'un l'a
+« arrondie » à 2 000. Un chiffre faux corrigé en un chiffre plus faux.
+
+**Exception au motif dominant, et elle l'éclaire.** Ma règle disait : *le code
+servant porte la version juste, le document la version périmée*. Ici le code
+porte la version fausse — mais dans un **commentaire**. Les commentaires sont de
+la documentation qui habite le code : ils vieillissent comme des documents, pas
+comme du code, parce que **rien ne les exécute**. La règle se reformule donc plus
+justement : *ce qui est exécuté reste juste, ce qui est seulement lu dérive.*
+
+Corrigé aux deux endroits.
+
+### S46-2 — quatre chemins cités sans leur préfixe `src/`
+
+`governance/model_validation.py`, `operations/alarms.py`, `realtime/replay.py`,
+`security/auth.py` — tableau de synthèse en fin de bibliothèque. Aucun n'existe
+sous cette forme. Corrigés, plus `email.py` / `redaction.py` qui échappaient au
+contrôle faute de contenir une barre oblique (limite connue du prédicat, non
+corrigée : elle ne produit pas de faux positif).
+
+### Ce que cet épisode établit pour le rapport
+
+Deux documents produits par deux sessions différentes, sans coordination, et
+c'est **l'artefact mesuré** qui a tranché — pas le plus récent, pas le plus long,
+pas le plus assuré. C'est exactement l'argument de la gouvernance du dépôt, et il
+vaut mieux qu'une explication : **une démonstration en conditions réelles.**
+
+### S46-3 — huitième erreur : j'ai cru un `print` plutôt qu'une vérification
+
+Au lot S46 j'ai écrit `print("corrige aux trois endroits")` après un
+`str.replace` sur trois cibles. **Une seule des trois avait matché** : mon motif
+supposait une coupure de ligne (« il traite une \n dizaine ») que le fichier ne
+portait pas (« il traite une dizaine \n d'événements »).
+
+La preuve était **dans ma propre sortie**, deux lignes plus bas : le `grep` de
+vérification ne rendait qu'un fichier au lieu de deux. Je ne l'ai pas lue.
+
+> **Un `print` de fin de script n'est pas une vérification** : il atteste que le
+> code s'est exécuté, jamais qu'il a fait quelque chose. `str.replace` ne lève
+> pas quand il ne trouve rien — c'est le `x or defaut` de la manipulation de
+> texte : l'échec silencieux prend l'apparence du succès.
+
+Correctif de méthode appliqué immédiatement : tout remplacement passe désormais
+par `assert motif in source` **avant** l'écriture, et la vérification relit le
+fichier au lieu d'annoncer le résultat.
+
+Huitième erreur, même cause que les sept autres : **conclure sans regarder**.
+Sept ont été trouvées par la lecture ; celle-ci l'a été par l'exécution — la
+première.
+
+### S46-4 — ouvert : le prédicat des chemins a un angle mort
+
+La bibliothèque cite une quinzaine de modules sans préfixe `src/`
+(`models/detector.py`, `agents/judge_agent.py`, `domain/knowledge.py`…). Le test
+ne les signale pas : son `motif` filtre en amont de la vérification d'existence.
+Ce ne sont pas des faux positifs — ces chemins n'existent pas — mais élargir le
+prédicat demande de le mesurer d'abord, sur les six documents concernés, pour ne
+pas rendre le contrôle bruyant. À faire, pas à improviser en fin de session.

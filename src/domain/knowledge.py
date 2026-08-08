@@ -394,10 +394,9 @@ class DomainKnowledge:
     def modes_for_component(self, component_code: str) -> set[str]:
         """Modes de defaillance portes par une piece physique.
 
-        Reciproque de `components_for_mode`. Elle existe parce que le
-        controleur de coherence avait besoin de l'ensemble des modes affectant
-        la surface d'echange et l'ecrivait en dur : l'ajout d'un mode dans le
-        referentiel ne l'aurait pas rejoint.
+        Elle existe parce que le controleur de coherence avait besoin de
+        l'ensemble des modes affectant la surface d'echange et l'ecrivait en
+        dur : l'ajout d'un mode dans le referentiel ne l'aurait pas rejoint.
 
         Args:
             component_code: Code de piece, ex. 'BUNDLE'.
@@ -407,19 +406,17 @@ class DomainKnowledge:
         """
         return set((self.components.get(component_code) or {}).get("amdec_modes") or [])
 
-    def components_for_mode(self, mode_code: str) -> list[str]:
-        """Pieces portant un mode de defaillance AMDEC donne.
-
-        Args:
-            mode_code: Code de mode, ex. 'FAISCEAU_BOUCHAGE'.
-
-        Returns:
-            Liste de codes de piece.
-        """
-        return [
-            code for code, spec in self.components.items()
-            if mode_code in (spec.get("amdec_modes") or [])
-        ]
+    # `components_for_mode(mode_code)` A ETE SUPPRIMEE.
+    #
+    # Elle parcourait la topologie dans le sens mode -> pieces. Aucun appelant,
+    # aucun test : la seule direction reellement empruntee est la reciproque
+    # ci-dessus, `modes_for_component`, qu'utilise le controleur de coherence
+    # du Judge. La liste des pieces d'un mode reste lisible par l'interface,
+    # qui recoit `components[].amdec_modes` dans `topology()`.
+    #
+    # Meme motif que pour `is_out_of_physical_range` et `mode_for_indicator`,
+    # deja retirees : une seconde facon de repondre a la question, sans test
+    # pour la retenir, derive avant celle qui sert.
 
     def risk_coverage(self) -> dict[str, Any]:
         """Part de la criticite AMDEC reellement couverte par les donnees.
@@ -556,6 +553,10 @@ class DomainKnowledge:
                 "alarm_high_high": tag.threshold("alarm_high_high"),
                 "alarm_low": tag.threshold("alarm_low"),
                 "alarm_low_low": tag.threshold("alarm_low_low"),
+                # Le mode AMDEC que ce capteur sert a surveiller. Le contrat 3D
+                # portait deja la piece et ses modes; il ne disait pas pourquoi
+                # tel capteur est place la. `tags.yaml` le dit depuis toujours.
+                "criticality_link": tag.criticality_link,
                 "at": list(placement.get("at") or [0, 0, 0]),
                 "attaches_to": placement.get("attaches_to", ""),
                 "anchor": placement.get("anchor", "up"),

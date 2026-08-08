@@ -251,6 +251,8 @@
                 <select id="trendSet">
                   <option value="echange">Coefficient d'échange · UA</option>
                   <option value="encrassement">Résistance d'encrassement</option>
+                  <option value="entree">Température d'entrée · observée / attendue</option>
+                  <option value="froid">Source froide · eau de mer</option>
                   <option value="thermal">Thermique · 3 capteurs</option>
                   <option value="titre">Titre acide · 2 analyseurs</option>
                   <option value="debit">Débit &amp; charge</option>
@@ -362,10 +364,17 @@
       </div>
 
       <!-- ══ Registre d'alarmes ═══════════════════════════════════════════
-           849 lignes de code testé, six routes, et aucune interface : le
-           rapport annonçait « le cycle de vie des alarmes et les gammes de
-           maintenance » que rien n'affichait. C'est pourtant le seul état du
-           poste qui survive à un redémarrage. -->
+           952 lignes de code testé — `alarms.py` 617 + `test_alarm_store.py`
+           335 — deux routes, et aucune interface : le rapport annonçait « le
+           cycle de vie des alarmes et les gammes de maintenance » que rien
+           n'affichait. C'est pourtant le seul état du poste qui survive à un
+           redémarrage.
+
+           Le commentaire annonçait « 849 lignes » et « six routes ». Ni l'un
+           ni l'autre ne tenait au recomptage du 2026-08-08
+           (`scripts/collecte_chiffres_front.py`) : le code a grossi sous le
+           commentaire, et les routes n'ont jamais été six. L'argument, lui,
+           était juste — c'est pourquoi ce panneau existe. -->
       <article class="panel">
         <header class="panel-head">
           <div><span class="micro">Cycle de vie ISA-18.2</span><h2>Registre d'alarmes</h2></div>
@@ -475,7 +484,7 @@
              sensibilité teste pourtant juste à côté. Un constat qui dépend
              d'un paramètre se publie avec ce paramètre. -->
         <p class="panel-note">Avec la période de référence retenue (40 % initiaux),
-           la règle d'encrassement ne se déclenche sur aucune des quatorze mois
+           la règle d'encrassement ne se déclenche sur aucun des quatorze mois
            disponibles — voir l'analyse de sensibilité ci-dessous pour ce que
            donnent les autres fenêtres. Ce banc superpose une dérive simulée aux
            données réelles, dans une fenêtre où la règle est silencieuse, et

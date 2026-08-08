@@ -1,0 +1,404 @@
+COLLECTE DES CHIFFRES DU POSTE — 2026-08-08T16:43:37+00:00
+dépôt : /sessions/exciting-optimistic-fermi/mnt/ocp-bionic-judge
+
+==========================================================================
+1. VOLUMÉTRIE DU POSTE
+==========================================================================
+  api/dashboard.html              593 lignes
+  api/static/app.js              2450 lignes
+  api/static/twin.js             2167 lignes
+  api/static/app.css             1167 lignes
+  api/main.py                    1830 lignes
+  TOTAL                          8207 lignes
+  app.js                          544 lignes de commentaire (22.2 %) — rien ne les exécute
+  twin.js                         443 lignes de commentaire (20.4 %) — rien ne les exécute
+
+==========================================================================
+2. VUES ET PANNEAUX (dashboard.html)
+==========================================================================
+  onglets (role=tab)          : 3 — salle, integrite, controle
+  panneaux (role=tabpanel)    : 3 — salle, integrite, controle
+  cartes <article class=panel>: 23
+    vue salle      : 3 cartes
+        · —
+        · Températures acide
+        · Diagnostic
+        · Analyses successives
+    vue integrite  : 8 cartes
+        · Concentration des épisodes
+        · Plaque tubulaire 904L
+        · Épisodes les plus sévères
+        · Disponibilité des capteurs
+        · Registre d'alarmes
+        · Modèles d'intervention
+        · Cadence A → H
+        · Couverture AMDEC
+    vue controle   : 12 cartes
+        · Comportement par type de faute
+        · Banc d'injection sur données réelles
+        · Les huit contrôles
+        · Taux horaire de signalement
+        · Ce que le système ne voit pas
+        · Canal e-mail du technicien
+        · Analyse de sensibilité
+        · Chaîne source → décision
+        · Comportement du contrôleur
+        · Angles morts
+        · Backtest temporel
+        · Analyse
+  boîtes de dialogue <dialog> : 1
+  éléments <canvas>           : 3
+  tableaux <table>            : 4
+
+==========================================================================
+3. FAMILLES DE SIGNAUX
+==========================================================================
+  options du menu Signaux : 10
+  clés de TREND_SETS      : 10
+  option HTML sans famille JS : aucune
+  famille JS sans option HTML : aucune
+  courbes tracées, toutes familles confondues : 20
+  périodes proposées      : 5 — 24, 168, 504, 2160, 0 h
+
+==========================================================================
+4. TABLES DE TRADUCTION D'app.js — la couche ADR-011
+==========================================================================
+  SEV_LABEL          4 entrées
+  ETAT_LABEL         3 entrées
+  ROLE_LABEL         4 entrées
+  URGENCE_LABEL      5 entrées
+  RESERVE_LABEL     20 entrées
+  PROVENANCE         5 entrées
+  OBSERVABILITE      3 entrées
+  ALARM_STATE        5 entrées
+  ALARM_ACTIONS      5 entrées
+  MESURE_LABEL      22 entrées
+  GATE_LABEL         7 entrées
+  BASE_LABEL         5 entrées
+  TOTAL             88 entrées traduites
+  READOUTS           6 entrées
+  CHECKS             8 entrées
+  AUDIT_LIGNES       5 entrées
+
+==========================================================================
+5. COMPOSANTS 3D ENREGISTRÉS (twin.js)
+==========================================================================
+  codes de piece modelises : 10
+      - ANODE              (litteral sur place)
+      - BUNDLE             (litteral sur place)
+      - NOZZLE_ACID_IN     (passe par variable)
+      - NOZZLE_ACID_OUT    (passe par variable)
+      - SHELL              (litteral sur place)
+      - TUBESHEET          (litteral sur place)
+      - VALVE_ACID         (passe par variable)
+      - VALVE_SEA          (passe par variable)
+      - WATERBOX_IN        (passe par variable)
+      - WATERBOX_OUT       (passe par variable)
+  codes de constatation dans finding_map : 18
+    dont n'allumant aucune piece         : 5 — OVERCOOLING_REGIME, CONC_BIAS_DRIFT, SENSOR_FAULT, MODEL_UNAVAILABLE, NOT_RUNNING
+  pieces citees par finding_map          : 5
+  codes declares dans topology.yaml : 10 — ANODE, BUNDLE, NOZZLE_ACID_IN, NOZZLE_ACID_OUT, SHELL, TUBESHEET, VALVE_ACID, VALVE_SEA, WATERBOX_IN, WATERBOX_OUT
+  codes modelises en 3D             : 10 — ANODE, BUNDLE, NOZZLE_ACID_IN, NOZZLE_ACID_OUT, SHELL, TUBESHEET, VALVE_ACID, VALVE_SEA, WATERBOX_IN, WATERBOX_OUT
+  declare au referentiel, NON modelise en 3D : aucun
+  modelise en 3D, HORS referentiel           : aucun
+  cible par finding_map, NON modelise en 3D  : aucun
+  modelise mais qu'aucune constatation n'allume : ['ANODE', 'SHELL', 'VALVE_SEA', 'WATERBOX_IN', 'WATERBOX_OUT']
+  matériaux de la palette `this.mat`     : 20
+  textures procédurales                  : 9
+  chicanes segmentaires                  : 9
+
+==========================================================================
+6. FAISCEAU — NOMBRE DE TUBES RÉELLEMENT INSTANCIÉS
+==========================================================================
+  SHELL_R = 0.559 m, TUBE_OD = 0.01905 m
+  pas triangulaire = 24.38 mm, rangées = 47
+  TUBES INSTANCIÉS = 1541
+  le commentaire de `_guardPerformance` annonce « plus de 1 500 tubes »
+  → CONFORME (1541 tubes)
+
+==========================================================================
+7. ROUTES SERVIES PAR api/main.py
+==========================================================================
+  routes déclarées : 47
+    /                          1
+    /api/alarms                2
+    /api/analyze               1
+    /api/auth                  5
+    /api/config                1
+    /api/coverage              1
+    /api/detection             1
+    /api/episodes              1
+    /api/equipment             1
+    /api/governance            1
+    /api/health                6
+    /api/judge                 2
+    /api/kpi                   1
+    /api/model                 1
+    /api/notable               1
+    /api/notifications         3
+    /api/replay                7
+    /api/sensitivity           1
+    /api/sensor                1
+    /api/sensor-health         1
+    /api/timeseries            1
+    /api/topology              1
+    /api/workflows             6
+
+      GET   /
+      GET   /api/alarms
+      GET   /api/auth/audit
+      GET   /api/auth/status
+      GET   /api/config
+      GET   /api/coverage
+      GET   /api/detection/fouling-bench
+      GET   /api/episodes
+      GET   /api/equipment
+      GET   /api/governance
+      GET   /api/health
+      GET   /api/health/database
+      GET   /api/health/live
+      GET   /api/health/model
+      GET   /api/health/ready
+      GET   /api/health/version
+      GET   /api/judge/audit
+      GET   /api/judge/evaluation
+      GET   /api/kpi
+      GET   /api/model/validation
+      GET   /api/notable
+      GET   /api/notifications/status
+      GET   /api/replay/alerts
+      GET   /api/replay/disagreements
+      GET   /api/replay/state
+      GET   /api/replay/stream
+      GET   /api/sensitivity
+      GET   /api/sensor-health
+      GET   /api/sensor/{alias}
+      GET   /api/timeseries
+      GET   /api/topology
+      GET   /api/workflows
+      GET   /api/workflows/templates
+      GET   /api/workflows/{workflow_id}
+      PATCH /api/workflows/{workflow_id}/steps/{step_id}
+      POST  /api/alarms/{alarm_id}/transition
+      POST  /api/analyze
+      POST  /api/auth/login
+      POST  /api/auth/logout
+      POST  /api/auth/refresh
+      POST  /api/notifications/governance
+      POST  /api/notifications/test
+      POST  /api/replay/speed
+      POST  /api/replay/start
+      POST  /api/replay/stop
+      POST  /api/workflows
+      POST  /api/workflows/{workflow_id}/complete
+
+==========================================================================
+8. ROUTES CONSOMMÉES PAR LE FRONT
+==========================================================================
+  chemins distincts appelés par app.js : 32
+      /api/alarms
+      /api/alarms/{}/transition
+      /api/analyze
+      /api/auth/login
+      /api/auth/logout
+      /api/auth/status
+      /api/coverage
+      /api/detection/fouling-bench
+      /api/episodes
+      /api/equipment
+      /api/governance
+      /api/health
+      /api/judge/audit
+      /api/judge/evaluation
+      /api/kpi
+      /api/model/validation
+      /api/notifications/governance
+      /api/notifications/status
+      /api/notifications/test
+      /api/replay/alerts
+      /api/replay/disagreements
+      /api/replay/speed
+      /api/replay/start
+      /api/replay/state
+      /api/replay/stop
+      /api/replay/stream
+      /api/sensitivity
+      /api/sensor-health
+      /api/sensor/{}
+      /api/timeseries
+      /api/topology
+      /api/workflows/templates
+
+==========================================================================
+9. ÉCART SERVEUR / ÉCRAN
+==========================================================================
+  routes servies et consommées par personne : 14
+      GET          /
+      GET          /api/auth/audit
+      POST         /api/auth/refresh
+      GET          /api/config
+      GET          /api/health/database
+      GET          /api/health/live
+      GET          /api/health/model
+      GET          /api/health/ready
+      GET          /api/health/version
+      GET          /api/notable
+      GET/POST     /api/workflows
+      GET          /api/workflows/{workflow_id}
+      POST         /api/workflows/{workflow_id}/complete
+      PATCH        /api/workflows/{workflow_id}/steps/{step_id}
+  chemins appelés par l'écran et non servis : 0
+
+  routes servies    : 46 chemins, 47 couples verbe+chemin
+  routes consommées : 32
+  taux de câblage   : 69.6 % des chemins servis sont atteints par l'écran
+
+==========================================================================
+10. IDENTIFIANTS — LA PAGE ET CE QUE LE JS Y CHERCHE
+==========================================================================
+  identifiants posés dans la page : 110
+  identifiants cherchés par le JS : 99
+  cherchés et ABSENTS de la page  : 0
+  posés et jamais cherchés        : 11
+      · benchReading
+      · friezeTrack
+      · panel-controle
+      · panel-integrite
+      · panel-salle
+      · shell
+      · tab-controle
+      · tab-integrite
+      · tab-salle
+      · who
+      · work
+  data-view      page   3  ·  js   0
+  data-panel     page   3  ·  js   0
+  data-feed      page   3  ·  js   0
+  data-alarms    page   2  ·  js   2
+  data-sensor    page   0  ·  js   2
+  data-episode   page   0  ·  js   2
+  data-alarm     page   0  ·  js   5
+  data-idx       page   0  ·  js   2
+
+==========================================================================
+12. CONTRASTE WCAG RECALCULE
+==========================================================================
+  fonds employes : 5 — --void, --deep, --plate, --raise, --sunken
+  encre    valeur      --void   --deep  --plate  --raise --sunken     PIRE
+  --ink    #e9f2f1      17.27    16.59    15.94    14.61    16.84  14.61:1 OK
+  --ink-2  #b3c6c7      11.07    10.64    10.22     9.37    10.80   9.37:1 OK
+  --ink-3  #7c9396       6.06     5.82     5.60     5.13     5.91   5.13:1 OK
+  --ink-4  #718a8e       5.37     5.16     4.95     4.54     5.23   4.54:1 OK
+
+  micro-libelles (--ink-4), pire fond : 4.54:1
+  app.css annonce  « 4,5:1 au pire (--raise) »  -> CONFORME
+  ADR-008 annonce  « 4,6:1 minimum »            -> SUREVALUE
+
+==========================================================================
+13. BANCS DU POSTE ET RENVOIS
+==========================================================================
+  Bancs jsdom -- `npm run test:front`, 2026-08-08 :
+      frontend_smoke.mjs      54 verifications    1.94 s
+      twin_smoke.mjs          35 verifications    0.39 s
+      boot_smoke.mjs           9 verifications    1.39 s
+      TOTAL                   98 verifications    3.72 s
+      twin_smoke rapporte en outre : 10 pieces, 102 objets
+      selectionnables, 1541 tubes, 12 capteurs.
+
+  Perimetre du front, calorifuge compris :
+      dashboard.html + app.js + twin.js + app.css = 6377 lignes
+      (la consigne annonce 5 160 : elle omet app.css)
+      Perimetre A L'OUVERTURE de l'audit du 2026-08-08 : 6 365.
+      L'ecart est celui des corrections de la section 17.8, qui ont
+      ajoute des lignes au fichier pendant qu'on le mesurait.
+
+  Volumetrie du registre d'alarmes -- cite par dashboard.html:367 :
+      src/operations/alarms.py         mesure  617  |  documente  561  -> PERIME
+      tests/test_alarm_store.py        mesure  335  |  documente  291  -> PERIME
+      total du couple                  mesure  952  |  commentaire  849  -> PERIME
+      routes /api/alarms*              mesure    2  |  commentaire « six » -> FAUX
+
+==========================================================================
+11. CHIFFRES CITÉS DANS LES COMMENTAIRES DU FRONT
+==========================================================================
+  Rien ne les exécute et aucun test ne les relit. À confronter un à un.
+
+  dashboard.html:138   [quantite] tabulation traversait les trois onglets au lieu du seul actif. -->
+  dashboard.html:165   [grandeur technique] grand écran, empilés sous 760 px. Le verdict de sévérité était
+  dashboard.html:191   [quantite] mention de géométrie passait sur trois lignes. -->
+  dashboard.html:367   [quantite] 952 lignes de code testé — `alarms.py` 617 + `test_alarm_store.py`
+  dashboard.html:368   [quantite] 335 — deux routes, et aucune interface : le rapport annonçait « le
+  dashboard.html:373   [quantite] Le commentaire annonçait « 849 lignes » et « six routes ». Ni l'un
+  dashboard.html:447   [pourcentage] Un « 100,0 % » en corps 72 sur un banc dont les pièges ont été
+  dashboard.html:482   [quantite] sur les quatorze mois » — était vraie pour la fenêtre de référence
+  dashboard.html:483   [pourcentage] retenue, et fausse pour celle de 25 %, que l'analyse de
+  app.js:11    [coefficient] « seuil 0,487 » et « R2 0,968 » dans le HTML alors que les valeurs
+  app.js:237   [pourcentage] La couleur seule ne suffit pas — environ 8 % des hommes ne distinguent pas
+  app.js:504   [quantite] Un lecteur d'ecran annoncait trois boutons identiques sans jamais dire
+  app.js:505   [quantite] lequel etait selectionne, et la tabulation traversait les trois onglets
+  app.js:629   [quantite] DEUX IDENTIFIANTS MACHINE DANS LA MEME PHRASE, SUR LE GESTE PRINCIPAL.
+  app.js:672   [quantite] sert à couvrir. Le référentiel le dit pour cinq des douze tags.
+  app.js:761   [contraste] 3,56:1 sur le fond des cartes, 3,26:1 au survol. Le jeton CSS a été relevé
+  app.js:762   [quantite] deux fois ; les graphiques sont restés sur la valeur fautive, hors de
+  app.js:832   [quantite] Le menu offrait six familles, dont aucune ne traçait le coefficient
+  app.js:849   [coefficient] Le seul résidu indépendant de la variable régulée (r = +0,03 avec
+  app.js:1000  [pourcentage] déplaçait la grandeur de 0,5 % de son NIVEAU MOYEN. Pour l'écart de
+  app.js:1279  [quantite] courbe couvre 21 jours sur 650 points : redemander la série entière à chaque
+  app.js:1280  [quantite] cycle de 1,6 s retransmettait 650 points pour déplacer le curseur d'un pixel.
+  app.js:1329  [quantite] Le score normalisé sature : les quatorze lignes affichaient « 1,000 », et
+  app.js:1332  [quantite] écarts-types — n'est pas bornée et sépare 57 épisodes sur 58.
+  app.js:1336  [quantite] par `scripts/collecte_chiffres_front.py` : 58 épisodes, 57 valeurs de
+  app.js:1430  [quantite] la corrosion du faisceau et la fuite de calandre — deux modes auxquels le
+  app.js:1658  [quantite] La fenêtre d'analyse affichait dix-sept identifiants de code bruts — `duty_kw`,
+  app.js:1692  [quantite] DEUX PORTES SERVIES PAR LE SERVEUR N'AVAIENT PAS D'INTITULÉ ICI. Les phases
+  app.js:1698  [quantite] commentaire de `renderValidation` déclare corrigé trois lignes plus bas.
+  app.js:1700  [rang du motif] Dix-neuvième occurrence du motif de cet audit, et toujours dans le même
+  app.js:1743  [quantite] LA PREUVE ÉTAIT COUPÉE À 120 CARACTÈRES, ET C'EST LA RÉSERVE QUI TOMBAIT.
+  app.js:1745  [quantite] Les preuves des portes font 300 à 500 caractères depuis qu'elles portent
+  app.js:1773  [quantite] vaut quelque chose : la non-régression des huit contrôles face à des
+  app.js:1794  [pourcentage] « 100 % » les uns sous les autres sans rien hiérarchiser.
+  app.js:1830  [quantite] Deux tentatives en pourcentage ont échoué : la hauteur d'un enfant se
+  app.js:1841  [pourcentage] 15 % de marge au-dessus du plus haut mois : une barre qui touche le bord
+  app.js:1884  [quantite] La jauge n'opposait que « couvert » et « aveugle ». Deux modes — corrosion
+  app.js:1887  [quantite] pièce. Les compter comme couverts surévaluait la couverture de 18 points ;
+  app.js:1920  [quantite] Le poste affichait donc « undefined / 6 tags » en clair à l'écran.
+  app.js:2007  [pourcentage] fractions : des scenarios a 100, 200 et 300 % de perte, physiquement
+  twin.js:50    [grandeur technique] a 19,5 m d'un appareil de 11 m. Calcul sur un canvas de 620 px de haut et un
+  twin.js:51    [grandeur technique] champ de 34 degres : l'etiquette occupait 32 px, et la VALEUR — ecrite en
+  twin.js:52    [grandeur technique] 62 px sur une texture de 256 — en occupait HUIT. Illisible a distance de
+  twin.js:229   [quantite] Un echangeur en service depuis 2007 porte des trainees verticales sous
+  twin.js:1257  [quantite] tableau entier onze fois pour rien.
+  twin.js:1362  [grandeur technique] L'etiquette est dessinee a 512 px pour une largeur affichee d'environ
+  twin.js:1363  [grandeur technique] 1,15 unite de scene. La version precedente la peignait a 256 px : a la
+  twin.js:1413  [quantite] DCS. Ces deux capteurs sont d'ailleurs le cas d'ecole que le projet met
+  twin.js:1942  [quantite] La scene compte plus de 1 500 tubes instancies, des ombres 2048 et une
+  twin.js:1944  [quantite] salle de controle — cela peut tomber sous 20 images par seconde. Plutot
+  app.css:35    [contraste] Norme WCAG AA = 4,5:1 pour le petit texte.
+  app.css:36    [contraste] ink-4 valait #5b7276, soit 3,56:1 : il echouait alors qu'il porte les
+  app.css:37    [grandeur technique] micro-libelles en 10 px, c'est-a-dire le texte le plus petit du poste.
+  app.css:40    [contraste] #6b8488 et annonce 4,57:1 — exact sur --plate, et sur --plate seulement.
+  app.css:43    [contraste] #6b8488 retombe a 4,20:1. Le texte le plus petit de l'interface repassait
+  app.css:224   [quantite] une information portee par la couleur seule, sur les deux champs qu'un
+  app.css:295   [grandeur technique] 34 px, et pas moins : le logo est un bloc empilé — couronne au-dessus,
+  app.css:296   [quantite] mot OCP en dessous. Contraindre sa hauteur réduit le mot deux fois plus
+  app.css:297   [grandeur technique] vite que la couronne, et sous 32 px il cesse d'être lisible. Recadrer sur
+  app.css:300   [pourcentage] Le vert institutionnel est sombre sur un fond à 6 % de luminance. Un
+  app.css:465   [grandeur technique] l'appareil à gauche, la situation à droite. Sous 760 px ils s'empilent. */
+  app.css:542   [pourcentage] Environ 8 % des hommes ne distinguent pas le rouge de l'ambre. Une salle de
+  app.css:1103  [grandeur technique] LE VERDICT NE DISPARAIT PLUS SOUS 760 px.
+  app.css:1127  [grandeur technique] Palier telephone. Il n'en existait aucun sous 760 px : sur un ecran de
+  app.css:1128  [grandeur technique] 360 px, le bandeau de commande et la barre d'onglets restaient dimensionnes
+  app.css:1145  [grandeur technique] Les commandes mesuraient 28 a 35 px de haut : conformes au minimum AA de
+  app.css:1146  [grandeur technique] 24 px, en dessous des 44 px du critere AAA et de l'usage en salle de
+  app.css:1160  [grandeur technique] , *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms
+
+  -> 68 lignes de commentaire portent une assertion chiffree.
+     Aucune n'est executee. Aucun test ne les relit.
+
+  REPERE POUR LA SECTION 17.8 : la population AUDITEE le 2026-08-08
+  etait de 65 lignes. Le compte ci-dessus est superieur parce que les
+  trois corrections apportees ce jour-la citent chacune leur valeur
+  recomptee et sa date -- elles sont donc, a leur tour, des assertions
+  chiffrees non executees. Le denominateur du taux d'erreur publie
+  reste 65 : on ne mesure pas un taux sur une population qu'on vient
+  d'elargir avec ses propres corrections.

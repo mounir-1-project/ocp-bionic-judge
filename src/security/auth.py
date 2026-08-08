@@ -15,9 +15,29 @@ import secrets
 import threading
 import time
 from collections import defaultdict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 PBKDF2_ITERATIONS = 600_000
+
+# LONGUEUR MINIMALE — TROIS ECRITURES, ET LA MAUVAISE APPARTENANCE.
+#
+# La constante vivait dans `src.security.registry` sous le nom
+# `MIN_PASSWORD_LENGTH`; `manage_operators.py` la lisait correctement. Mais
+# `hash_password`, qui est le DERNIER verrou — `registry.add` et
+# `registry.set_password` passent tous deux par elle — ecrivait `12` en dur,
+# et son message une troisieme fois.
+#
+# La dependance interdisait d'ailleurs de faire autrement : `registry` importe
+# `auth`, donc `auth` ne pouvait pas importer la constante de `registry` sans
+# cycle. Le module qui APPLIQUE la regle ne possedait pas la valeur.
+#
+# Consequence mesurable : porter la politique a 14 caracteres dans `registry`
+# aurait change ce que le script exige et ce que `add()` verifie, et
+# `hash_password` aurait continue d'accepter 12. Une politique de mot de passe
+# a moitie appliquee, sans que rien ne le signale. C'est le motif d'A-5 et de
+# S8-2. La constante vit ici, `registry` la reexporte.
+MIN_PASSWORD_LENGTH = 12
+
 MAX_ATTEMPTS = 5
 ATTEMPT_WINDOW_SECONDS = 300
 EMAIL_PATTERN = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s]{2,63}$")
@@ -32,8 +52,11 @@ class TooManyAttemptsError(PermissionError):
 
 def hash_password(password: str, iterations: int = PBKDF2_ITERATIONS) -> str:
     """Produit une empreinte PBKDF2-SHA256 transportable dans `.env`."""
-    if len(password) < 12:
-        raise ValueError("Le mot de passe doit contenir au moins 12 caracteres")
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise ValueError(
+            f"Le mot de passe doit contenir au moins {MIN_PASSWORD_LENGTH} "
+            f"caractères"
+        )
     salt = secrets.token_bytes(16)
     digest = hashlib.pbkdf2_hmac(
         "sha256",
@@ -71,6 +94,16 @@ def _decoy_hash() -> str:
     temps de reponse, quelles adresses sont enregistrees. On derive donc une
     empreinte quoi qu'il arrive. Calculee une seule fois, a la premiere
     tentative echouee, pour ne pas ralentir le demarrage.
+
+    LE PRIX DE CE CHOIX, ECRIT PLUTOT QUE TU. La toute premiere tentative sur
+    une adresse INCONNUE paie deux derivations — celle-ci, puis la comparaison
+    — la ou une adresse connue n'en paie qu'une. L'egalisation que promet cette
+    fonction est donc fausse exactement une fois par processus. Le
+    prechauffement au demarrage supprimerait l'ecart au prix d'une demi-seconde
+    de latence a l'ouverture du service, et d'une derivation PBKDF2 sur un
+    poste qui, la plupart du temps, tourne sans authentification active. La
+    fenetre est d'un unique essai et n'est pas rejouable : l'ecart est assume,
+    pas ignore.
     """
     return hash_password(secrets.token_urlsafe(24))
 
@@ -201,6 +234,9 @@ class AuthManager:
     ) -> tuple[str, OperatorSession] | None:
         """Authentifie l'email de quart et crée une session limitée."""
         now = time.time()
+        # Normalisation remontee AVANT le verrou : le journal d'audit en a
+        # besoin des la limitation de debit, voir `_record` ci-dessous.
+        normalized_email = email.strip().lower()
         with self._lock:
             # LA TENTATIVE EST COMPTEE AVANT LA VERIFICATION, PAS APRES.
             #
@@ -217,12 +253,19 @@ class AuthManager:
             while attempts and now - attempts[0] > ATTEMPT_WINDOW_SECONDS:
                 attempts.popleft()
             if len(attempts) >= MAX_ATTEMPTS:
-                self._record("LOGIN_RATE_LIMITED", "", client_key)
+                # L'ADRESSE VISEE ETAIT JETEE SUR LE SEUL EVENEMENT QUI LA
+                # RECLAME. `LOGIN_RATE_LIMITED` etait consigne avec une chaine
+                # vide : le journal d'authentification disait qu'une limite
+                # avait ete atteinte, jamais CONTRE QUEL COMPTE. C'est le seul
+                # evenement du journal qui signale une attaque en cours, et
+                # c'est celui qui taisait sa cible — alors que la valeur etait
+                # dans la portee. Rien ne la protegeait : les deux autres
+                # evenements consignent deja l'adresse.
+                self._record("LOGIN_RATE_LIMITED", normalized_email, client_key)
                 raise TooManyAttemptsError("Trop de tentatives")
             attempts.append(now)
             self._purger(now)
 
-        normalized_email = email.strip().lower()
         valid_user = bool(EMAIL_PATTERN.fullmatch(normalized_email))
         valid_user = valid_user and normalized_email in self.allowed_emails
 
@@ -253,24 +296,40 @@ class AuthManager:
             self._record("LOGIN_SUCCEEDED", normalized_email, client_key)
         return token, session
 
+    def _valider_sous_verrou(self, token: str, now: float) -> OperatorSession | None:
+        """Cœur de `validate`, à appeler verrou déjà pris.
+
+        `threading.Lock` n'est pas reentrant : `rotate` ne pouvait pas appeler
+        `validate` sans relacher le verrou entre la validation et la rotation.
+        C'est ce qui ouvrait la fenetre decrite dans `rotate`.
+
+        Args:
+            token: Identifiant de session opaque.
+            now: Instant courant.
+
+        Returns:
+            La session vivante, ou `None` si absente ou périmée.
+        """
+        session = self._sessions.get(token)
+        if session is None:
+            return None
+        expired = (
+            now - session.created_at > self.absolute_timeout_s
+            or now - session.last_seen_at > self.idle_timeout_s
+        )
+        if expired:
+            self._sessions.pop(token, None)
+            return None
+        session.last_seen_at = now
+        return session
+
     def validate(self, token: str | None) -> OperatorSession | None:
         """Valide expiration absolue et inactivité côté serveur."""
         if not token:
             return None
         now = time.time()
         with self._lock:
-            session = self._sessions.get(token)
-            if session is None:
-                return None
-            expired = (
-                now - session.created_at > self.absolute_timeout_s
-                or now - session.last_seen_at > self.idle_timeout_s
-            )
-            if expired:
-                self._sessions.pop(token, None)
-                return None
-            session.last_seen_at = now
-            return session
+            return self._valider_sous_verrou(token, now)
 
     def destroy(self, token: str | None) -> None:
         """Invalide immédiatement une session."""
@@ -280,19 +339,74 @@ class AuthManager:
             self._sessions.pop(token, None)
 
     def rotate(self, token: str | None) -> tuple[str, OperatorSession] | None:
-        """Remplace l'identifiant opaque sans prolonger l'expiration absolue."""
-        session = self.validate(token)
-        if session is None or token is None:
+        """Remplace l'identifiant opaque sans prolonger l'expiration absolue.
+
+        LE VERROU NE PROTEGEAIT PAS CE QUE LE COMMENTAIRE CROYAIT PROTEGER.
+
+        La version precedente portait ceci :
+
+            # LE JETON CSRF ETAIT REMPLACE HORS VERROU, donc pendant qu'une
+            # requete concurrente pouvait le lire [...] : la rotation faisait
+            # echouer des requetes legitimes.
+            session.csrf_token = secrets.token_urlsafe(24)
+
+        Le diagnostic etait juste; le correctif ne le traitait pas. Deplacer
+        l'affectation SOUS le verrou ne change rien, parce que **le lecteur ne
+        prend jamais le verrou** : `api/main.py` compare
+        `request.headers.get("X-CSRF-Token") != session.csrf_token` sur l'objet
+        que `validate()` lui a rendu, verrou deja relache. Le verrou serialise
+        les ecrivains entre eux, il n'a jamais protege personne d'une mutation
+        en place.
+
+        C'est mot pour mot SEC-1, lot S11, sur une autre structure : le
+        registre des techniciens mutait `self._operators` en place sous un
+        commentaire qui expliquait onze lignes plus haut pourquoi il ne fallait
+        pas. La doctrine etablie alors est la PUBLICATION ATOMIQUE — on ne
+        modifie pas l'objet que d'autres tiennent, on en publie un nouveau.
+
+        Deroule du defaut, avec `/api/auth/refresh` appele pendant qu'une
+        ecriture est en vol :
+
+          1. la requete A obtient la session par `validate()` ;
+          2. la requete B fait tourner le jeton, et ecrase `csrf_token` sur
+             l'objet que A tient toujours ;
+          3. A compare son en-tete — l'ANCIEN jeton — a la valeur NOUVELLE, et
+             recoit `403 Jeton de session invalide` sur une requete parfaitement
+             legitime.
+
+        Une session distincte est desormais construite, l'ancienne restant
+        intacte pour les requetes en vol : A voit l'ancien jeton et passe.
+
+        Second defaut ferme au passage : `validate()` prenait puis relachait le
+        verrou avant que `rotate` ne le reprenne. Deux rotations concurrentes du
+        meme jeton produisaient donc DEUX cookies valides pour une seule
+        ouverture de session. La validation et la publication tiennent
+        maintenant dans une seule prise de verrou.
+
+        Args:
+            token: Identifiant de session courant.
+
+        Returns:
+            Le nouvel identifiant et la nouvelle session, ou `None`.
+        """
+        if not token:
             return None
+        now = time.time()
         replacement = secrets.token_urlsafe(32)
         with self._lock:
-            # LE JETON CSRF ETAIT REMPLACE HORS VERROU, donc pendant qu'une
-            # requete concurrente pouvait le lire pour le comparer a l'en-tete
-            # presente : la rotation faisait echouer des requetes legitimes.
-            session.csrf_token = secrets.token_urlsafe(24)
+            courante = self._valider_sous_verrou(token, now)
+            if courante is None:
+                return None
+            # `created_at` est recopie tel quel : la rotation ne prolonge pas
+            # l'expiration absolue, ce que promet la premiere ligne.
+            renouvelee = replace(
+                courante,
+                csrf_token=secrets.token_urlsafe(24),
+                last_seen_at=now,
+            )
             self._sessions.pop(token, None)
-            self._sessions[replacement] = session
-        return replacement, session
+            self._sessions[replacement] = renouvelee
+        return replacement, renouvelee
 
     def audit_events(self, limit: int = 100) -> list[dict[str, object]]:
         """Journal borné des authentifications, sans mot de passe ni jeton."""

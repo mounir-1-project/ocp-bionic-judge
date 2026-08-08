@@ -52,7 +52,10 @@ def test_features_de_performance_nulles_a_larret(features):
     """Juger la performance d'un echangeur a l'arret n'a aucun sens."""
     feats, _ = features
     stopped = feats[feats["process_state"].eq("STOPPED")]
-    for c in ("delta_t", "duty_kw", "duty_per_load", "control_deviation"):
+    # `duty_per_load` figurait ici : c'etait son SEUL lecteur dans tout le
+    # depot. Une colonne dont l'unique consommateur est le test qui verifie
+    # qu'elle existe ne mesure rien; elle a ete retiree avec `approach_ratio`.
+    for c in ("delta_t", "duty_kw", "flow_per_load", "control_deviation"):
         assert stopped[c].isna().all(), f"{c} calcule pendant un arret"
 
 
@@ -578,14 +581,129 @@ def test_le_rattachement_ne_cite_que_des_features_du_modele():
     """
     from src.models.detector import CoolerAnomalyDetector
 
-    hors_modele = {
-        **CoolerAnomalyDetector._MODE_BY_RESIDUAL,
-        **CoolerAnomalyDetector._MODE_BY_THRESHOLD,
-    }.keys() - set(MODEL_FEATURES)
+    hors_modele = (
+        set(CoolerAnomalyDetector._MODE_BY_RESIDUAL)
+        | set(CoolerAnomalyDetector._MODE_BY_THRESHOLD)
+        | set(CoolerAnomalyDetector._FEATURES_SANS_ACCUSATION)
+    ) - set(MODEL_FEATURES)
     assert not hors_modele, (
         f"rattachements portant sur des grandeurs hors MODEL_FEATURES, donc "
         f"jamais atteignables : {sorted(hors_modele)}"
     )
+
+
+def test_toute_entree_de_rattachement_peut_reellement_accuser(domain):
+    """M-3 — Ce test verrouillait l'appartenance, pas l'ATTEIGNABILITÉ.
+
+    `_MODE_BY_THRESHOLD` portait quatre entrées, dont trois avec un tag et un
+    seuil vides. `_mode_for_feature` sort sur `if not tag_name: return None` :
+    trois sur quatre rendaient invariablement `None`. La table paraissait
+    rattacher quatre grandeurs à trois modes de défaillance et n'en rattachait
+    qu'une — la « couverture illusoire » que le commentaire voisin condamne, à
+    quinze lignes de son propre correctif.
+
+    Le comportement était juste ; c'est la forme qui mentait. Les trois
+    grandeurs de variation sont désormais déclarées pour ce qu'elles sont, dans
+    `_FEATURES_SANS_ACCUSATION`, et la table ne contient plus que ce qui peut
+    réellement accuser.
+
+    Ce contrôle exige les trois propriétés qui manquaient : chaque entrée porte
+    un tag et un seuil non vides, ce seuil existe dans le référentiel, et les
+    deux ensembles sont disjoints.
+    """
+    from src.models.detector import CoolerAnomalyDetector
+
+    inertes = {
+        feature
+        for feature, (_, tag, seuil) in CoolerAnomalyDetector._MODE_BY_THRESHOLD.items()
+        if not tag or not seuil
+    }
+    assert not inertes, (
+        f"entrées qui ne peuvent jamais accuser : {sorted(inertes)}. Soit leur "
+        f"donner un tag et un seuil, soit les déclarer dans "
+        f"`_FEATURES_SANS_ACCUSATION`."
+    )
+
+    introuvables = {
+        f"{feature} -> {tag}.{seuil}"
+        for feature, (_, tag, seuil) in CoolerAnomalyDetector._MODE_BY_THRESHOLD.items()
+        if domain.get(tag).threshold(seuil) is None
+    }
+    assert not introuvables, (
+        f"seuils absents du référentiel, donc rattachement inatteignable : "
+        f"{sorted(introuvables)}"
+    )
+
+    modes_cites = {
+        mode for mode, _, _ in CoolerAnomalyDetector._MODE_BY_THRESHOLD.values()
+    } | {mode for mode, _ in CoolerAnomalyDetector._MODE_BY_RESIDUAL.values()}
+    inconnus = modes_cites - set(domain.modes)
+    assert not inconnus, f"modes AMDEC inexistants cités : {sorted(inconnus)}"
+
+    chevauchement = (
+        set(CoolerAnomalyDetector._MODE_BY_THRESHOLD)
+        & CoolerAnomalyDetector._FEATURES_SANS_ACCUSATION
+    )
+    assert not chevauchement, (
+        f"une grandeur ne peut pas à la fois accuser et ne pas accuser : "
+        f"{sorted(chevauchement)}"
+    )
+
+
+def test_la_severite_imposee_par_l_amdec_correspond_a_ce_que_les_regles_emettent(domain):
+    """`severite_immediate` était une détermination de gouvernance sans effet.
+
+    `amdec.yaml` déclare `signature.severite_immediate` pour deux modes :
+    CRITICAL pour FAISCEAU_FUITE, WARNING pour CAPTEUR_DEFAILLANT. Le champ
+    est chargé par `FailureMode.immediate_severity` — et **aucun appelant ne
+    le lisait**. Le service fiabilité pouvait donc le corriger dans le
+    référentiel sans que rien ne change dans la chaîne.
+
+    L'appliquer comme plancher casserait une gradation voulue : `CONC_DROP`
+    est délibérément WARNING (« à confirmer par prélèvement laboratoire »)
+    alors qu'il porte FAISCEAU_FUITE. La sémantique juste est donc : la
+    sévérité déclarée est celle que le mode atteint AU PLUS HAUT.
+
+    Ce test l'établit par analyse du source de `RuleEngine`, sans exécuter
+    aucune règle : il lit les `Finding(...)` construits, apparie `amdec_mode`
+    et `severity`, et compare au référentiel. Une règle qu'on abaisserait ou
+    qu'on relèverait sans reprendre l'AMDEC fait échouer ce test.
+    """
+    import ast
+    import inspect
+
+    from src.models.detector import SEVERITY_ORDER, RuleEngine
+
+    arbre = ast.parse(inspect.getsource(RuleEngine))
+    par_mode: dict[str, set[str]] = {}
+    for noeud in ast.walk(arbre):
+        if not (isinstance(noeud, ast.Call)
+                and isinstance(noeud.func, ast.Name)
+                and noeud.func.id == "Finding"):
+            continue
+        args = {kw.arg: kw.value for kw in noeud.keywords}
+        mode, severite = args.get("amdec_mode"), args.get("severity")
+        if not (isinstance(mode, ast.Constant) and isinstance(severite, ast.Constant)):
+            continue  # sévérité calculée ou mode déduit : hors de portée statique
+        if mode.value:
+            par_mode.setdefault(mode.value, set()).add(severite.value)
+
+    assert par_mode, "aucune construction de Finding lisible : l'analyse a dérivé"
+
+    for code, mode in domain.modes.items():
+        imposee = mode.immediate_severity
+        if imposee is None:
+            continue
+        emises = par_mode.get(code)
+        assert emises, (
+            f"{code} impose une sévérité {imposee} dans amdec.yaml, mais aucune "
+            f"règle ne lui rattache de constatation : la détermination est morte."
+        )
+        atteinte = max(emises, key=lambda s: SEVERITY_ORDER[s])
+        assert atteinte == imposee, (
+            f"{code} : amdec.yaml impose {imposee}, les règles plafonnent à "
+            f"{atteinte} (sévérités émises : {sorted(emises)})."
+        )
 
 
 def test_attribution_somme_a_quelque_chose_dinterpretable(pipeline):
@@ -646,7 +764,25 @@ def test_backtest_temporel_declare_les_limites(features, ingestion, domain):
         gate for gate in report["deployment_gates"] if gate["gate"] == "labels_gmao"
     )
     assert labels_gate["passed"] is False
-    assert all(
-        fold["causal_pipeline_refit"]
-        for fold in report["temporal_backtest"]["folds"]
+
+    # CETTE ASSERTION VERIFIAIT UNE CONSTANTE. `causal_pipeline_refit` etait un
+    # litteral `True` dans le dictionnaire de pli : le test ne pouvait pas
+    # echouer, quoi qu'il arrive a la chaine. C'est le defaut que le fichier
+    # denonce lui-meme a propos de la porte `causalite_temporelle`, reproduit
+    # un cran plus bas et verrouille par un test complice.
+    #
+    # Le champ est desormais MESURE — fin d'ajustement des trois references, du
+    # detecteur, et gap calendaire reellement obtenu. L'assertion porte donc.
+    plis = report["temporal_backtest"]["folds"]
+    assert all(fold["causal_pipeline_refit"] for fold in plis)
+    for fold in plis:
+        assert fold["gap_calendar_hours"] >= 24
+        assert 0.0 <= fold["seasonal_extrapolation"] <= 1.0
+        assert fold["score_psi_empty_deciles"] >= 0
+
+    # Une fuite de pli doit remonter jusqu'a la porte, pas rester dans le
+    # detail : elle n'etait agregee nulle part.
+    causal_gate = next(
+        gate for gate in report["deployment_gates"] if gate["gate"] == "causalite_temporelle"
     )
+    assert causal_gate["passed"] is True

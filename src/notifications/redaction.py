@@ -38,6 +38,7 @@ from pathlib import PurePath, PureWindowsPath
 from typing import Any
 
 from src import formatting
+from src.agents.schemas import RESERVE_LIBELLES
 
 LARGEUR = 68
 
@@ -55,6 +56,11 @@ ORIGINES = {
     "runtime_trained_unpromoted": "entraîné au démarrage, non promu",
     "promoted_artifact": "artefact promu",
     "manifest_validated": "artefact validé par manifeste",
+}
+ETATS_CONTROLEUR = {
+    "ALERTE": "ALERTE — le contrôleur signale une anomalie sur lui-même",
+    "OK": "nominal",
+    "EN_ATTENTE": "en attente — trop peu de décisions jugées pour conclure",
 }
 MODES_AGENT = {
     "rules": "règles déterministes",
@@ -144,8 +150,13 @@ def rediger_gouvernance(payload: dict) -> str:
 
     # ── Verdict du contrôleur, en tête : c'est l'information à agir ──────────
     lignes.append(_titre("Verdict du contrôleur"))
+    # L'ETAT DU CONTROLEUR EST LA PREMIERE LIGNE QUE LE TECHNICIEN LIT, ET
+    # C'ETAIT UN IDENTIFIANT. `status` vaut ALERTE, OK ou EN_ATTENTE : le
+    # troisieme porte un tiret bas, ce que l'en-tete de ce module condamne
+    # explicitement pour `running` et `rules`. Les trois tables de traduction
+    # existaient deja ici; il en manquait une, sur la ligne qui compte le plus.
     statut = juge.get("status") or "—"
-    lignes.append(f"État : {statut}")
+    lignes.append(f"État : {ETATS_CONTROLEUR.get(statut, statut)}")
     if juge.get("n") is not None:
         lignes.append(
             f"{_nombre(juge.get('n'))} décisions jugées · "
@@ -167,7 +178,9 @@ def rediger_gouvernance(payload: dict) -> str:
                 code, compte = entree[0], entree[1]
             except (TypeError, IndexError, KeyError):
                 continue
-            lignes.append(f"  • {code} — {_nombre(compte)} cas")
+            lignes.append(
+                f"  • {RESERVE_LIBELLES.get(code, code)} — {_nombre(compte)} cas"
+            )
 
     # ── Modèle réellement en service ────────────────────────────────────────
     lignes.append(_titre("Modèle en service"))
@@ -199,8 +212,13 @@ def rediger_gouvernance(payload: dict) -> str:
         # on tente les deux, le nom de fichier est la seule chose utile ici.
         nom = PureWindowsPath(str(source)).name or PurePath(str(source)).name
         lignes.append(f"Source : {nom}")
+    # DEUX FORMATS DE DATE DANS UN RAPPORT D'UNE PAGE. La date d'edition
+    # passait par `_horodatage` et s'affichait « 01/01/2024 à 07h00 »; la
+    # periode analysee sortait brute, « 2024-01-01 07:00:00 ». L'aide existait
+    # dans ce fichier et n'etait appelee qu'une fois sur trois.
     lignes.append(
-        f"Période : {ingestion.get('t_start', '—')} → {ingestion.get('t_end', '—')}"
+        f"Période : {_horodatage(ingestion.get('t_start'))} → "
+        f"{_horodatage(ingestion.get('t_end'))}"
     )
     lignes.append(
         f"{_nombre(ingestion.get('n_rows'))} lignes retenues sur "

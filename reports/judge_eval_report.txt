@@ -9,8 +9,10 @@ Decisions saines evaluees   : 12
 
 Cas pieges evaluees         : 118
   note moyenne              : 5.78 / 10
-  rappel global             : 95.8% (fautes correctement identifiees)
-  fautes non sanctionnees   : 5 
+  taux de detection         : 100.0% (fautes identifiees)
+  detection ET sanction     : 95.8%
+  vues mais peu sanctionnees: 5
+  non detectees             : 0
 
 SEPARATION saines / fautives : 4.13 point(s) d'ecart
 

@@ -133,8 +133,17 @@ def reference_cutoff(
     temporelle est identique, ce qui est la propriete qui protege de la fuite
     de donnees.
 
-    La formule reprend celle de `src.governance.sensitivity`, qui coupait deja
-    sur les heures de marche : les deux modules ne peuvent plus diverger.
+    CETTE FONCTION EST LA SEULE ECRITURE DE LA REGLE, ET ELLE NE L'ETAIT PAS.
+    La version precedente de cette docstring affirmait que « la formule reprend
+    celle de `src.governance.sensitivity` [...] : les deux modules ne peuvent
+    plus diverger ». Ils divergeaient deja au moment ou la phrase a ete ecrite :
+    `sensitivity` recopiait la formule SANS la garde `max(0, ...)` ci-dessous,
+    si bien qu'une fraction assez petite pour annuler `int(len * fraction)` y
+    donnait l'indice -1, donc la DERNIERE heure de marche — la periode de
+    reference devenant le corpus entier.
+
+    Reprendre une formule n'est pas la partager. `sensitivity` appelle
+    desormais cette fonction, et c'est ce qui rend la divergence impossible.
 
     Args:
         df: Table contenant la colonne `process_state`.
@@ -403,8 +412,24 @@ def add_conductance_features(df: pd.DataFrame, reference: ConductanceReference) 
     # En comparant a la valeur attendue AUX CONDITIONS DE L'INSTANT, ces
     # correlations tombent a +0,13 et +0,08 : ce qui reste est attribuable a
     # la surface d'echange.
-    out["fouling_resistance"] = (1.0 / out["ua_kw_per_k"]) - (1.0 / expected)
-    out["fouling_resistance_trend_14d"] = (
-        out["fouling_resistance"].rolling("14D", min_periods=112).mean()
-    )
+    #
+    # UA_ATTENDU EST UNE PREDICTION LINEAIRE NON CONTRAINTE : ELLE PEUT
+    # S'APPROCHER DE ZERO, ET 1/UA_attendu DIVERGE ALORS.
+    # Aux conditions de la periode de reference, UA attendu vaut 14 a 22 kW/K
+    # et le cas ne se presente pas. Mais rien dans la regression ne l'interdit
+    # a des conditions extremes — debit tres bas, eau de mer hors plage — et
+    # une resistance d'encrassement de plusieurs milliers de K/kW affichee sur
+    # le poste serait lue comme un faisceau bouche. On rend donc la grandeur
+    # indisponible plutot que fausse : le seuil de 1 kW/K est deux ordres de
+    # grandeur sous toute valeur observee sur ce corpus.
+    plancher = 1.0
+    ua_ok = out["ua_kw_per_k"].where(out["ua_kw_per_k"] > plancher)
+    expected_ok = expected.where(expected > plancher)
+    out["fouling_resistance"] = (1.0 / ua_ok) - (1.0 / expected_ok)
+
+    # `fouling_resistance_trend_14d` a ete retiree : elle etait calculee a
+    # chaque heure et n'etait lue nulle part. La tendance qui gouverne
+    # reellement la regle FOULING_DRIFT est `ua_residual_trend_14d`, juste
+    # au-dessus; en publier une seconde, jamais consultee, laissait croire a
+    # deux criteres de derive la ou il n'y en a qu'un.
     return out

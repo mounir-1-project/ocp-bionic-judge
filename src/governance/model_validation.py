@@ -7,7 +7,11 @@ jamais sur une précision prédictive inventée.
 
 from __future__ import annotations
 
+import io
+import re
+import tokenize
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -35,17 +39,69 @@ from src.ingest.dcs_loader import classify_process_state
 from src.models.detector import StatisticalDetector
 
 
-def _population_stability_index(reference: np.ndarray, observed: np.ndarray) -> float:
-    """PSI sur déciles de référence, avec lissage des cellules vides."""
+# BORNE DU PSI — SON ORIGINE, ET CE QU'ELLE NE VAUT PAS ICI.
+#
+# 0,25 est la borne usuelle du Population Stability Index en SCORING DE CREDIT,
+# ou les deux populations comparees sont censees etre echangeables. Le dossier
+# n'argumente nulle part son transfert a des scores d'Isolation Forest, et la
+# preuve de la porte `derive_de_distribution` le dit.
+#
+# Elle est nommee UNE SEULE FOIS, exactement pour la raison que le commentaire
+# d'`alert_rate_limit` invoque douze lignes plus bas : la version precedente
+# l'ecrivait DEUX fois — dans le predicat de la porte et dans la preuve
+# affichee — a onze lignes d'ecart. C'est le defaut de S8-2, dans le fichier qui
+# porte le principe.
+PSI_LIMIT = 0.25
+
+
+def _population_stability_index(
+    reference: np.ndarray, observed: np.ndarray
+) -> tuple[float, int]:
+    """PSI sur déciles de référence, planchers rattachés à la taille d'échantillon.
+
+    LE PLANCHER DES CELLULES VIDES N'ETAIT PAS UN LISSAGE.
+
+    La version precedente ecrasait les deux distributions a `1e-6`, sous le mot
+    « lissage ». Sur des deciles de reference — donc `ref_p = 0,1` par
+    construction — une seule cellule VIDE cote observe contribue alors
+
+        (1e-6 - 0,1) x ln(1e-6 / 0,1) = 1,1513
+
+    soit, a elle seule, plus de quatre fois la borne de 0,25 opposee au total.
+    Le PSI publie comptait donc pour l'essentiel des CELLULES VIDES multipliees
+    par une constante arbitraire : le maximum publie, 3,7446, vaut 3,25 fois
+    cette contribution.
+
+    Et `1e-6` n'est pas une frequence atteignable : sur les ~1 800 heures d'une
+    fenetre de test, la plus petite frequence non nulle vaut 5,6e-4. Le plancher
+    est desormais la moitie d'un comptage — la correction de continuite usuelle
+    — donc rattache a la taille de l'echantillon au lieu d'etre pose. Meme
+    cellule vide, meme corpus : 0,589 au lieu de 1,1513.
+
+    Le NOMBRE de cellules vides est rendu avec la valeur, parce que sans lui
+    elle n'est pas interpretable : un PSI de 3,7 peut signifier une distribution
+    deplacee ou trois deciles jamais visites, et ce n'est pas le meme constat.
+
+    Args:
+        reference: Échantillon qui définit les déciles.
+        observed: Échantillon comparé.
+
+    Returns:
+        La valeur du PSI, et le nombre de déciles de référence que l'échantillon
+        observé laisse vides.
+    """
     quantiles = np.unique(np.quantile(reference, np.linspace(0, 1, 11)))
     if len(quantiles) < 3:
-        return 0.0
+        return 0.0, 0
     quantiles[0], quantiles[-1] = -np.inf, np.inf
     ref_hist = np.histogram(reference, bins=quantiles)[0].astype(float)
     obs_hist = np.histogram(observed, bins=quantiles)[0].astype(float)
-    ref_p = np.clip(ref_hist / max(ref_hist.sum(), 1), 1e-6, None)
-    obs_p = np.clip(obs_hist / max(obs_hist.sum(), 1), 1e-6, None)
-    return float(np.sum((obs_p - ref_p) * np.log(obs_p / ref_p)))
+    n_ref = max(float(ref_hist.sum()), 1.0)
+    n_obs = max(float(obs_hist.sum()), 1.0)
+    ref_p = np.clip(ref_hist / n_ref, 0.5 / n_ref, None)
+    obs_p = np.clip(obs_hist / n_obs, 0.5 / n_obs, None)
+    psi = float(np.sum((obs_p - ref_p) * np.log(obs_p / ref_p)))
+    return psi, int((obs_hist == 0).sum())
 
 
 def _feature_audit(features: pd.DataFrame) -> dict[str, Any]:
@@ -114,6 +170,93 @@ def _feature_audit(features: pd.DataFrame) -> dict[str, Any]:
     }
 
 
+# Motifs qui trahissent une lecture de l'aval : decalage negatif, fenetre
+# centree, remplissage par l'arriere, agregat TOTAL d'un palier — la version
+# historique du detecteur de gel mesurait la longueur totale d'un palier, donc
+# son extension dans le futur.
+_MOTIFS_NON_CAUSAUX = re.compile(
+    r"shift\(\s*-\d|center\s*=\s*True|\.bfill\(|backfill|"
+    r"fillna\(\s*method\s*=\s*[\"']b|\.transform\(\s*[\"']sum[\"']"
+)
+
+
+def _code_sans_litteraux(source: str) -> list[str]:
+    """Rend les lignes du source, chaînes et commentaires blanchis.
+
+    La numérotation des lignes est conservée : une ligne blanchie reste une
+    ligne. Le filtre précédent était `not ligne.lstrip().startswith("#")`, qui
+    ne voyait ni un commentaire de fin de ligne ni, surtout, le contenu d'une
+    chaîne de caractères.
+
+    Args:
+        source: Texte d'un module Python.
+
+    Returns:
+        Les lignes du module, littéraux et commentaires remplacés par des
+        espaces.
+    """
+    lignes = [list(ligne) for ligne in source.splitlines()]
+    for jeton in tokenize.generate_tokens(io.StringIO(source).readline):
+        if jeton.type not in (tokenize.STRING, tokenize.COMMENT):
+            continue
+        (premiere, depart), (derniere, arrivee) = jeton.start, jeton.end
+        for numero in range(premiere, derniere + 1):
+            ligne = lignes[numero - 1]
+            debut = depart if numero == premiere else 0
+            fin = arrivee if numero == derniere else len(ligne)
+            for colonne in range(debut, min(fin, len(ligne))):
+                ligne[colonne] = " "
+    return ["".join(ligne) for ligne in lignes]
+
+
+def _decalages_non_causaux() -> list[str]:
+    """Cherche une lecture du futur dans TOUT `src/`, `governance` compris.
+
+    LE PERIMETRE DISAIT « TOUTE LA CHAINE » ET EXCLUAIT UN REPERTOIRE ENTIER.
+
+    Le balayage precedent portait `if "governance" not in chemin.parts`, sans un
+    mot de justification, sous un commentaire annoncant au contraire que « le
+    perimetre couvre toute la chaine, pas trois fichiers ».
+
+    La raison reelle etait mecanique, et personne ne l'avait ecrite : le motif
+    contient l'alternative `backfill`, donc LA LIGNE DE SOURCE QUI PORTE LE
+    MOTIF contient le mot `backfill`. Le balayage se signalait lui-meme. Les
+    deux autres occurrences sont dans la docstring de `_causality_audit`, qui
+    cite `bfill()` et `shift(-1)` pour expliquer ce qu'elle cherche.
+
+    Les trois etaient donc des CHAINES DE CARACTERES, jamais du code. Blanchir
+    les litteraux et les commentaires par tokenisation les fait disparaitre sans
+    rien exclure : verifie, le balayage sur `src/` entier, `governance` compris,
+    ne rend aucun resultat.
+
+    L'exclusion coutait cher. `sensitivity.py`, `fouling_injection.py` et
+    `judge_eval.py` produisent des chiffres publies dans le rapport; un
+    `shift(-1)` introduit dans l'un d'eux n'aurait rien declenche, et la porte
+    `causalite_temporelle` aurait continue d'afficher « franchie ».
+
+    Un module illisible est declare SUSPECT, jamais ignore : un controle de
+    causalite qui echoue en silence vaut moins que pas de controle du tout.
+
+    Returns:
+        `fichier:ligne` de chaque décalage trouvé dans du code exécutable.
+    """
+    racine = Path(__file__).parents[1]
+    suspects: list[str] = []
+    for chemin in sorted(racine.rglob("*.py")):
+        nom = chemin.relative_to(racine).as_posix()
+        try:
+            lignes = _code_sans_litteraux(chemin.read_text(encoding="utf-8"))
+        except (SyntaxError, tokenize.TokenError, UnicodeDecodeError) as erreur:
+            suspects.append(f"{nom} : module illisible ({type(erreur).__name__})")
+            continue
+        suspects.extend(
+            f"{nom}:{numero}"
+            for numero, ligne in enumerate(lignes, 1)
+            if _MOTIFS_NON_CAUSAUX.search(ligne)
+        )
+    return suspects
+
+
 def _egales(gauche: float, droite: float) -> bool:
     """Deux valeurs de feature sont-elles identiques, bruit flottant compris ?"""
     if pd.isna(gauche) and pd.isna(droite):
@@ -130,6 +273,7 @@ def _causality_audit(
     quality: pd.DataFrame,
     domain: DomainKnowledge,
     references: References,
+    fuites_de_pli: list[str],
 ) -> dict[str, Any]:
     """Verifie qu'aucune grandeur du modele ne depend d'un instant futur.
 
@@ -160,6 +304,12 @@ def _causality_audit(
         quality: Evenements qualite.
         domain: Connaissance domaine.
         references: References ajustees sur le corpus complet.
+        fuites_de_pli: Manquements releves PLI PAR PLI par le backtest —
+            reference ou detecteur ajuste au-dela de la borne d'apprentissage,
+            gap calendaire non tenu. Ils etaient auparavant resumes par un
+            litteral `causal_pipeline_refit: True` que rien n'agregeait : une
+            fuite dans un pli laissait la porte `causalite_temporelle` afficher
+            « franchie ».
 
     Returns:
         Verdict et preuve chiffree.
@@ -209,38 +359,21 @@ def _causality_audit(
         if derniere_tronquee.isna().all():
             ecarts.append(f"aucune grandeur calculable a {coupe}")
 
-    # Inspection complementaire, bon marche : aucun decalage negatif ni fenetre
-    # centree dans les modules de la chaine.
-    import re
-    from pathlib import Path
-
-    # LE PERIMETRE COUVRE TOUTE LA CHAINE, PAS TROIS FICHIERS.
-    # Il se limitait a l'ingestion et aux features : un decalage negatif
-    # reintroduit dans le detecteur ou les indicateurs publies serait passe
-    # inapercu. `transform(` est inclus parce que la version historique du
-    # detecteur de gel mesurait la longueur TOTALE d'un palier, donc son
-    # extension dans le futur.
-    motifs = re.compile(
-        r"shift\(\s*-\d|center\s*=\s*True|\.bfill\(|backfill|"
-        r"fillna\(\s*method\s*=\s*[\"']b|\.transform\(\s*[\"']sum[\"']"
-    )
-    racine = Path(__file__).parents[1]
-    suspects = [
-        f"{chemin.relative_to(racine).as_posix()}:{n}"
-        for chemin in sorted(racine.rglob("*.py"))
-        if "governance" not in chemin.parts
-        for n, ligne in enumerate(chemin.read_text(encoding="utf-8").splitlines(), 1)
-        if motifs.search(ligne) and not ligne.lstrip().startswith("#")
-    ]
+    # Inspection complementaire, bon marche : aucune lecture de l'aval dans le
+    # code executable de la chaine — `governance` compris, voir la docstring.
+    suspects = _decalages_non_causaux()
     if suspects:
         ecarts.append("décalage non causal : " + ", ".join(suspects))
+
+    if fuites_de_pli:
+        ecarts.extend(fuites_de_pli)
 
     return {
         "passed": not ecarts,
         "evidence": (
-            "aucun décalage négatif ni fenêtre centrée dans l'ingestion et les "
-            "features ; chaîne reconstruite et vérifiée sur trois troncatures "
-            "du corpus (40, 60, 80 %)"
+            "aucun décalage négatif ni fenêtre centrée dans le code exécutable "
+            "de `src`, gouvernance comprise ; chaîne reconstruite et vérifiée "
+            "sur trois troncatures du corpus (40, 60, 80 %)"
             if not ecarts else " ; ".join(ecarts)
         ),
         "anomalies": ecarts,
@@ -324,8 +457,8 @@ def validate_unsupervised_detector(
 
     folds: list[dict[str, Any]] = []
     rates: list[float] = []
-    psis: list[float] = []
     oof_parts: list[pd.DataFrame] = []
+    fuites_de_pli: list[str] = []
     for fold_no, (train_idx, test_idx) in enumerate(splitter.split(calendar), start=1):
         train_end = calendar[train_idx[-1]]
         test_start, test_end = calendar[test_idx[0]], calendar[test_idx[-1]]
@@ -373,9 +506,50 @@ def validate_unsupervised_detector(
         test_scores = detector.score(test)
         alert = test_scores >= detector.threshold_
         rate = float(np.mean(alert))
-        psi = _population_stability_index(train_scores, test_scores)
+        psi, deciles_vides = _population_stability_index(train_scores, test_scores)
         rates.append(rate)
-        psis.append(psi)
+
+        # `causal_pipeline_refit` ETAIT UN LITTERAL `True`.
+        #
+        # Exactement le defaut que le commentaire des portes denonce vingt
+        # lignes plus bas a propos de `causalite_temporelle` — « aucune mesure,
+        # aucune possibilite d'echec » — reproduit un cran plus bas, dans le
+        # detail des plis. Et `test_backtest_temporel_declare_les_limites`
+        # l'affirmait : `assert all(fold["causal_pipeline_refit"] ...)`, c'est-a-dire
+        # un test qui verifiait une constante.
+        #
+        # Ce que le nom promet est desormais MESURE, sur les trois choses qui
+        # peuvent le dementir : les trois references, le detecteur, le gap.
+        fin_references = max(
+            pd.Timestamp(reference.train_period[1])
+            for reference in (fold_refs.conductance, fold_refs.effort, fold_refs.inlet)
+        )
+        fin_detecteur = pd.Timestamp(detector.train_meta_["period"][1])
+        gap_mesure = float((test_start - train_end) / pd.Timedelta("1h"))
+        refit_causal = bool(
+            fin_references <= train_end
+            and fin_detecteur <= train_end
+            and gap_mesure >= gap_hours
+        )
+        if not refit_causal:
+            fuites_de_pli.append(
+                f"pli {fold_no} : références ajustées jusqu'à {fin_references}, "
+                f"détecteur jusqu'à {fin_detecteur}, apprentissage borné à "
+                f"{train_end}, gap mesuré {nombre(gap_mesure, 1)} h pour "
+                f"{gap_hours} h exigées"
+            )
+
+        # COUVERTURE SAISONNIERE DE LA FENETRE DE TEST — voir la porte
+        # `derive_de_distribution`. La temperature d'eau de mer est la seule
+        # entree du systeme exterieure a toute boucle de regulation (ADR-002),
+        # et elle est CYCLIQUE sur douze mois. Un backtest a fenetre croissante
+        # sur quatorze mois donne donc, par construction, des premiers plis dont
+        # la fenetre de test extrapole hors de tout ce que l'apprentissage a vu.
+        mer_train = seawater_temperature(train.index)
+        mer_test = seawater_temperature(test.index)
+        hors_plage = float(
+            ((mer_test < mer_train.min()) | (mer_test > mer_train.max())).mean()
+        )
 
         context = readings.reindex(test.index)[["T_ACID_IN", "LOAD_SULFUR"]]
         oof_parts.append(pd.DataFrame({
@@ -391,17 +565,60 @@ def validate_unsupervised_detector(
             "test_period": [str(test.index.min()), str(test.index.max())],
             "n_train": len(train),
             "n_test": len(test),
-            "gap_calendar_hours": gap_hours,
+            # Le gap PUBLIE etait le parametre recu, pas celui obtenu : un champ
+            # qui affirme au lieu de constater, comme `causal_pipeline_refit`.
+            "gap_calendar_hours": round(gap_mesure, 1),
             "threshold": round(detector.threshold_, 4),
             "test_alert_rate": round(rate, 4),
             "score_psi": round(psi, 4),
+            "score_psi_empty_deciles": deciles_vides,
+            "seasonal_extrapolation": round(hors_plage, 4),
             "score_p95": round(float(np.quantile(test_scores, 0.95)), 4),
-            "causal_pipeline_refit": True,
+            "causal_pipeline_refit": refit_causal,
         })
 
     audit = _feature_audit(features)
     mean_rate = float(np.mean(rates))
-    max_psi = float(max(psis))
+
+    # LE PSI NE MESURE UNE DERIVE QUE SUR UN PLI SAISONNIEREMENT COUVERT.
+    #
+    # Mesure sur le corpus, pli par pli :
+    #
+    #   pli | heures de test hors de la plage d'eau de mer apprise |  PSI
+    #     1 |  73,8 %                                              | 1,989
+    #     2 | 100,0 %                                              | 3,745
+    #     3 |   5,9 %                                              | 0,580
+    #     4 |   0,0 %                                              | 0,068
+    #
+    # La correspondance est parfaite et monotone. Le maximum publie — 3,7446,
+    # celui que le rapport cite — tombe sur le SEUL pli dont la fenetre de test
+    # est entierement hors de la plage d'eau de mer que l'apprentissage a vue,
+    # et le minimum sur le seul pli qui n'extrapole pas du tout.
+    #
+    # CE QUE CELA REFUTE. La preuve affichee attribuait ce chiffre a « deux
+    # excursions de sur-refroidissement » entre les deux moities de la periode.
+    # Les plis 3 et 4 testent les periodes les PLUS TARDIVES, donc les plus
+    # eloignees de la reference : cette explication predit qu'ils derivent le
+    # plus, et ils derivent le moins, d'un facteur cinquante-cinq. Une
+    # affirmation juste par ailleurs, ecrite a cote de chiffres qui la
+    # dementent.
+    #
+    # CE QUE CELA ETABLIT. Le PSI eleve des premiers plis mesure l'ANNEE
+    # INCOMPLETE de la fenetre d'apprentissage : une fenetre croissante sur
+    # quatorze mois ne peut pas avoir vu un cycle entier d'eau de mer avant son
+    # dernier pli. C'est une propriete du PLAN D'EXPERIENCE, pas du modele —
+    # aucun commit ne la deplacera, et aucun seuil, de quelque domaine qu'il
+    # vienne, n'est interpretable sur un pli qui extrapole.
+    #
+    # TROISIEME OCCURRENCE DU MEME MOTIF. Un denominateur qui contient des
+    # essais ou rien ne pouvait etre mesure : `judge_eval` comptait des
+    # mutations qui ne mutaient rien (S6-2), `fouling_injection` des fenetres
+    # calmes parce que la ligne etait a l'arret (S7-1), et ce banc-ci des plis
+    # qui extrapolent. La porte ne retient donc que les plis couverts.
+    plis_couverts = [f for f in folds if f["seasonal_extrapolation"] <= 0.0]
+    psi_couverts = [float(f["score_psi"]) for f in plis_couverts]
+    max_psi = float(max(f["score_psi"] for f in folds))
+    max_psi_couvert = float(max(psi_couverts)) if psi_couverts else None
     # `stable` combinait ces deux mesures par un `and`. Elles sont désormais
     # portées par deux gates distinctes — voir le commentaire de
     # `stabilite_hors_periode` plus bas — et la borne du taux d'alertes est
@@ -430,6 +647,7 @@ def validate_unsupervised_detector(
         quality=quality,
         domain=domain,
         references=references,
+        fuites_de_pli=fuites_de_pli,
     )
     shadow = audit["shadow_redundancy_abs_r_ge_0_80"]
     gates = [
@@ -505,18 +723,18 @@ def validate_unsupervised_detector(
         # basculer le regime entre les deux moities de la periode. Aucun commit
         # ne le fera disparaitre.
         #
-        # ET LE SEUIL DE 0,25 N'EST PAS JUSTIFIE POUR CET USAGE. C'est la borne
-        # usuelle du Population Stability Index en SCORING DE CREDIT, ou les
-        # populations comparees sont censees etre echangeables. Elle est
-        # appliquee ici a des scores d'Isolation Forest sur un procede dont le
-        # regime a change — un cas ou le PSI est justement attendu eleve. Le
-        # transfert n'est argumente nulle part dans le dossier.
+        # LE SEUIL DE 0,25 N'EST PAS JUSTIFIE POUR CET USAGE — et le constat
+        # ouvert par la phase 0.7 est desormais tranche, PAR LA MESURE : sur
+        # trois plis sur quatre, le PSI ne mesure aucune derive du modele mais
+        # l'annee incomplete de la fenetre d'apprentissage. Le detail et les
+        # chiffres sont au-dessus de `plis_couverts`.
         #
-        # La mesure est donc PUBLIEE avec sa reserve, et ne bloque plus. La
-        # difference avec `redondance_hors_modele` doit etre dite : cette
-        # derniere est algebriquement impossible a franchir, celle-ci ne l'est
-        # pas — un modele autrement concu pourrait deplacer ce chiffre. Elle
-        # sort du blocage faute de seuil justifie, pas faute de sens.
+        # La mesure est PUBLIEE avec sa reserve, et ne bloque pas. La difference
+        # avec `redondance_hors_modele` doit etre dite : cette derniere est
+        # algebriquement impossible a franchir, celle-ci ne l'est pas — un
+        # modele autrement concu, ou un corpus de deux ans, deplacerait ce
+        # chiffre. Elle sort du blocage faute de seuil justifie et faute de plis
+        # interpretables, pas faute de sens.
         {
             "gate": "stabilite_hors_periode",
             "passed": bool(mean_rate <= alert_rate_limit),
@@ -528,15 +746,27 @@ def validate_unsupervised_detector(
         },
         {
             "gate": "derive_de_distribution",
-            "passed": bool(max_psi <= 0.25),
+            "passed": bool(
+                max_psi_couvert is not None and max_psi_couvert <= PSI_LIMIT
+            ),
             "evidence": (
-                f"PSI max {nombre(max_psi, 3)} sur les scores, pour 0,25 admis. "
-                "Le corpus change de régime entre les deux moitiés de la période "
-                "— deux excursions de sur-refroidissement établies par "
-                "l'analyse : un PSI élevé est ici attendu. Le seuil de 0,25 est la borne usuelle du "
-                "scoring de crédit, où les populations comparées sont supposées "
-                "échangeables ; son transfert à des scores d'anomalie non "
-                "supervisés n'est pas argumenté. Mesure publiée, non bloquante."
+                (
+                    f"PSI max {nombre(max_psi_couvert, 3)} sur "
+                    f"{len(plis_couverts)} pli(s) sur {len(folds)}, pour "
+                    f"{nombre(PSI_LIMIT, 2)} admis"
+                    if max_psi_couvert is not None
+                    else f"aucun des {len(folds)} plis n'est mesurable"
+                )
+                + ". Seuls comptent les plis dont la fenêtre de test reste dans "
+                "la plage d'eau de mer vue à l'apprentissage : ailleurs le PSI "
+                "mesure l'année incomplète de la fenêtre croissante, non une "
+                "dérive du modèle — il vaut "
+                f"{nombre(max_psi, 3)} sur le pli qui extrapole le plus, et le "
+                "plus tardif, qui n'extrapole pas, est le plus stable. Le seuil "
+                "vient du scoring de crédit, où les populations comparées sont "
+                "supposées échangeables ; son transfert à des scores d'anomalie "
+                "non supervisés n'est pas argumenté. Mesure publiée, non "
+                "bloquante."
             ),
         },
         {
@@ -574,11 +804,18 @@ def validate_unsupervised_detector(
             "mean_test_alert_rate": round(mean_rate, 4),
             "std_test_alert_rate": round(float(np.std(rates)), 4),
             "max_score_psi": round(max_psi, 4),
+            "max_score_psi_seasonally_covered": (
+                round(max_psi_couvert, 4) if max_psi_couvert is not None else None
+            ),
+            "n_seasonally_covered_folds": len(plis_couverts),
             "threshold_spread": round(threshold_spread, 4),
             "regime_diagnostics": _regime_summary(oof),
             "interpretation": (
                 "Les taux, le PSI et les régimes mesurent stabilité et charge "
-                "d'alerte, jamais une performance de détection de panne."
+                "d'alerte, jamais une performance de détection de panne. Le PSI "
+                "d'un pli dont la fenêtre de test sort de la plage d'eau de mer "
+                "apprise ne mesure aucune dérive : il mesure que la fenêtre "
+                "croissante n'a pas encore vu une année complète."
             ),
         },
         deployment_gates=gates,
@@ -588,5 +825,9 @@ def validate_unsupervised_detector(
             "Les mesures eau de mer, vibration, pression différentielle et corrosion manquent.",
             "Le modèle thermique reconstruit un proxy calculé; son R² n'est pas une preuve d'état.",
             "Le rejeu historique n'est pas une connexion DCS/PI temps réel.",
+            "Le corpus couvre quatorze mois pour un cycle d'eau de mer de douze : "
+            "un backtest à fenêtre croissante n'offre qu'un seul pli dont la "
+            "fenêtre de test reste dans la plage de température apprise. La "
+            "dérive de distribution n'est donc mesurable que sur ce pli.",
         ],
     )

@@ -519,7 +519,7 @@ def test_evaluation_du_judge(client):
     """Le banc d'evaluation doit etre exposé et donner de bons resultats."""
     d = client.get("/api/judge/evaluation?n_cases=3").json()
     s = d["summary"]
-    assert s["trap_detection_rate"] >= 0.85
+    assert s["trap_success_rate"] >= 0.85
     assert s["false_positive_rate"] <= 0.25
     assert d["by_trap"]
 
@@ -885,3 +885,124 @@ def test_la_rotation_de_session_invalide_l_ancien_jeton(client, monkeypatch):
 def test_la_rotation_sans_session_est_refusee(client):
     """Sans acces protege, la rotation n'a rien a faire tourner."""
     assert client.post("/api/auth/refresh").status_code in (401, 409)
+
+
+# ── Sondes de sante : ce qu'elles mesurent reellement ─────────────────────────
+
+def test_la_sonde_de_base_repond_indisponible_et_non_500(client, monkeypatch):
+    """Une lecture qui échoue doit donner 503 « indisponible », pas 500.
+
+    LE VERDICT ETAIT FIGE AVANT LA LECTURE. `alarm_ok = store is not None` ne
+    mesurait que la CONSTRUCTION de l'objet au démarrage; la lecture avait bien
+    lieu, et son résultat était jeté. Quand elle échouait — fichier verrouillé,
+    base corrompue, disque plein, c'est-à-dire les seules pannes qu'une sonde de
+    base existe pour voir — l'exception remontait au gestionnaire générique et
+    la route répondait **500**, indiscernable d'un bogue applicatif.
+
+    `/api/health/ready`, la route voisine, traitait déjà le cas correctement.
+    """
+    from api.main import STATE
+
+    assert client.get("/api/health/database").status_code == 200
+
+    store = STATE["alarm_store"]
+
+    def _casse(*args, **kwargs):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(store, "list", _casse)
+    reponse = client.get("/api/health/database")
+    assert reponse.status_code == 503, (
+        "une base illisible doit être annoncée indisponible, pas provoquer un 500"
+    )
+    corps = reponse.json()
+    assert corps["status"] == "unavailable"
+    assert corps["alarm_store"] is False
+    assert corps["workflow_store"] is True
+    assert "RuntimeError" in corps["reasons"]["alarm_store"]
+
+
+def test_un_degrade_permanent_dit_pourquoi_il_est_permanent(client):
+    """`degraded` reste visible, mais sa raison est publiée avec lui.
+
+    La promotion est légitimement impossible sur ce corpus : `labels_gmao` et
+    `validation_externe` échouent faute de vérité terrain. `/api/health` répond
+    donc `degraded` pour toujours, et rien ne distinguait « dégradé par un
+    défaut réparable » de « dégradé par une limite définitive du corpus ».
+
+    Ramener `status` à « ok » aurait remasqué une visibilité voulue — la leçon
+    de `redondance_features` en phase 0. C'est la raison qui manquait, pas la
+    nuance.
+    """
+    d = client.get("/api/health").json()
+    assert d["status"] == "degraded"
+    assert d["status_reason"], "un état dégradé permanent doit dire pourquoi"
+    assert d["status_reason"] == d["model_rejection_reason"] or len(
+        d["status_reason"]
+    ) > 40
+
+
+def test_l_identite_du_poste_local_n_existe_qu_en_un_exemplaire():
+    """Le bloc « Poste local » était recopié dans deux routes voisines.
+
+    Le patron, onzième emploi : l'analyse du source établit qu'aucune route ne
+    réécrit l'identité littérale, toutes passent par `_identite_poste_local`.
+    """
+    import ast
+    import inspect
+
+    import api.main as main
+
+    source = inspect.getsource(main)
+    arbre = ast.parse(source)
+    litteraux = [
+        noeud
+        for noeud in ast.walk(arbre)
+        if isinstance(noeud, ast.Constant) and noeud.value == "Poste local"
+    ]
+    assert len(litteraux) == 1, (
+        f"« Poste local » est écrit {len(litteraux)} fois : renommer le rôle "
+        f"local ne bougerait qu'à un seul endroit"
+    )
+    assert main._identite_poste_local()["role"] == "local"
+
+
+def test_tout_identifiant_cherche_par_le_poste_existe_dans_la_page():
+    """Un panneau ne doit pas rester vide parce qu'un identifiant a été renommé.
+
+    `app.js` et `twin.js` atteignent la page par `$("id")` — 98 identifiants.
+    Si l'un disparaît du HTML, `document.getElementById` rend `null` et le
+    panneau concerné **ne s'affiche simplement pas**, sans erreur visible et
+    sans que rien ne le signale : c'est la forme la plus silencieuse de panne
+    d'interface, et c'est celle que le propriétaire a demandé de traquer route
+    par route.
+
+    Mesuré à l'écriture : 110 identifiants dans la page, 98 cherchés, **aucun
+    manquant**. Ce contrôle interdit la régression.
+
+    Le sens inverse n'est pas verrouillé : cinq identifiants existent sans être
+    atteints par le JavaScript, et c'est légitime — conteneurs de mise en page
+    (`shell`, `who`, `friezeTrack`), texte statique (`benchReading`). Exiger
+    l'égalité stricte transformerait un ancrage CSS en défaut.
+    """
+    import re
+    from pathlib import Path
+
+    racine = Path(__file__).resolve().parents[1]
+    html = (racine / "api" / "dashboard.html").read_text(encoding="utf-8")
+    presents = set(re.findall(r'\sid="([\w-]+)"', html))
+
+    cherches: set[str] = set()
+    for nom in ("app.js", "twin.js"):
+        source = (racine / "api" / "static" / nom).read_text(encoding="utf-8")
+        cherches |= set(re.findall(r'\$\("([\w-]+)"\)', source))
+
+    assert len(cherches) > 80, (
+        f"seulement {len(cherches)} identifiants lus : le motif de recherche "
+        f"a probablement cessé de correspondre au code du poste"
+    )
+    manquants = cherches - presents
+    assert not manquants, (
+        f"le poste cherche des éléments absents de la page : {sorted(manquants)}. "
+        f"Les panneaux correspondants resteront vides sans aucune erreur."
+    )

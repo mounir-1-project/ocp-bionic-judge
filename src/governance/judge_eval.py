@@ -82,7 +82,12 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 
-from src.agents.schemas import AgentDecision, RecommendedAction
+from src.agents.schemas import (
+    SERVICE_INSTRUMENTATION,
+    SERVICE_MECANIQUE,
+    AgentDecision,
+    RecommendedAction,
+)
 from src.config import RANDOM_SEED
 
 # Chaque cas piege declare le code d'anomalie que le Judge DOIT relever.
@@ -306,9 +311,9 @@ def _blind_mutations(rng: np.random.Generator) -> list[tuple[str, Any]]:
         x = _clone(d)
         courant = x.recommended_action.responsible
         inverse = (
-            "Service Mecanique PS III"
-            if "Instrumentation" in courant
-            else "Service Instrumentation PS III"
+            SERVICE_MECANIQUE
+            if courant == SERVICE_INSTRUMENTATION
+            else SERVICE_INSTRUMENTATION
         )
         x.recommended_action = x.recommended_action.model_copy(
             update={"responsible": inverse}
@@ -447,9 +452,11 @@ class EvalResult:
             "",
             f"Cas pieges evaluees         : {s['n_traps']}",
             f"  note moyenne              : {s['trap_score_mean']:.2f} / 10",
-            f"  rappel global             : {s['trap_detection_rate']:.1%} "
-            f"(fautes correctement identifiees)",
-            f"  fautes non sanctionnees   : {s['trap_missed']} ",
+            f"  taux de detection         : {s['trap_detection_rate']:.1%} "
+            f"(fautes identifiees)",
+            f"  detection ET sanction     : {s['trap_success_rate']:.1%}",
+            f"  vues mais peu sanctionnees: {s['trap_caught_not_sanctioned']}",
+            f"  non detectees             : {s['trap_missed']}",
             "",
             f"SEPARATION saines / fautives : {s['separation']:.2f} point(s) d'ecart",
             "",
@@ -522,9 +529,31 @@ class JudgeEvaluator:
         """
         for ts in timestamps:
             detection = self.pipeline.detector.analyze(self.pipeline.features, ts)
-            decision = self.pipeline.agent.analyze(detection)
+            # LE BANC SE DECLARE REPRODUCTIBLE ET LAISSAIT LE LLM DECIDER.
+            #
+            # `__init__` fixe la graine avec ce motif : « les mutations non
+            # ciblees doivent etre reproductibles, sinon le chiffre de
+            # generalisation change a chaque execution ». Trois lignes plus
+            # bas, `agent.analyze(detection)` et `judge.judge(...)` prenaient
+            # leur defaut `use_llm=True`.
+            #
+            # Consequence, des qu'une cle Gemini est presente : la decision
+            # SAINE est redigee par le modele, et le Judge s'autorise un
+            # ajustement de +/- 1,5 point sur CHAQUE verdict — sain comme
+            # mute. Or `penalised` compare la note mutee a la note saine, et
+            # `separation` est la difference des moyennes. Les deux chiffres
+            # que le rapport publie devenaient donc aleatoires, et la graine
+            # n'y changeait rien : elle ne gouverne que le tirage des
+            # mutations.
+            #
+            # Le banc mesure les HUIT CONTROLES DETERMINISTES. La couche de
+            # redaction n'entre pas dans son objet, et sa presence rendait le
+            # resultat indemontrable.
+            decision = self.pipeline.agent.analyze(detection, use_llm=False)
 
-            verdict = self.pipeline.judge.judge(decision, self.pipeline.features)
+            verdict = self.pipeline.judge.judge(
+                decision, self.pipeline.features, use_llm=False
+            )
             clean_rows.append({
                 "timestamp": str(ts),
                 "severity": decision.severity,
@@ -537,7 +566,9 @@ class JudgeEvaluator:
                 if not trap.applies_when(decision):
                     continue
                 mutated = trap.mutate(decision)
-                v = self.pipeline.judge.judge(mutated, self.pipeline.features)
+                v = self.pipeline.judge.judge(
+                    mutated, self.pipeline.features, use_llm=False
+                )
                 caught = trap.expected_issue in v.flagged_issues
                 penalised = (
                     v.global_score <= trap.max_acceptable_score
@@ -563,7 +594,34 @@ class JudgeEvaluator:
             # la question « que detecte-t-il qu'il ne connait pas deja ? ».
             for name, mutate in _blind_mutations(self._rng):
                 mutated = mutate(decision)
-                v = self.pipeline.judge.judge(mutated, self.pipeline.features)
+                # UNE MUTATION QUI NE MUTE RIEN N'EST PAS UNE NON-DETECTION.
+                #
+                # `wrong_checklist` rend la decision INCHANGEE lorsque
+                # `checklist_ref` ne vaut ni INSPECTION_EXTERNE ni
+                # INSPECTION_INTERNE — cas frequent, puisque le champ est
+                # facultatif. Le verdict etait alors identique a celui de la
+                # decision saine, donc `caught=False` et `penalised=False`, et
+                # la ligne entrait au denominateur du taux de generalisation.
+                #
+                # Le chiffre publie comme « mesure honnete de ce que le Judge
+                # attrape sans l'avoir anticipe » comptait donc des essais ou
+                # rien n'avait ete tente. Le biais va dans le sens de la
+                # prudence — il ABAISSE le taux — mais un banc dont le
+                # denominateur contient des non-evenements ne mesure pas ce
+                # qu'il annonce, et le sens du biais n'y change rien.
+                #
+                # La comparaison porte sur le contenu serialise, pas sur
+                # l'identite de l'objet : `_clone` produit toujours un objet
+                # distinct, meme quand il recopie a l'identique.
+                if mutated.model_dump() == decision.model_dump():
+                    logger.debug(
+                        f"Mutation « {name} » sans effet sur {ts} — ecartee du "
+                        f"denominateur"
+                    )
+                    continue
+                v = self.pipeline.judge.judge(
+                    mutated, self.pipeline.features, use_llm=False
+                )
                 trap_rows.append({
                     "trap": f"[non ciblee] {name}",
                     "expected_issue": "",
@@ -613,8 +671,9 @@ class JudgeEvaluator:
 
         if traps_raw["success"].mean() < 0.8:
             warnings_.append(
-                f"Rappel insuffisant : {traps_raw['success'].mean():.1%} des fautes "
-                f"injectees sont correctement sanctionnees (cible >= 80 %)."
+                f"Succes insuffisant : {traps_raw['success'].mean():.1%} des fautes "
+                f"injectees sont detectees ET suffisamment sanctionnees "
+                f"(cible >= 80 %)."
             )
         if (1.0 - clean["agreement"].mean()) > 0.2:
             warnings_.append(
@@ -640,8 +699,32 @@ class JudgeEvaluator:
             "false_positive_rate": round(1.0 - float(clean["agreement"].mean()), 3),
             "n_traps": len(traps_raw),
             "trap_score_mean": round(trap_mean, 2),
-            "trap_detection_rate": round(float(traps_raw["success"].mean()), 3),
-            "trap_missed": int((~traps_raw["success"]).sum()),
+            # RAP-17 — LA CLE PUBLIEE PORTAIT LE MAUVAIS NOM.
+            #
+            # `trap_detection_rate` contenait `success.mean()`, c'est-a-dire
+            # `caught AND penalised` : un taux de SUCCES, pas de detection. Or
+            # `by_trap` publie dix lignes plus haut un `detection_rate` qui,
+            # lui, vaut bien `caught.mean()`. Deux champs, le meme mot, deux
+            # grandeurs — et quatre consommateurs lisaient le premier comme une
+            # detection : la porte d'integration continue (`ci.yml`),
+            # `test_api.py`, `test_agents_judge.py` et le poste.
+            #
+            # Sur ce corpus l'ecart est de 4,2 points — 100 % de detection pour
+            # 95,8 % de succes — et il tombe entierement sur deux familles de
+            # fautes que le Judge repere sans les faire payer assez cher. Un
+            # lecteur de l'artefact concluait « 4,2 % des fautes ne sont pas
+            # vues », ce qui est faux : elles sont toutes vues.
+            #
+            # ET LE 100 % N'ETAIT PUBLIE NULLE PART dans le resume : il ne
+            # figurait que dans le detail par type. Le resume omettait donc a la
+            # fois le chiffre honnete (generalisation) et le chiffre favorable
+            # (detection), pour n'en publier qu'un troisieme, mal nomme.
+            "trap_detection_rate": round(float(traps_raw["caught"].mean()), 3),
+            "trap_success_rate": round(float(traps_raw["success"].mean()), 3),
+            "trap_caught_not_sanctioned": int(
+                (traps_raw["caught"] & ~traps_raw["penalised"]).sum()
+            ),
+            "trap_missed": int((~traps_raw["caught"]).sum()),
             "separation": round(clean_mean - trap_mean, 2),
             "verdict_warnings": warnings_,
         }
@@ -654,9 +737,13 @@ class JudgeEvaluator:
                 "penalised_rate": round(float(blind["penalised"].mean()), 3),
                 "score_mean": round(float(blind["score"].mean()), 2),
                 "reading": (
-                    "Mutations aleatoires ne visant aucun controle. Ce taux, "
-                    "inferieur au precedent, est la mesure honnete de ce que le "
-                    "Judge attrape sans l'avoir anticipe."
+                    "Mutations aléatoires ne visant aucun contrôle. Ce taux, "
+                    "inférieur au précédent, est la mesure honnête de ce que le "
+                    "Judge attrape sans l'avoir anticipé. Les mutations restées "
+                    "sans effet sur la décision — la check-list ne peut pas être "
+                    "inversée quand la décision n'en cite aucune — sont écartées "
+                    "du dénominateur : compter un essai où rien n'a été tenté "
+                    "comme une non-détection fausserait le chiffre."
                 ),
             }
         return EvalResult(clean=clean, traps=by_trap, summary=summary)

@@ -17,6 +17,7 @@ import pytest
 
 from src.agents.schemas import AgentDecision, RecommendedAction
 from src.governance.judge_eval import TRAP_CASES, JudgeEvaluator
+from tests.helpers import sans_accents
 
 
 @pytest.fixture(scope="module")
@@ -104,6 +105,7 @@ def test_un_seul_bareme_de_confiance_existe(pipeline):
     """
     from src.agents.schemas import confiance_justifiable
 
+    examines = 0
     for ts in pipeline.notable_timestamps(15):
         detection = pipeline.detector.analyze(pipeline.features, ts)
         decision = pipeline.agent.analyze(detection)
@@ -128,6 +130,12 @@ def test_un_seul_bareme_de_confiance_existe(pipeline):
             f"{ts} : l'agent annonce {decision.confidence}, le bareme partage "
             f"donne {attendu} — les deux formules ont diverge"
         )
+        examines += 1
+    assert examines >= 5, (
+        f"{examines} instant(s) examine(s) : ce controle ne verifie plus rien. "
+        f"Voir `test_typographie._exiger` — un controle qui reussit d'autant "
+        f"plus surement qu'il ne lit rien ne controle rien."
+    )
 
 
 def test_un_defaut_de_mesure_ne_domine_jamais_un_diagnostic_equipement(pipeline):
@@ -151,6 +159,7 @@ def test_un_defaut_de_mesure_ne_domine_jamais_un_diagnostic_equipement(pipeline)
     }
     assert instrumentation, "aucun mode d'instrumentation dans le referentiel"
 
+    evalues = 0
     for ts in pipeline.notable_timestamps(20):
         detection = pipeline.detector.analyze(pipeline.features, ts)
         actionnables = [
@@ -171,11 +180,18 @@ def test_un_defaut_de_mesure_ne_domine_jamais_un_diagnostic_equipement(pipeline)
         )
         severites = {f.severity for f in actionnables}
         if dominant is not None and len(severites) == 1:
+            evalues += 1
             assert dominant.amdec_mode not in instrumentation, (
                 f"{ts} : un defaut de mesure ({dominant.code}) domine alors "
                 f"qu'un diagnostic equipement de meme severite existe "
                 f"({sorted(modes_equipement)})"
             )
+    if not evalues:
+        pytest.skip(
+            "aucun instant notable ne presente une egalite de severite entre "
+            "un defaut de mesure et un diagnostic equipement : le controle "
+            "n'a rien pu mettre a l'epreuve"
+        )
 
 
 def test_la_tache_preventive_citee_est_la_plus_frequente(pipeline):
@@ -188,26 +204,49 @@ def test_la_tache_preventive_citee_est_la_plus_frequente(pipeline):
     controle ne le voie.
     """
     composeur = pipeline.agent.composer
+    compares = 0
     for code, mode in pipeline.domain.modes.items():
         refs = mode.plan_maintenance_ref
         if len(refs) < 2:
             continue
         retenue = composeur._tache_la_plus_frequente(refs)
         cadences = {r: composeur._periodicite_heures(r) for r in refs}
+        compares += 1
         assert cadences[retenue] == min(cadences.values()), (
             f"{code} : tache {retenue} retenue alors que {cadences} "
             f"designe une cadence plus courte"
         )
+    assert compares, (
+        "aucun mode ne porte deux taches preventives : le controle n'a rien "
+        "compare. Le referentiel a-t-il change ?"
+    )
 
 
 def test_action_avec_arret_mentionne_la_consignation(pipeline):
-    """Toute action exigeant un arret doit mentionner la consignation."""
+    """Toute action exigeant un arret doit mentionner la consignation.
+
+    L'ASSERTION POUVAIT NE JAMAIS S'EXECUTER. Elle est conditionnee a
+    `requires_shutdown`; si aucun des vingt instants notables n'en produisait,
+    le test passait sans avoir rien verifie. Le depot porte deja la doctrine —
+    `test_typographie._exiger` exige un corpus non vide et ecrit pourquoi — et
+    ce fichier l'applique lui-meme trois fois par `pytest.skip`. Pas ici.
+    """
+    verifies = 0
     for ts in pipeline.notable_timestamps(20):
         det = pipeline.detector.analyze(pipeline.features, ts)
         d = pipeline.agent.analyze(det)
         if d.recommended_action.requires_shutdown:
-            txt = d.recommended_action.description.lower()
-            assert "consign" in txt or "arret" in txt
+            verifies += 1
+            txt = sans_accents(d.recommended_action.description.lower())
+            assert "consign" in txt or "arret" in txt, (
+                f"{ts} : action exigeant un arret sans mention de consignation "
+                f"— « {d.recommended_action.description} »"
+            )
+    if not verifies:
+        pytest.skip(
+            "aucune action exigeant un arret sur les instants notables : "
+            "le controle n'a rien pu verifier"
+        )
 
 
 # ── Judge : cas sain ──────────────────────────────────────────────────────────
@@ -281,7 +320,7 @@ def test_une_action_en_marche_conforme_a_sa_tache_n_est_pas_sanctionnee(pipeline
     refs ["A" (arret process, 4 ans), "C" (en marche, 1 mois)], une
     recommandation d'inspection externe mensuelle — realisable equipement en
     service, et correcte — etait sanctionnee UNSAFE_ACTION avec note plafonnee
-    a 1/10 parce que la tache A du meme mode exige une consignation.
+    a 4/10 parce que la tache A du meme mode exige une consignation.
     """
     decision = None
     for ts in pipeline.notable_timestamps(25):
@@ -453,7 +492,10 @@ def test_banc_devaluation_du_judge(pipeline):
     """
     res = JudgeEvaluator(pipeline).run(n_cases=6)
     s = res.summary
-    assert s["trap_detection_rate"] >= 0.85, f"rappel insuffisant: {s['trap_detection_rate']}"
+    assert s["trap_success_rate"] >= 0.85, f"succes insuffisant: {s['trap_success_rate']}"
+    assert s["trap_detection_rate"] >= s["trap_success_rate"], (
+        "la detection ne peut pas etre inferieure au succes"
+    )
     assert s["false_positive_rate"] <= 0.20, f"trop de faux positifs: {s['false_positive_rate']}"
     assert s["separation"] >= 2.0, f"separation trop faible: {s['separation']}"
 
@@ -490,18 +532,36 @@ def test_le_banc_ne_pollue_pas_l_auto_surveillance(pipeline):
     """
     from src.governance.judge_eval import JudgeEvaluator
 
-    pipeline.judge.auditor = type(pipeline.judge.auditor)()
-    for ts in pipeline.notable_timestamps(3):
-        detection = pipeline.detector.analyze(pipeline.features, ts)
-        pipeline.judge.judge(pipeline.agent.analyze(detection), pipeline.features)
-    avant = pipeline.judge.auditor.report()["n"]
+    # LA FIXTURE `pipeline` EST DE PORTEE SESSION, ET CE TEST LA MUTAIT.
+    #
+    # Il remplacait l'auditeur du Judge sans jamais le restituer : toutes les
+    # decisions accumulees par les tests precedents disparaissaient, et le
+    # nouvel auditeur restait en place pour tous les suivants.
+    # `test_auto_surveillance_du_judge` exige `n > 0` — il ne passe que parce
+    # qu'il est declare AVANT dans le fichier, donc execute avant. Une selection
+    # par `-k`, une execution en parallele ou un simple deplacement de fonction
+    # le casse, et le message ne dirait rien de la cause.
+    #
+    # Le fichier porte pourtant le bon patron dix lignes plus bas :
+    # `suspended_audit()` restitue l'etat anterieur MEME en cas d'exception.
+    auditeur_initial = pipeline.judge.auditor
+    pipeline.judge.auditor = type(auditeur_initial)()
+    try:
+        for ts in pipeline.notable_timestamps(3):
+            detection = pipeline.detector.analyze(pipeline.features, ts)
+            pipeline.judge.judge(pipeline.agent.analyze(detection), pipeline.features)
+        avant = pipeline.judge.auditor.report()["n"]
+        assert avant > 0, "aucune decision enregistree : le controle est vide"
 
-    JudgeEvaluator(pipeline).run(n_cases=2)
-    apres = pipeline.judge.auditor.report()["n"]
+        JudgeEvaluator(pipeline).run(n_cases=2)
+        apres = pipeline.judge.auditor.report()["n"]
 
-    assert apres == avant, (
-        f"le banc a ajoute {apres - avant} decisions fausses a l'auto-surveillance"
-    )
+        assert apres == avant, (
+            f"le banc a ajoute {apres - avant} decisions fausses a "
+            f"l'auto-surveillance"
+        )
+    finally:
+        pipeline.judge.auditor = auditeur_initial
 
 
 def test_l_auto_surveillance_reprend_apres_le_banc(pipeline):
@@ -534,12 +594,32 @@ def test_les_mutations_non_ciblees_mesurent_la_generalisation(pipeline):
     # realite un controle — exactement le defaut qui rendait ce chiffre
     # trompeur : trois des cinq mutations d'origine declenchaient V1, V2 et V3
     # par construction.
-    assert blind["flagged_rate"] <= summary["trap_detection_rate"] - 0.10, (
+    assert blind["flagged_rate"] <= summary["trap_success_rate"] - 0.10, (
         f"generalisation {blind['flagged_rate']:.0%} trop proche de la "
-        f"non-regression {summary['trap_detection_rate']:.0%} : les mutations "
+        f"non-regression {summary['trap_success_rate']:.0%} : les mutations "
         f"visent probablement un controle"
     )
-    assert "honnete" in blind["reading"]
+    # LA COMPARAISON PORTE SUR LE FOND, PAS SUR LA TYPOGRAPHIE.
+    #
+    # Cette assertion cherchait « honnete » dans un texte destiné à l'écran.
+    # Elle a échoué au moment où ce texte a été correctement accentué — le
+    # défaut exact que `src.formatting.sans_accents` documente : le contrôle V8
+    # cherchait « reserve », « defaut », « degrade » dans des textes accentués
+    # et échouait sur 100 % des heures hors marche.
+    #
+    # Un test qui n'accepte une lecture que si elle est mal écrite verrouille
+    # la faute au lieu du fond. La règle du dépôt est établie : le texte
+    # comparé est dépouillé, le texte affiché est accentué.
+    lecture = sans_accents(blind["reading"])
+    assert "honnete" in lecture, (
+        "la lecture publiée ne qualifie plus ce taux : c'est le seul chiffre "
+        "de généralisation du projet, il ne doit jamais être servi sans dire "
+        "ce qu'il vaut"
+    )
+    assert "denominateur" in lecture, (
+        "la lecture doit dire que les mutations restées sans effet sont "
+        "écartées : sans cette phrase, le dénominateur n'est pas interprétable"
+    )
 
 
 def test_aucune_mutation_non_ciblee_ne_vise_un_controle(pipeline):
@@ -591,3 +671,94 @@ def test_le_banc_declare_sa_nature_de_test_de_regression(pipeline):
 
     summary = JudgeEvaluator(pipeline).run(n_cases=2).summary
     assert "NON-REGRESSION" in summary["nature"]
+
+
+def test_le_cache_de_faits_distingue_deux_tables(pipeline, case):
+    """Deux tables différentes au même instant ne partagent pas leurs faits.
+
+    LE JUMEAU NON TRAITE DE S3-4. `_verified_facts` mémoïsait sur
+    `decision.timestamp` seul : deux tables interrogées au même horodatage
+    recevaient les mêmes faits, la seconde se voyant servir ceux de la première.
+
+    C'est le défaut corrigé dans `detector._cache_key`, où le raisonnement est
+    écrit — « un piège qui ne se déclenche pas encore reste un piège » — et la
+    correction n'avait pas été portée ici. La conséquence y est plus lourde :
+    `VerifiedFacts` est la vérité INDÉPENDANTE du Judge, celle contre laquelle
+    il met la décision à l'épreuve.
+    """
+    decision = case["decision"]
+    table = pipeline.features
+    ts = decision.timestamp
+
+    # La fixture `pipeline` est de portée session : on vide le cache pour
+    # mesurer, et on le restitue. Voir la note de
+    # `test_le_banc_ne_pollue_pas_l_auto_surveillance`.
+    juge = pipeline.judge
+    cache_initial = dict(juge._facts_cache)
+    juge._facts_cache.clear()
+    try:
+        faits_complet = juge._verified_facts(decision, table)
+        assert len(juge._facts_cache) == 1
+
+        # Même horodatage, table différente : la mémoïsation ne resert pas.
+        faits_tronque = juge._verified_facts(decision, table.loc[:ts])
+        assert len(juge._facts_cache) == 2, (
+            "la clé ne distingue pas deux tables : le Judge valide une décision "
+            "contre les preuves d'une autre table"
+        )
+
+        # Sur ce corpus les deux mondes coïncident — la chaîne est causale —
+        # mais ce sont bien DEUX calculs, et c'est cela qui est verrouillé ici.
+        assert faits_tronque.rule_severity == faits_complet.rule_severity
+    finally:
+        juge._facts_cache.clear()
+        juge._facts_cache.update(cache_initial)
+
+
+def test_les_poids_affiches_sont_ceux_que_le_juge_applique():
+    """Le principe n° 2 d'`app.js`, enfreint 1 550 lignes plus bas.
+
+    L'en-tête du fichier pose : « Aucun chiffre affiché n'est en dur. La version
+    précédente affichait *seuil 0,487* et *R² 0,968* dans le HTML alors que les
+    valeurs réelles étaient 0,973. »
+
+    `CHECKS` écrit pourtant les huit pondérations du contrôleur en clair —
+    « 22 % », « 16 % », « 14 % »… — dans le panneau qui explique à un jury
+    comment la note globale est composée. Rien ne les rattache à
+    `VerificationLayer.WEIGHTS`, qui est la seule source appliquée.
+
+    Elles coïncident aujourd'hui. Le défaut est donc LATENT, et c'est
+    exactement le traitement retenu pour la clé du cache de scores (S3-4) :
+    « un piège qui ne se déclenche pas encore reste un piège, d'autant qu'il
+    rendrait un résultat faux sans rien signaler ». Modifier un poids côté
+    serveur laisserait l'écran publier l'ancienne répartition.
+
+    Le patron, quatorzième emploi : les deux sources sont lues au source et
+    confrontées.
+    """
+    import re
+    from pathlib import Path
+
+    from src.agents.judge_agent import VerificationLayer
+
+    racine = Path(__file__).resolve().parents[1]
+    js = (racine / "api" / "static" / "app.js").read_text(encoding="utf-8")
+    bloc = re.search(r"const CHECKS = \[(.*?)\n\];", js, re.S)
+    assert bloc, "CHECKS introuvable dans app.js"
+    affiches = {
+        code: int(pct)
+        for code, pct in re.findall(
+            r'\["(V\d)",\s*"[^"]*",\s*"(\d+)\s*%"', bloc.group(1)
+        )
+    }
+    assert len(affiches) == 8, f"8 contrôles attendus à l'écran, {len(affiches)} lus"
+
+    appliques = {
+        cle.split("_")[0]: round(poids * 100)
+        for cle, poids in VerificationLayer.WEIGHTS.items()
+    }
+    assert affiches == appliques, (
+        f"l'écran publie une pondération que le contrôleur n'applique pas.\n"
+        f"  écran   : {dict(sorted(affiches.items()))}\n"
+        f"  appliqué: {dict(sorted(appliques.items()))}"
+    )

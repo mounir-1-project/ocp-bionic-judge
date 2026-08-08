@@ -1,6 +1,13 @@
 # Architecture technique — surveillance E7301
 
-**Version active : 3.0 — état vérifié le 2 août 2026**
+**Version active : 3.0**
+
+*Dernière confrontation de ce document au code : 7 août 2026. Elle a porté sur
+la chaîne de traitement, le tableau des responsabilités, les six invariants, la
+période de référence et les commandes de lancement. Une date de vérification
+sans son périmètre n'engage rien : le document précédent en portait une, et
+`src/operations/` — deux bases SQLite, six routes et un écran — n'y figurait
+pourtant nulle part.*
 
 ## Finalité et périmètre
 
@@ -48,6 +55,8 @@ src/agents/judge   8 contrôles de cohérence recalculés sur la même chaîne
         |
         +------> src/analytics/   Indicateurs mesurés, sans hypothèse économique
         |
+        +------> src/operations/  registre d'alarmes ISA-18.2 et interventions
+        |
         v
 api/main.py        API, dashboard statique et rejeu accéléré
         |
@@ -71,6 +80,7 @@ divergence entre démonstration et calcul hors ligne.
 | `src/agents/` | Diagnostic/action et contrôle du diagnostic | faits recalculés + domaine |
 | `src/governance/` | Évaluation adversariale du Judge | fautes injectées connues |
 | `src/analytics/` | Indicateurs d’exploitation | mesures seules, aucune hypothèse |
+| `src/operations/` | Cycle de vie des alarmes ISA-18.2 et traçabilité des interventions | deux bases SQLite locales |
 | `src/realtime/` | Rejeu borné dans le temps | pipeline déterministe |
 | `api/` | Contrat HTTP et interface opérateur | mêmes objets métier |
 
@@ -153,8 +163,16 @@ En local :
 ```bash
 python -m venv .venv
 .venv\Scripts\python -m pip install -r requirements.txt
-.venv\Scripts\python -m uvicorn api.main:app --host 127.0.0.1 --port 8000
+.venv\Scripts\python -m api
 ```
+
+`python -m api` est la forme à retenir : elle **honore `API_HOST` et
+`API_PORT`**. Ce document écrivait auparavant `-m uvicorn api.main:app --host
+127.0.0.1 --port 8000`, c'est-à-dire la troisième source de vérité que
+`api/__main__.py` a été écrit pour supprimer — son en-tête cite nommément « le
+README et le runbook [qui] passaient leurs propres valeurs sur la ligne de
+commande ». La forme uvicorn reste valable ; la ligne de commande prime alors
+sur la configuration.
 
 En conteneur, un seul worker est imposé : chaque worker reconstruirait
 inutilement l'historique et le modèle en mémoire. Les données sont montées en

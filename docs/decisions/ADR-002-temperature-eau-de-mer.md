@@ -63,10 +63,15 @@ qu'une lecture naïve aurait attribuée à une dégradation de l'équipement.
 Le point mérite d'être souligné : **le système a d'abord signalé une dérive, et
 c'est l'océan Atlantique.**
 
-La référence de conductance ajustée sur ce modèle atteint R² = 0,92 avec un
-écart-type résiduel de 0,70 kW/K, soit 3,6 % de la valeur de UA — une
-dispersion compatible avec le bruit de mesure du débit acide, qui est
-sous-échantillonné au pas horaire.
+La référence de conductance ajustée sur ce modèle atteint **R² = 0,924** avec
+un écart-type résiduel de **0,63 kW/K**, soit **3,5 %** de la valeur de UA
+(17,77 kW/K en référence) — une dispersion compatible avec le bruit de mesure du
+débit acide, sous-échantillonné au pas horaire.
+
+*Ces trois valeurs étaient périmées, et incohérentes entre elles : 0,70 kW/K
+rapporté à 17,77 donne 3,9 % et non les 3,6 % annoncés. Le rapport technique et
+le README publiaient déjà 0,924 / 0,63 / 3,5 %, conformes à l'artefact. Seul cet
+ADR portait l'ancien jeu.*
 
 ## Conséquences
 

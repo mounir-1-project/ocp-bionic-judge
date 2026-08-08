@@ -10,13 +10,34 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
+# LIN-1 — `validated_offline` ET `rejected` ONT ETE RETIRES.
+#
+# Aucun code ne pouvait les produire, et `scripts/promote_model.py` le confirme
+# par deux fois : son option `--statut` porte `choices=sorted(RUNTIME_STATUSES)`,
+# et `promouvoir()` re-verifie l'appartenance a ce meme ensemble. Le seul autre
+# producteur de statut est `build_manifest`, qui ecrit toujours `candidate`.
+#
+# Ils n'etaient pas seulement morts, ils etaient REDONDANTS avec ce que le
+# manifeste porte deja :
+#
+#   « refuse »          = statut `candidate` + `failed_mandatory_gates` non vide.
+#                         C'est exactement la doctrine du script : un refus ne
+#                         s'ecrit pas, il se constate a l'absence de promotion.
+#   « valide hors ligne » = statut `candidate` + `failed_mandatory_gates` vide.
+#
+# Deux facons de dire la meme chose finissent toujours par se contredire, et
+# celle qui ne sert a rien derive la premiere. Leur presence avait de surcroit
+# un effet concret : `validate_model_manifest` les acceptait comme statuts
+# CONNUS, si bien qu'un manifeste ecrit a la main annoncant `rejected` etait
+# refuse pour « statut non autorise au runtime » — motif qui laisse croire a un
+# reglage, la ou la verite est qu'aucun processus ne peut produire ce statut.
+# Il est desormais refuse pour « statut de promotion inconnu », ce qui est le
+# fait.
 PROMOTION_STATUSES = {
     "candidate",
-    "validated_offline",
     "shadow_only",
     "approved_for_pilot",
     "approved_for_production",
-    "rejected",
 }
 RUNTIME_STATUSES = {
     "shadow_only",
@@ -56,7 +77,20 @@ SOFTWARE_GATES = {
     "redondance_features",
     "stabilite_hors_periode",
 }
-EXTERNAL_DATA_GATES = MANDATORY_GATES - SOFTWARE_GATES
+
+# `EXTERNAL_DATA_GATES = MANDATORY_GATES - SOFTWARE_GATES` A ETE SUPPRIMEE.
+#
+# Elle avait ete ajoutee en meme temps que `SOFTWARE_GATES`, par symetrie :
+# puisqu'on separait les portes que le code peut casser, il paraissait naturel
+# de nommer les autres. Aucun appelant ne l'a jamais lue — `validate_release.py`
+# n'importe que `failed_mandatory_gates` et `failed_software_gates`.
+#
+# C'est le meme defaut que ceux corriges partout ailleurs dans cet audit, et il
+# a ete introduit PAR l'audit. Un nom qui existe sans lecteur donne au fichier
+# une apparence de completude et oblige chaque relecture a redemontrer qu'il ne
+# sert a rien. Le complement se lit directement : `MANDATORY_GATES -
+# SOFTWARE_GATES`, et il est ecrit en toutes lettres dans le commentaire
+# ci-dessus.
 
 
 class ManifestValidationError(ValueError):
@@ -270,7 +304,26 @@ def validate_model_manifest(
             tuple(manifest["runtime"]["packages"].keys())
         )
         if manifest["runtime"]["packages"] != current_packages:
-            raise ManifestValidationError("versions de bibliothèques incompatibles")
+            # UN REFUS DOIT DIRE LEQUEL, ET LEQUEL SEULEMENT.
+            #
+            # Le message valait « versions de bibliothèques incompatibles »,
+            # sans nommer un seul paquet. C'est le refus le PLUS PROBABLE de
+            # tous ceux de cette fonction — un `pip install` qui monte pandas
+            # d'un correctif suffit — et il laissait l'exploitant devant un
+            # artefact refusé sans le moindre point de départ, là où le refus
+            # sur Python, six lignes plus haut, cite ses deux valeurs.
+            #
+            # `pipeline._load_compatible_artifact` a déjà été corrigé sur ce
+            # motif exact : « UN REFUS DOIT DIRE QUOI FAIRE ». La correction
+            # n'avait pas été portée à la cause qu'elle rapporte.
+            ecarts = [
+                f"{nom} : manifeste={attendu}, runtime={current_packages.get(nom, 'absent')}"
+                for nom, attendu in sorted(manifest["runtime"]["packages"].items())
+                if current_packages.get(nom) != attendu
+            ]
+            raise ManifestValidationError(
+                "versions de bibliothèques incompatibles — " + " ; ".join(ecarts)
+            )
         threshold = manifest["training"]["decision_threshold"]
         if not isinstance(threshold, (int, float)) or not 0.0 <= threshold <= 1.0:
             raise ManifestValidationError("seuil de décision absent ou invalide")

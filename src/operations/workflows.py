@@ -12,11 +12,72 @@ from typing import Any
 # Voir la note dans src/operations/alarms.py : compatibilite Python 3.10.
 UTC = timezone.utc
 
-WORKFLOW_STATES = {"PLANNED", "IN_PROGRESS", "BLOCKED", "COMPLETED", "CANCELLED"}
+# WF-2 — `CANCELLED` A ETE RETIRE : AUCUN CODE NE POUVAIT L'ECRIRE.
+#
+# Le statut d'une intervention n'a que TROIS producteurs, et les voici :
+#
+#   `create`      -> 'PLANNED'                              (litteral SQL)
+#   `update_step` -> 'BLOCKED' si une etape l'est, sinon 'IN_PROGRESS'
+#   `complete`    -> 'COMPLETED'
+#
+# `CANCELLED` figurait dans cette enumeration, dans `TERMINAL_STATES` et dans la
+# contrainte `CHECK` du schema — nulle part ailleurs. C'est la forme exacte de
+# LIN-1 (lot S9) : un vocabulaire qui annonce un cycle de vie plus riche que ce
+# que le code sait produire.
+#
+# ET IL N'ETAIT PAS INOFFENSIF. `TERMINAL_STATES` le contenait, donc les deux
+# gardes de `update_step` et de `complete` testaient une valeur impossible :
+# la moitie de chaque garde etait morte, et un lecteur — ou un jury — en
+# deduisait qu'un chemin d'annulation existe. Le `CHECK` du schema l'acceptait
+# de surcroit, si bien qu'une base editee a la main pouvait porter un statut
+# qu'aucun processus legitime n'a produit, et l'intervention se retrouvait
+# definitivement figee sans qu'aucun message ne dise pourquoi. Meme structure
+# que le manifeste annoncant `rejected`, refuse pour un motif qui laissait
+# croire a un reglage.
+#
+# CE QUE SON RETRAIT REND VISIBLE, et qui etait masque : une intervention
+# planifiee puis abandonnee n'a aujourd'hui AUCUNE representation. Elle reste
+# `PLANNED` indefiniment. C'est une lacune fonctionnelle reelle — declarer
+# l'etat sans ecrire le chemin la rendait invisible, la retirer la donne a voir.
+# Retablir `CANCELLED` suppose une methode `cancel()`, sa route, son controle de
+# role et sa trace au journal; `test_tout_etat_declare_est_productible` le
+# rappellera a quiconque le remettrait seul.
+WORKFLOW_STATES = {"PLANNED", "IN_PROGRESS", "BLOCKED", "COMPLETED"}
+
 # Etats dont on ne revient pas. `update_step` s'en servait deja implicitement;
 # `complete` ne les consultait pas, d'ou WF-1.
-TERMINAL_STATES = {"COMPLETED", "CANCELLED"}
+TERMINAL_STATES = {"COMPLETED"}
+
 STEP_STATES = {"TODO", "IN_PROGRESS", "BLOCKED", "COMPLETED", "NOT_APPLICABLE"}
+
+
+def _contrainte(colonne: str, valeurs: set[str]) -> str:
+    """Rend la contrainte `CHECK` d'une colonne d'etat.
+
+    WF-3 — `WORKFLOW_STATES` ETAIT DECLARE ET LU PAR PERSONNE.
+
+    Le vocabulaire vivait en DEUX exemplaires : la constante Python, et la liste
+    recopiee dans le `CHECK` du schema. `update_step` validait contre
+    `STEP_STATES`, jamais contre `WORKFLOW_STATES` — qui n'avait donc aucun
+    lecteur, tandis que la seule contrainte reellement appliquee etait un
+    litteral SQL que rien ne rattachait a lui.
+
+    Les deux pouvaient diverger sans bruit, et c'est le motif de S8-2. Le
+    `CHECK` est desormais DERIVE de la constante : un etat ajoute ou retire en
+    Python l'est aussi dans le schema, et la constante a enfin un lecteur.
+
+    Les valeurs viennent de constantes du module, jamais d'une entree
+    exterieure : l'interpolation est sans risque d'injection.
+
+    Args:
+        colonne: Nom de la colonne contrainte.
+        valeurs: Vocabulaire admis.
+
+    Returns:
+        Le fragment SQL `CHECK(... IN (...))`.
+    """
+    liste = ",".join(f"'{valeur}'" for valeur in sorted(valeurs))
+    return f"CHECK({colonne} IN ({liste}))"
 
 
 class WorkflowStore:
@@ -33,7 +94,7 @@ class WorkflowStore:
         self._db.execute("PRAGMA foreign_keys=ON")
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.executescript(
-            """
+            f"""
             CREATE TABLE IF NOT EXISTS workflows (
                 id TEXT PRIMARY KEY,
                 template_id TEXT NOT NULL,
@@ -49,7 +110,7 @@ class WorkflowStore:
                 proof_ref TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                CHECK(status IN ('PLANNED','IN_PROGRESS','BLOCKED','COMPLETED','CANCELLED'))
+                {_contrainte("status", WORKFLOW_STATES)}
             );
             CREATE TABLE IF NOT EXISTS workflow_steps (
                 id TEXT PRIMARY KEY,
@@ -69,7 +130,7 @@ class WorkflowStore:
                 version INTEGER NOT NULL DEFAULT 1,
                 UNIQUE(workflow_id, sequence),
                 FOREIGN KEY(workflow_id) REFERENCES workflows(id),
-                CHECK(status IN ('TODO','IN_PROGRESS','BLOCKED','COMPLETED','NOT_APPLICABLE'))
+                {_contrainte("status", STEP_STATES)}
             );
             CREATE TABLE IF NOT EXISTS workflow_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

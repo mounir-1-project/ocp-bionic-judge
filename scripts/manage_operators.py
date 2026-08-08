@@ -30,7 +30,8 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.security.auth import VALID_ROLES
-from src.security.registry import MIN_PASSWORD_LENGTH, load_registry
+from src.security.auth import MIN_PASSWORD_LENGTH
+from src.security.registry import load_registry
 
 ROLE_HELP = {
     "reader": "consultation seule",
@@ -54,11 +55,11 @@ def _ask_password(prompt: str = "Mot de passe") -> str:
         SystemExit: Si les deux saisies different ou si la longueur est
             insuffisante.
     """
-    first = getpass.getpass(f"{prompt} ({MIN_PASSWORD_LENGTH} caracteres minimum) : ")
+    first = getpass.getpass(f"{prompt} ({MIN_PASSWORD_LENGTH} caractères minimum) : ")
     if len(first) < MIN_PASSWORD_LENGTH:
         raise SystemExit(
-            f"Mot de passe trop court : {len(first)} caractere(s), "
-            f"{MIN_PASSWORD_LENGTH} exiges."
+            f"Mot de passe trop court : {len(first)} caractère(s), "
+            f"{MIN_PASSWORD_LENGTH} exigés."
         )
     second = getpass.getpass("Confirmer : ")
     if first != second:

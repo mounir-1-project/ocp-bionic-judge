@@ -291,16 +291,35 @@ class EmailNotifier:
 
         destinataires = self._destinataires()
         if not destinataires:
-            # Aucune adresse active : on trace, on compte, on n'oublie pas.
+            # L'ORDRE COMPTE : LA TRACE D'ABORD, LE DEPOT ENSUITE.
+            #
+            # `_deposer` etait appele AVANT `_tracer`, et il leve
+            # `RuntimeError("aucun depot configure")` des que `self.spool` vaut
+            # `None` — cas atteignable : le garde d'entree n'exige que
+            # `transport_ready OU journal_ready`, donc un relais SMTP configure
+            # sans depot passe. `EmailNotifier` construit sans `spool` est aussi
+            # exactement ce que font les tests, et un systeme de fichiers en
+            # lecture seule annule le depot au demarrage.
+            #
+            # Dans cette configuration, l'exception remontait a `_emit`, qui
+            # l'attrape et journalise « Abonne en erreur » cote serveur —
+            # verifie, le rejeu ne s'arrete pas. Mais `_tracer` n'etait JAMAIS
+            # atteint : l'alerte critique disparaissait du journal d'escalade.
+            #
+            # C'est le defaut EXACT que ce bloc a ete ecrit pour corriger,
+            # reintroduit par l'ordre des deux appels. La trace est la
+            # garantie; le fichier n'en est que la copie durable.
             self._sans_destinataire += 1
             orphelin = MailJob(subject, body, "(aucun destinataire)", event_key)
-            self._deposer(orphelin)
-            self._tracer(
-                orphelin,
-                "non distribue",
+            motif = (
                 "aucun destinataire actif : aucune session ouverte et "
-                "ALERT_EMAIL_TO non renseigné",
+                "ALERT_EMAIL_TO non renseigné"
             )
+            try:
+                self._deposer(orphelin)
+            except Exception as exc:
+                motif += f" — dépôt local indisponible ({type(exc).__name__})"
+            self._tracer(orphelin, "non distribue", motif)
             return
 
         for recipient in destinataires:
@@ -386,10 +405,25 @@ class EmailNotifier:
         try:
             self._jobs.put_nowait(job)
         except queue.Full:
+            # LA SEULE PERTE D'ALERTE QUI NE LAISSAIT AUCUNE TRACE.
+            #
+            # Ce module promet en tete de fichier de « pouvoir dire APRES COUP
+            # quelles alertes auraient du partir ». Les trois issues du worker
+            # — envoye, depose, echec — passent toutes par `_tracer`. Celle-ci,
+            # non : une file saturee incrementait un compteur et ecrivait une
+            # ligne dans le journal SERVEUR, que l'exploitant ne lit pas.
+            #
+            # Or la saturation survient precisement quand le relais est lent ou
+            # tombe, c'est-a-dire quand le plus d'alertes se perdent d'un coup.
             self._failed += 1
             self._last_error = "file de notification saturee"
             if job.deduplication_key:
                 self._pending_keys.discard(job.deduplication_key)
+            self._tracer(
+                job, "echec",
+                "file de notification saturée : le relais ne suit pas, ce "
+                "message n'a pas été mis en file",
+            )
             logger.warning("Notification E7301 abandonnee : file saturee")
 
     def _run(self) -> None:

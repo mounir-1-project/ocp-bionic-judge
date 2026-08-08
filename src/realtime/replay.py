@@ -10,9 +10,29 @@ choisie. Le systeme rencontre donc les vraies pannes capteur, les vrais
 arrets, les vraies excursions de temperature — dans l'ordre ou elles se sont
 produites, sans connaitre la suite.
 
-Le simulateur ne voit jamais le futur : a l'instant t, seule la fenetre
-[debut, t] est transmise a la detection. C'est cette contrainte qui rend la
-demonstration honnete.
+Ce que ce module garantit, et ce qu'il ne garantit pas
+----------------------------------------------------------------------------
+L'en-tete affirmait : « a l'instant t, seule la fenetre [debut, t] est
+transmise a la detection ». **Ce module ne transmet aucune fenetre.** Il appelle
+`pipeline.analyze_at(ts)`, qui passe la table de features ENTIERE a ses trois
+etages; la troncature a `[:t]` a lieu deux couches plus bas, dans
+`detector.analyze` (`history = features.loc[:ts]`) et `_recent_exceedances`
+(`s.index <= ts`).
+
+La propriete est VRAIE — verifiee etage par etage, y compris pour le Judge, qui
+recoit lui aussi la table complete mais ne la consulte qu'a travers
+`detector.analyze` au meme horodatage. Elle n'est simplement pas produite ici,
+et rien dans ce fichier ne l'impose.
+
+C'est la situation de S7-2 : « vrai par accident, pas par construction ».
+Ajouter a `analyze_at` un consommateur qui lirait un quantile sur la table
+entiere suffirait a rompre la propriete, et ce fichier continuerait de
+l'affirmer. Le verrou est donc ailleurs, et il est comportemental :
+`test_le_rejeu_ne_lit_jamais_l_aval` rejoue la meme analyse sur la table
+complete et sur la table tronquee a `t`, et exige un resultat identique.
+
+C'est cette contrainte qui rend la demonstration honnete; ce qui suit dit ou
+elle vit reellement.
 
 Author: Mounir Sanbouli — Stage OCP, Programme Bionic
 """
@@ -147,10 +167,36 @@ class DCSReplay:
         domaine = self.pipeline.domain
         marque = pd.Series(False, index=table.index)
 
-        def seuil(alias: str, cle: str):
+        def borne_d_alarme(alias: str, cle: str):
+            """Seuil gouverne, ou `None` si le referentiel n'en declare pas.
+
+            DEUX CORRECTIONS SUR QUATRE LIGNES.
+
+            `except Exception` avalait TOUT — y compris un alias inexistant,
+            une erreur d'attribut ou un referentiel mal charge. Or c'est
+            exactement la garantie que cette fonction existe pour tenir : un
+            franchissement de seuil ne doit pas pouvoir disparaitre par une
+            regle de performance. Un `except` aveugle la faisait disparaitre en
+            silence, elle aussi. Seule l'absence declaree est desormais toleree;
+            toute autre panne remonte.
+
+            Et la fonction s'appelait `seuil`, nom de la fonction canonique de
+            `src.domain.knowledge` dont la docstring dit « le repli teste
+            l'absence, pas la faussete ». Elle n'est pas importee ici, donc rien
+            n'etait masque — mais c'est le piege exact de M-1, ou une locale
+            nommee `seuil` rendait la fonction importee inaccessible a l'endroit
+            meme ou le defaut se reproduisait. Le nom est libere.
+
+            Args:
+                alias: Alias du tag dans le referentiel.
+                cle: Nom du seuil.
+
+            Returns:
+                La valeur du seuil, ou `None` s'il n'est pas declare.
+            """
             try:
                 return domaine.get(alias).threshold(cle)
-            except Exception:
+            except (KeyError, AttributeError):
                 return None
 
         franchissements = [
@@ -162,7 +208,7 @@ class DCSReplay:
             ("F_ACID", "alarm_low_low", "le"),
         ]
         for colonne, cle, sens in franchissements:
-            valeur = seuil(colonne, cle)
+            valeur = borne_d_alarme(colonne, cle)
             if valeur is None or colonne not in table:
                 continue
             serie = table[colonne]
@@ -170,7 +216,7 @@ class DCSReplay:
             marque |= test.fillna(False)
 
         for cle in ("alarm_low", "alarm_low_low"):
-            valeur = seuil("C_ACID_1100", cle)
+            valeur = borne_d_alarme("C_ACID_1100", cle)
             if valeur is not None and "conc_min" in table:
                 marque |= (table["conc_min"] <= valeur).fillna(False)
 
@@ -281,10 +327,26 @@ class DCSReplay:
         self._thread.start()
 
     def stop(self) -> None:
-        """Arrete le rejeu et attend la fin du thread."""
+        """Arrete le rejeu et attend la fin du thread.
+
+        UN ARRET QUI N'ARRETE PAS NE DOIT PAS SE DECLARER ARRETE. `running`
+        etait remis a faux sans verifier que le thread avait bien fini. Passe le
+        delai de garde, l'etat annoncait donc un rejeu arrete pendant qu'un
+        thread continuait d'emettre — et `start()`, qui ne se protege que par ce
+        booleen, en aurait lance un SECOND, deux boucles alimentant alors le
+        meme etat. Le cas demande qu'une analyse depasse cinq secondes; il n'est
+        pas atteint aujourd'hui, et il ne signalerait rien s'il l'etait.
+        """
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=5.0)
+            if self._thread.is_alive():
+                logger.error(
+                    "Rejeu — le thread ne s'est pas arrete dans le delai de "
+                    "garde; l'etat reste 'en cours' et aucun nouveau rejeu ne "
+                    "sera demarre"
+                )
+                return
         with self._lock:
             self.state.running = False
 
@@ -324,11 +386,21 @@ class DCSReplay:
         # performance — ne valait donc que pour la boucle threadee. Or c'est ce
         # chemin-ci qu'empruntent les tests et les scripts hors ligne : la
         # propriete etait affirmee dans un chemin et verifiee dans l'autre.
-        positions = set(self._index[::self._analyze_every])
+        #
+        # ET `limit=0` VALAIT « AUCUNE LIMITE ». Le test `if limit:` est
+        # l'idiome que `src.domain.knowledge.seuil` existe pour abolir : il
+        # teste la faussete au lieu de l'absence. La signature annonce
+        # `int | None`, donc `0` est une demande legitime — zero instant — et
+        # elle rejouait le corpus entier. Le repli teste desormais l'absence.
+        #
+        # `positions` contenait des HORODATAGES, pas des positions, alors que le
+        # commentaire de `_instants_incontournables` insiste vingt lignes plus
+        # haut sur cette distinction exacte. Renomme.
+        ordinaires = set(self._index[::self._analyze_every])
         idx = self._index[
-            self._index.isin(positions | self._obligatoires)
+            self._index.isin(ordinaires | self._obligatoires)
         ]
-        if limit:
+        if limit is not None:
             idx = idx[:limit]
         for ts in idx:
             try:

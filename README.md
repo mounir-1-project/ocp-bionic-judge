@@ -14,6 +14,34 @@ déterministe** avant qu'elle n'atteigne l'exploitant.
 
 ---
 
+## ⚠ Ce dépôt ne peut pas être public
+
+`data/raw/DATA.xlsx` est **versionné délibérément** : il fait partie du livrable
+et permet à quiconque clone le dépôt de reproduire tous les résultats. Ce
+fichier contient **quatorze mois d'exploitation réelle** d'une installation
+d'OCP Group — débits, températures, titres acide, arrêts de ligne, heure par
+heure. Ce sont des données industrielles propriétaires, pas un jeu d'exemple.
+
+**Le dépôt distant doit donc rester privé.** Ce n'est pas une préférence : c'est
+la condition qui rend acceptable le choix de versionner l'export.
+
+Trois conséquences pratiques :
+
+- **la visibilité du dépôt distant se vérifie avant le premier `push`**, pas
+  après — une publication est irréversible, un miroir ou un fork suffit ;
+- **`data/runtime/operators.json` n'est jamais versionné** : il porte des
+  empreintes PBKDF2 et des adresses réelles. Vérifié sur l'intégralité de
+  l'historique — il n'y a jamais figuré, `.env` non plus ;
+- **détacher l'export** est la seule façon de rendre ce dépôt publiable. Il
+  faudrait alors retirer le fichier de l'historique, pas seulement du dernier
+  commit, et le projet perdrait sa reproductibilité de bout en bout.
+
+Cette contrainte n'était écrite nulle part dans les 162 fichiers versionnés :
+elle ne vivait que dans un commentaire de `.gitignore` expliquant *pourquoi* le
+fichier est versionné, sans dire *ce que cela impose*.
+
+---
+
 ## L'idée : un contrôleur de cohérence qui peut réellement contredire
 
 Un système de diagnostic automatique qui ne sait pas dire quand il se trompe est inexploitable en environnement industriel. Ce projet ajoute donc au diagnostic un **vérificateur déterministe de cohérence factuelle**.
@@ -24,7 +52,7 @@ Ici, **le contrôleur recalcule les faits** depuis la même chaîne de données 
 
 Le banc d'évaluation distingue deux mesures : la **non-régression** des huit
 contrôles (95,8 %) et la **généralisation** face à des mutations non ciblées
-(**10 %**). C'est la seconde qui répond à la question « que détecte-t-il qu'il
+(**8,6 %**). C'est la seconde qui répond à la question « que détecte-t-il qu'il
 ne connaît pas déjà ? » — et c'est elle que ce projet met en avant, parce
 qu'un dispositif de gouvernance qui surestime sa portée est pire qu'aucun.
 
@@ -34,8 +62,12 @@ qu'un dispositif de gouvernance qui surestime sa portée est pire qu'aucun.
 
 ```bash
 pip install -r requirements.txt
-uvicorn api.main:app --reload --port 8000
+python -m api
 ```
+
+`python -m api` honore `API_HOST` et `API_PORT`. La forme
+`uvicorn api.main:app --reload --port 8000` reste utilisable en développement —
+la ligne de commande prime alors sur la configuration.
 
 `requirements.txt` installe l'environnement complet de développement et
 d'analyse, sur Python 3.10 ou plus. L'image Docker installe
@@ -193,7 +225,7 @@ Le duty est calculé par définition `ρ·cp·F·(T_in − T_out)`, et la réfé
 | R² d'une formule **sans aucun apprentissage** | **0,962** |
 | Apport réel du modèle | **+0,006** |
 | Corrélation résidu ↔ écart de consigne | **−0,94** |
-| Variance du résidu expliquée par l'écart seul | **90,6 %** |
+| Variance du résidu expliquée par l'écart seul | **88 %** (r² pour r = −0,94) |
 
 Conséquence : le résidu du duty **est** l'écart de consigne, changé de signe et pondéré par le débit. La « table des signes » qui croisait les deux comme deux preuves concordantes ne pouvait pas échouer, donc ne vérifiait rien.
 
@@ -231,7 +263,7 @@ Aucun de ces indicateurs n'est parfait, et le projet ne prétend pas le contrair
 
 ### Le détecteur verrait-il un encrassement ?
 
-Avec la période de référence retenue, la règle ne se déclenche sur aucune des quatorze mois. Ce zéro est **conditionnel** : sur une référence arrêtée à 25 % du corpus, la même règle se déclencherait sur 52 % des heures de marche. Le tableau de sensibilité publie les quatre fenêtres, et aucun chiffre d'encrassement n'est cité dans ce document sans elle. Reste la question de fond : sans anomalie étiquetée, on ne distingue pas « il n'y a rien eu » de « la règle ne peut pas se déclencher ». `make bench-fouling` tranche : il dégrade UA d'une fraction donnée sur les **données réelles**, laisse la physique efficacité-NTU recalculer les températures, et démarre la rampe **dans une fenêtre où la règle est silencieuse**.
+Avec la période de référence retenue, la règle ne se déclenche sur aucun des quatorze mois. Ce zéro est **conditionnel** : sur une référence arrêtée à 25 % du corpus, la même règle se déclencherait sur 52 % des heures de marche. Le tableau de sensibilité publie les quatre fenêtres, et aucun chiffre d'encrassement n'est cité dans ce document sans elle. Reste la question de fond : sans anomalie étiquetée, on ne distingue pas « il n'y a rien eu » de « la règle ne peut pas se déclencher ». `make bench-fouling` tranche : il dégrade UA d'une fraction donnée sur les **données réelles**, laisse la physique efficacité-NTU recalculer les températures, et démarre la rampe **dans une fenêtre où la règle est silencieuse**.
 
 | Perte de UA injectée | Détectée à | Délai |
 |---|---|---|
@@ -275,7 +307,7 @@ Point de conception subtil : la détection de gel ne s'applique **que hors arrê
 
 ### Les alertes horaires doivent être agrégées — sans que l'agrégation ne masque le problème
 
-Aucun opérateur ne traite des milliers de points horaires isolés. Les heures atypiques sont donc agrégées en **épisodes temporels**, ce qui ramène la charge à environ **5 épisodes par mois**.
+Aucun opérateur ne traite des milliers de points horaires isolés. Les heures atypiques sont donc agrégées en **épisodes temporels**, ce qui ramène la charge à environ **4,1 épisodes par mois** — 58 épisodes sur 424 jours. Cette figure est `derived` et non `observed` : elle procède des scores de l'Isolation Forest et du seuil de contamination, tous deux appris — ce n'est pas un comptage d'événements constatés.
 
 Ce chiffre est flatteur, et il masquait une réalité. Le **taux horaire réel** est publié à côté :
 
@@ -334,7 +366,7 @@ qu'aucun indicateur ne réintroduise un montant.
 
 Relier un code de règle à la pièce concernée est une **connaissance métier**.
 Elle vit dans `src/domain/topology.yaml`, avec les dix pièces de l'appareil,
-les douze capteurs situés, et la table qui rattache chacun des dix-sept codes
+les douze capteurs situés, et la table qui rattache chacun des **dix-huit** codes
 du détecteur aux pièces et capteurs qu'il met en cause.
 
 Un code absent de cette table n'allume rien : mieux vaut ne rien montrer
@@ -379,11 +411,11 @@ Pour répondre à la seule question qui compte — *que détecte-t-il qu'il ne c
 | Mesure | Résultat | Ce qu'elle vaut |
 |---|---|---|
 | Pièges ciblés | **95,8 %** | non-régression des huit contrôles |
-| **Mutations non ciblées** | **10 %** (n = 60) | **généralisation réelle** |
+| **Mutations non ciblées** | **8,6 %** (n = 58) | **généralisation réelle** |
 | Écart de note piégés / sains | 4,1 points | discrimination |
 | Faux positifs sur cas sains | 0 % | le Judge ne rejette pas le correct |
 
-**10 %, et c'est le chiffre à retenir.** Le contrôleur attrape presque tout ce qu'il a été conçu pour attraper, et un dixième de ce qu'il n'a pas prévu. Ce chiffre a baissé deux fois, et chaque baisse est une correction. « ~80 % » n'a jamais été mesuré : trois des cinq mutations visaient des contrôles nommés. « 22 % » reposait sur deux autres mutations qui déclenchaient elles aussi un contrôle par construction — vider `cited_values` fait exactement ce que fait le piège conçu pour cela. Les cinq mutations retenues portent sur des propriétés qu'aucun des huit contrôles ne lit, et un test le vérifie sur des instants réels. Un dispositif de gouvernance qui surestime sa propre portée est plus dangereux que pas de dispositif du tout.
+**8,6 %, et c'est le chiffre à retenir.** Le contrôleur attrape presque tout ce qu'il a été conçu pour attraper, et moins d'un dixième de ce qu'il n'a pas prévu. Ce chiffre a baissé deux fois, et chaque baisse est une correction. « ~80 % » n'a jamais été mesuré : trois des cinq mutations visaient des contrôles nommés. « 22 % » reposait sur deux autres mutations qui déclenchaient elles aussi un contrôle par construction — vider `cited_values` fait exactement ce que fait le piège conçu pour cela. Les cinq mutations retenues portent sur des propriétés qu'aucun des huit contrôles ne lit, et un test le vérifie sur des instants réels. Un dispositif de gouvernance qui surestime sa propre portée est plus dangereux que pas de dispositif du tout.
 
 **Limite structurelle qui subsiste.** L'agent et le Judge partagent la même chaîne de données et le même référentiel. Si l'interprétation d'un tag est fausse, les deux se trompent ensemble et le Judge certifie l'erreur avec une note élevée. Aucun banc interne ne corrige cela — seule la confirmation OCP des tags le peut.
 
@@ -490,6 +522,7 @@ Aucune fiche d'instrumentation n'accompagne l'export DCS. Le sens des douze tags
 | `process` | Physique du procédé sulfurique et données constructeur Chemetics — titre 93-98 %, plages de température de service |
 | `data` | Comportement observé sur 10 180 heures : plages, corrélations en marche établie, effondrement à l'arrêt, autocorrélation |
 | `stoichio` | Cohérence de la ligne : 1 t de soufre donne 3,06 t de H₂SO₄, soit ~1 370 t/j à 18,6 t/h — la capacité d'une ligne PS III |
+| `climatology` | Climatologie de l'eau de mer à Safi : 17,0 °C en février-mars, 22,0 °C en septembre. C'est elle qui rend UA calculable (§ « Ce qui débloque tout ») |
 
 Les six tags qui fondent un diagnostic exigent la base la plus forte : un test échoue si l'un d'eux perd son ancrage procédé. Le détail de chaque détermination est dans `src/domain/tags.yaml`, et publié par `/api/coverage` — un lecteur peut contester une détermination précise plutôt que douter de l'ensemble.
 

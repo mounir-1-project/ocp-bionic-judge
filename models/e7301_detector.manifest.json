@@ -1,5 +1,5 @@
 {
-  "created_at_utc": "2026-08-01T20:59:51.126670+00:00",
+  "created_at_utc": "2026-08-07T02:04:45.602529+00:00",
   "data": {
     "path": "data/raw/DATA.xlsx",
     "sha256": "93487c581f4cd684e8783251e91f15274d8ca4e3a0ae1eb332370039a5520239",
@@ -10,7 +10,8 @@
     "La période saine ne peut pas être ancrée sur une révision confirmée.",
     "Les mesures eau de mer, vibration, pression différentielle et corrosion manquent.",
     "Le modèle thermique reconstruit un proxy calculé; son R² n'est pas une preuve d'état.",
-    "Le rejeu historique n'est pas une connexion DCS/PI temps réel."
+    "Le rejeu historique n'est pas une connexion DCS/PI temps réel.",
+    "Le corpus couvre quatorze mois pour un cycle d'eau de mer de douze : un backtest à fenêtre croissante n'offre qu'un seul pli dont la fenêtre de test reste dans la plage de température apprise. La dérive de distribution n'est donc mesurable que sur ce pli."
   ],
   "model": {
     "metadata": {
@@ -124,7 +125,7 @@
       "validation": {
         "deployment_gates": [
           {
-            "evidence": "aucun décalage négatif ni fenêtre centrée dans l'ingestion et les features ; chaîne reconstruite et vérifiée sur trois troncatures du corpus (40, 60, 80 %)",
+            "evidence": "aucun décalage négatif ni fenêtre centrée dans le code exécutable de `src`, gouvernance comprise ; chaîne reconstruite et vérifiée sur trois troncatures du corpus (40, 60, 80 %)",
             "gate": "causalite_temporelle",
             "passed": true
           },
@@ -144,7 +145,7 @@
             "passed": true
           },
           {
-            "evidence": "PSI max 3,745 sur les scores, pour 0,25 admis. Le corpus change de régime entre les deux moitiés de la période (deux excursions de sur-refroidissement, § 9.2) : un PSI élevé est ici attendu. Le seuil de 0,25 est la borne usuelle du scoring de crédit, où les populations comparées sont supposées échangeables ; son transfert à des scores d'anomalie non supervisés n'est pas argumenté. Mesure publiée, non bloquante.",
+            "evidence": "aucun des 4 plis n'est mesurable. Seuls comptent les plis dont la fenêtre de test reste dans la plage d'eau de mer vue à l'apprentissage : ailleurs le PSI mesure l'année incomplète de la fenêtre croissante, non une dérive du modèle — il vaut 3,183 sur le pli qui extrapole le plus, et le plus tardif, qui n'extrapole pas, est le plus stable. Le seuil vient du scoring de crédit, où les populations comparées sont supposées échangeables ; son transfert à des scores d'anomalie non supervisés n'est pas argumenté. Mesure publiée, non bloquante.",
             "gate": "derive_de_distribution",
             "passed": false
           },
@@ -244,7 +245,8 @@
           "La période saine ne peut pas être ancrée sur une révision confirmée.",
           "Les mesures eau de mer, vibration, pression différentielle et corrosion manquent.",
           "Le modèle thermique reconstruit un proxy calculé; son R² n'est pas une preuve d'état.",
-          "Le rejeu historique n'est pas une connexion DCS/PI temps réel."
+          "Le rejeu historique n'est pas une connexion DCS/PI temps réel.",
+          "Le corpus couvre quatorze mois pour un cycle d'eau de mer de douze : un backtest à fenêtre croissante n'offre qu'un seul pli dont la fenêtre de test reste dans la plage de température apprise. La dérive de distribution n'est donc mesurable que sur ce pli."
         ],
         "predictive_claim": "non démontrable avec le corpus disponible; aucune AUC, précision, rappel ou réduction de panne revendiquée",
         "scientific_status": "surveillance comportementale non supervisée, backtestée causalement",
@@ -253,7 +255,7 @@
             {
               "causal_pipeline_refit": true,
               "fold": 1,
-              "gap_calendar_hours": 24,
+              "gap_calendar_hours": 25.0,
               "n_test": 1786,
               "n_train": 1055,
               "reference_train_period": [
@@ -262,6 +264,8 @@
               ],
               "score_p95": 0.9812,
               "score_psi": 1.9885,
+              "score_psi_empty_deciles": 0,
+              "seasonal_extrapolation": 0.7648,
               "test_alert_rate": 0.1607,
               "test_period": [
                 "2024-03-26 04:00:00",
@@ -276,7 +280,7 @@
             {
               "causal_pipeline_refit": true,
               "fold": 2,
-              "gap_calendar_hours": 24,
+              "gap_calendar_hours": 25.0,
               "n_test": 1837,
               "n_train": 2841,
               "reference_train_period": [
@@ -284,7 +288,9 @@
                 "2024-06-17 23:00:00"
               ],
               "score_p95": 0.9591,
-              "score_psi": 3.7446,
+              "score_psi": 3.1826,
+              "score_psi_empty_deciles": 1,
+              "seasonal_extrapolation": 1.0,
               "test_alert_rate": 0.0441,
               "test_period": [
                 "2024-06-19 00:00:00",
@@ -299,7 +305,7 @@
             {
               "causal_pipeline_refit": true,
               "fold": 3,
-              "gap_calendar_hours": 24,
+              "gap_calendar_hours": 25.0,
               "n_test": 1873,
               "n_train": 4702,
               "reference_train_period": [
@@ -308,6 +314,8 @@
               ],
               "score_p95": 0.9774,
               "score_psi": 0.5796,
+              "score_psi_empty_deciles": 0,
+              "seasonal_extrapolation": 0.0523,
               "test_alert_rate": 0.0726,
               "test_period": [
                 "2024-09-11 22:00:00",
@@ -322,7 +330,7 @@
             {
               "causal_pipeline_refit": true,
               "fold": 4,
-              "gap_calendar_hours": 24,
+              "gap_calendar_hours": 25.0,
               "n_test": 1908,
               "n_train": 6551,
               "reference_train_period": [
@@ -331,6 +339,8 @@
               ],
               "score_p95": 0.9446,
               "score_psi": 0.0681,
+              "score_psi_empty_deciles": 0,
+              "seasonal_extrapolation": 0.1279,
               "test_alert_rate": 0.0346,
               "test_period": [
                 "2024-12-05 16:00:00",
@@ -343,9 +353,11 @@
               ]
             }
           ],
-          "interpretation": "Les taux, le PSI et les régimes mesurent stabilité et charge d'alerte, jamais une performance de détection de panne.",
-          "max_score_psi": 3.7446,
+          "interpretation": "Les taux, le PSI et les régimes mesurent stabilité et charge d'alerte, jamais une performance de détection de panne. Le PSI d'un pli dont la fenêtre de test sort de la plage d'eau de mer apprise ne mesure aucune dérive : il mesure que la fenêtre croissante n'a pas encore vu une année complète.",
+          "max_score_psi": 3.1826,
+          "max_score_psi_seasonally_covered": null,
           "mean_test_alert_rate": 0.078,
+          "n_seasonally_covered_folds": 0,
           "regime_diagnostics": [
             {
               "alert_rate": 0.0793,
@@ -378,12 +390,12 @@
       }
     },
     "path": "models/e7301_detector.joblib",
-    "sha256": "85a7ac800fabd24b0af432f5c3672ab7918662ee46839e023bf22b031f1e7fec",
+    "sha256": "2897b4956e834ff72283c0b636b7d709c27cfb8365a886f3da1844770124ad03",
     "size_bytes": 6477939
   },
   "model_identity": {
     "id": "e7301-behavioral-iforest",
-    "version": "2026-08-01T205951.126670+0000"
+    "version": "2026-08-07T020445.602529+0000"
   },
   "promotion": {
     "process": "manual_governed_promotion",
@@ -423,7 +435,7 @@
       "t_out_local_z",
       "t_in_local_z"
     ],
-    "trained_at_utc": "2026-08-01T20:59:51.126670+00:00"
+    "trained_at_utc": "2026-08-07T02:04:45.602529+00:00"
   },
   "validation": {
     "failed_mandatory_gates": [
@@ -433,7 +445,7 @@
     "results": {
       "deployment_gates": [
         {
-          "evidence": "aucun décalage négatif ni fenêtre centrée dans l'ingestion et les features ; chaîne reconstruite et vérifiée sur trois troncatures du corpus (40, 60, 80 %)",
+          "evidence": "aucun décalage négatif ni fenêtre centrée dans le code exécutable de `src`, gouvernance comprise ; chaîne reconstruite et vérifiée sur trois troncatures du corpus (40, 60, 80 %)",
           "gate": "causalite_temporelle",
           "passed": true
         },
@@ -453,7 +465,7 @@
           "passed": true
         },
         {
-          "evidence": "PSI max 3,745 sur les scores, pour 0,25 admis. Le corpus change de régime entre les deux moitiés de la période (deux excursions de sur-refroidissement, § 9.2) : un PSI élevé est ici attendu. Le seuil de 0,25 est la borne usuelle du scoring de crédit, où les populations comparées sont supposées échangeables ; son transfert à des scores d'anomalie non supervisés n'est pas argumenté. Mesure publiée, non bloquante.",
+          "evidence": "aucun des 4 plis n'est mesurable. Seuls comptent les plis dont la fenêtre de test reste dans la plage d'eau de mer vue à l'apprentissage : ailleurs le PSI mesure l'année incomplète de la fenêtre croissante, non une dérive du modèle — il vaut 3,183 sur le pli qui extrapole le plus, et le plus tardif, qui n'extrapole pas, est le plus stable. Le seuil vient du scoring de crédit, où les populations comparées sont supposées échangeables ; son transfert à des scores d'anomalie non supervisés n'est pas argumenté. Mesure publiée, non bloquante.",
           "gate": "derive_de_distribution",
           "passed": false
         },
@@ -553,7 +565,8 @@
         "La période saine ne peut pas être ancrée sur une révision confirmée.",
         "Les mesures eau de mer, vibration, pression différentielle et corrosion manquent.",
         "Le modèle thermique reconstruit un proxy calculé; son R² n'est pas une preuve d'état.",
-        "Le rejeu historique n'est pas une connexion DCS/PI temps réel."
+        "Le rejeu historique n'est pas une connexion DCS/PI temps réel.",
+        "Le corpus couvre quatorze mois pour un cycle d'eau de mer de douze : un backtest à fenêtre croissante n'offre qu'un seul pli dont la fenêtre de test reste dans la plage de température apprise. La dérive de distribution n'est donc mesurable que sur ce pli."
       ],
       "predictive_claim": "non démontrable avec le corpus disponible; aucune AUC, précision, rappel ou réduction de panne revendiquée",
       "scientific_status": "surveillance comportementale non supervisée, backtestée causalement",
@@ -562,7 +575,7 @@
           {
             "causal_pipeline_refit": true,
             "fold": 1,
-            "gap_calendar_hours": 24,
+            "gap_calendar_hours": 25.0,
             "n_test": 1786,
             "n_train": 1055,
             "reference_train_period": [
@@ -571,6 +584,8 @@
             ],
             "score_p95": 0.9812,
             "score_psi": 1.9885,
+            "score_psi_empty_deciles": 0,
+            "seasonal_extrapolation": 0.7648,
             "test_alert_rate": 0.1607,
             "test_period": [
               "2024-03-26 04:00:00",
@@ -585,7 +600,7 @@
           {
             "causal_pipeline_refit": true,
             "fold": 2,
-            "gap_calendar_hours": 24,
+            "gap_calendar_hours": 25.0,
             "n_test": 1837,
             "n_train": 2841,
             "reference_train_period": [
@@ -593,7 +608,9 @@
               "2024-06-17 23:00:00"
             ],
             "score_p95": 0.9591,
-            "score_psi": 3.7446,
+            "score_psi": 3.1826,
+            "score_psi_empty_deciles": 1,
+            "seasonal_extrapolation": 1.0,
             "test_alert_rate": 0.0441,
             "test_period": [
               "2024-06-19 00:00:00",
@@ -608,7 +625,7 @@
           {
             "causal_pipeline_refit": true,
             "fold": 3,
-            "gap_calendar_hours": 24,
+            "gap_calendar_hours": 25.0,
             "n_test": 1873,
             "n_train": 4702,
             "reference_train_period": [
@@ -617,6 +634,8 @@
             ],
             "score_p95": 0.9774,
             "score_psi": 0.5796,
+            "score_psi_empty_deciles": 0,
+            "seasonal_extrapolation": 0.0523,
             "test_alert_rate": 0.0726,
             "test_period": [
               "2024-09-11 22:00:00",
@@ -631,7 +650,7 @@
           {
             "causal_pipeline_refit": true,
             "fold": 4,
-            "gap_calendar_hours": 24,
+            "gap_calendar_hours": 25.0,
             "n_test": 1908,
             "n_train": 6551,
             "reference_train_period": [
@@ -640,6 +659,8 @@
             ],
             "score_p95": 0.9446,
             "score_psi": 0.0681,
+            "score_psi_empty_deciles": 0,
+            "seasonal_extrapolation": 0.1279,
             "test_alert_rate": 0.0346,
             "test_period": [
               "2024-12-05 16:00:00",
@@ -652,9 +673,11 @@
             ]
           }
         ],
-        "interpretation": "Les taux, le PSI et les régimes mesurent stabilité et charge d'alerte, jamais une performance de détection de panne.",
-        "max_score_psi": 3.7446,
+        "interpretation": "Les taux, le PSI et les régimes mesurent stabilité et charge d'alerte, jamais une performance de détection de panne. Le PSI d'un pli dont la fenêtre de test sort de la plage d'eau de mer apprise ne mesure aucune dérive : il mesure que la fenêtre croissante n'a pas encore vu une année complète.",
+        "max_score_psi": 3.1826,
+        "max_score_psi_seasonally_covered": null,
         "mean_test_alert_rate": 0.078,
+        "n_seasonally_covered_folds": 0,
         "regime_diagnostics": [
           {
             "alert_rate": 0.0793,

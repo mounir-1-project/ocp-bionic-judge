@@ -133,8 +133,7 @@ def test_les_en_tetes_de_securite_sont_poses_en_un_seul_endroit():
     Toutes passent desormais par `_durcir`, qui est le seul endroit du fichier
     ou un en-tete de securite est pose.
     """
-    source = API_MAIN.read_text(encoding="utf-8")
-    module = ast.parse(source)
+    module = ast.parse(API_MAIN.read_text(encoding="utf-8"))
     durcir = next(
         n for n in module.body
         if isinstance(n, ast.FunctionDef) and n.name == "_durcir"
@@ -155,9 +154,64 @@ def test_les_en_tetes_de_securite_sont_poses_en_un_seul_endroit():
     ]
     assert not hors, f"en-tetes de securite poses hors de `_durcir` : {hors}"
 
-    for chemin in ("_durcir(\n            JSONResponse(\n                status_code=401",
-                   "_durcir(\n            JSONResponse(\n                status_code=403"):
-        assert chemin in source, "un refus ne passe plus par `_durcir`"
+    # CE CONTROLE NOMMAIT TROIS CODES ET N'EN VERIFIAIT QUE DEUX — et par
+    # comparaison de CHAINES avec l'indentation exacte. Deux defauts :
+    #   1. le 500, cite dans la docstring, n'etait pas couvert ;
+    #   2. un simple reformatage (`ruff format`) faisait echouer le test avec le
+    #      message « un refus ne passe plus par `_durcir` », qui aurait ete FAUX.
+    #      Un controle dont le message ment quand il echoue est pire qu'absent.
+    #
+    # La propriete generale remplace les trois exemples : toute `JSONResponse`
+    # portant un code d'erreur LITTERAL doit etre enveloppee par `_durcir`.
+    # Elle subsume 401, 403 et 500, et couvrira tout refus ajoute demain.
+    durcies = {
+        id(argument)
+        for noeud in ast.walk(module)
+        if isinstance(noeud, ast.Call)
+        and isinstance(noeud.func, ast.Name)
+        and noeud.func.id == "_durcir"
+        for argument in noeud.args
+    }
+    nus = []
+    for noeud in ast.walk(module):
+        if not (isinstance(noeud, ast.Call) and isinstance(noeud.func, ast.Name)):
+            continue
+        if noeud.func.id != "JSONResponse" or id(noeud) in durcies:
+            continue
+        for mot in noeud.keywords:
+            if (
+                mot.arg == "status_code"
+                and isinstance(mot.value, ast.Constant)
+                and isinstance(mot.value.value, int)
+                and mot.value.value >= 400
+            ):
+                nus.append((noeud.lineno, mot.value.value))
+    assert not nus, (
+        f"reponses d'erreur qui ne passent pas par `_durcir` : {nus}. "
+        f"Elles partent sans en-tete de defense — ce sont precisement celles "
+        f"qu'un attaquant provoque le plus facilement."
+    )
+
+    # Et les trois codes que la docstring nomme sont bien couverts aujourd'hui.
+    codes_durcis = {
+        mot.value.value
+        for noeud in ast.walk(module)
+        if isinstance(noeud, ast.Call)
+        and isinstance(noeud.func, ast.Name)
+        and noeud.func.id == "_durcir"
+        for argument in noeud.args
+        if isinstance(argument, ast.Call)
+        and isinstance(argument.func, ast.Name)
+        and argument.func.id == "JSONResponse"
+        for mot in argument.keywords
+        if mot.arg == "status_code"
+        and isinstance(mot.value, ast.Constant)
+        and isinstance(mot.value.value, int)
+    }
+    assert {401, 403, 500} <= codes_durcis, (
+        f"refus cites par cette docstring et non durcis : "
+        f"{sorted({401, 403, 500} - codes_durcis)}"
+    )
 
 
 def test_la_configuration_est_validee_avant_tout_effet_de_bord():
