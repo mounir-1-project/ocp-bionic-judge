@@ -2,7 +2,7 @@
 
 À la session qui produit la seconde moitié de la bibliothèque du mémoire E7301.
 
-La **partie A** existe : `docs/BIBLIOTHEQUE-RAPPORT-partieA.md`, 2 316 lignes.
+La **partie A** existe : `docs/bibliotheque/partie-A.md`, 2 316 lignes.
 Lis-la avant de commencer — pas pour la refaire, pour savoir où elle s'arrête.
 Les deux parties seront fusionnées, et **toute redite créera une contradiction**
 le jour où l'une des deux sera corrigée et pas l'autre. C'est le défaut central
@@ -270,7 +270,7 @@ plus `test_agents_judge.py`, `test_kpi.py`, `test_sensitivity.py`,
 `test_project_metrics.py`, `conftest.py`, `helpers.py`.
 
 Le « patron » : la consigne dit *« A en recense neuf »*. **Quinze emplois** au
-8 août. Matière prête dans `docs/audits/BIBLIOTHEQUE.md` § VII.3 et § VIII.
+8 août. Matière prête dans `docs/bibliotheque/partie-audit.md` § VII.3 et § VIII.
 
 **Un résultat de B7 est déjà acquis** : le défaut de test dominant n'est pas
 l'absence de test mais **la portée de l'assertion qui ne coïncide pas avec celle
@@ -305,7 +305,7 @@ fertile du dépôt, et personne n'y est allé.
 ## A3. Décisions ouvertes que B rencontrera
 
 B4 signale « un constat ouvert depuis la phase 0 ». Il y en a huit, tous dans
-`BIBLIOTHEQUE.md` § XII : `AL-3` (celui que B4 vise), `AL-4`, `SEC-3`, `API-2`,
+`docs/bibliotheque/partie-audit.md` § XII : `AL-3` (celui que B4 vise), `AL-4`, `SEC-3`, `API-2`,
 `DOM-1`, `ALM-2`, `FI-1`, `OPS-1`.
 
 **AL-1 et AL-2 sont CLOS** — corrigés et verrouillés par tests (lots S22, S42).
@@ -313,7 +313,7 @@ B4 signale « un constat ouvert depuis la phase 0 ». Il y en a huit, tous dans
 
 ## A4. Lecture d'appoint avant de commencer
 
-`docs/audits/BIBLIOTHEQUE.md` (752 l.) — complémentaire de A, pas redondante :
+`docs/bibliotheque/partie-audit.md` (752 l.) — complémentaire de A, pas redondante :
 **invariants de service** (§ 6.7, onze propriétés AST), **conventions de test**
 (§ VIII), **tableau des chiffres** (§ IX), **décisions ouvertes** (§ XII).
 B3, B4, B5, B6 et B7 y trouveront de la matière déjà mesurée.

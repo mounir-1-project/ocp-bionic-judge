@@ -16,11 +16,11 @@ rapport**.
 
 | document | ligne | énoncé |
 |---|---|---|
-| `partieA.md` | 1535 | « **sans exception** : le code de service porte la version juste » |
-| `audits/BIBLIOTHEQUE.md` | **700** | « Ordre de fraîcheur constaté, **sans exception notable** » |
-| `audits/BIBLIOTHEQUE.md` | **706** | « **Deux exceptions** seulement sur 18 (S27-2, S32-1) » |
-| `audits/DOSSIER-RAPPORT.md` | 116 | « Deux exceptions seulement sur 18 » |
-| `partieB.md` | 169 | énoncé **corrigé** : *ce qui est exécuté reste juste, ce qui est seulement lu dérive* |
+| `docs/bibliotheque/partie-A.md` | 1535 | « **sans exception** : le code de service porte la version juste » |
+| `docs/bibliotheque/partie-audit.md` | **700** | « Ordre de fraîcheur constaté, **sans exception notable** » |
+| `docs/bibliotheque/partie-audit.md` | **706** | « **Deux exceptions** seulement sur 18 (S27-2, S32-1) » |
+| `docs/bibliotheque/dossier-rapport.md` | 116 | « Deux exceptions seulement sur 18 » |
+| `docs/bibliotheque/partie-B.md` | 169 | énoncé **corrigé** : *ce qui est exécuté reste juste, ce qui est seulement lu dérive* |
 
 Les lignes 700 et 706 sont **dans le même document, à six lignes d'écart, et se
 contredisent**. C'est exactement le défaut que ces quarante-six lots ont
@@ -36,8 +36,8 @@ documenté, commis dans le document écrit pour l'empêcher.
 ## 2. Le coefficient de corrélation a deux précisions
 
 `−0,938` (1 fois, partie A — c'est le titre de la figure à produire) contre
-`−0,94` (9 fois en A, 2 fois dans `BIBLIOTHEQUE.md`, 1 fois dans
-`DOSSIER-RAPPORT.md`). Trancher sur la valeur de l'artefact, puis unifier.
+`−0,94` (9 fois en A, 2 fois dans `docs/bibliotheque/partie-audit.md`, 1 fois dans
+`docs/bibliotheque/dossier-rapport.md`). Trancher sur la valeur de l'artefact, puis unifier.
 
 ## 3. Chaque bibliothèque ignore des chiffres de l'autre
 
@@ -103,7 +103,7 @@ quatre documents**. Un énoncé, une place, partout le même :
 > reformule la règle : la frontière n'est pas code / document, elle est
 > **exécuté / seulement lu**.
 
-La contradiction interne de `BIBLIOTHEQUE.md` (lignes 700 et 706, à six lignes
+La contradiction interne de `docs/bibliotheque/partie-audit.md` (lignes 700 et 706, à six lignes
 d'écart) est supprimée.
 
 ## Levé — 2. Le coefficient est unifié
@@ -113,7 +113,7 @@ C'est la valeur qui titre la figure à produire.
 
 ## Levé — 3. Les chiffres manquants sont croisés
 
-Ajoutés au tableau de `BIBLIOTHEQUE.md` : **couverture du risque AMDEC 30,2 %**,
+Ajoutés au tableau de `docs/bibliotheque/partie-audit.md` : **couverture du risque AMDEC 30,2 %**,
 **58 épisodes agrégés**, **530 heures atypiques**. Le contraste **8,6 / 95,8 %**
 reste à porter dans la partie A.
 
@@ -152,7 +152,7 @@ Manquent **18** (API), **19** (validation du modèle), **20** (alarmes),
 § 17.6 leur laisse deux prises fermes : le module `workflows` est servi et testé
 sans aucune interface, et `POST /api/auth/refresh` n'est appelé par personne.
 § 17.8 en laisse une troisième : `alarms.py` fait **617** lignes et non 561 —
-`BIBLIOTHEQUE.md`, la partie A et la consigne B4 portent tous trois la valeur
+`docs/bibliotheque/partie-audit.md`, la partie A et la consigne B4 portent tous trois la valeur
 périmée. **§20 doit partir de la mesure, pas de la consigne.**
 
 ## Demeure — 5. Les figures

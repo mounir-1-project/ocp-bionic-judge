@@ -1,6 +1,6 @@
 # Bibliothèque du mémoire E7301 — partie B
 
-Suite de `BIBLIOTHEQUE-RAPPORT-partieA.md` (sections 0–16). Numérotation à partir
+Suite de `docs/bibliotheque/partie-A.md` (sections 0–16). Numérotation à partir
 de 17, concaténation directe.
 
 Marqueurs de provenance, comme en partie A :
@@ -569,7 +569,7 @@ Les onze non cherchés ne sont pas morts : neuf sont atteints par sélecteur —
 `panel-*` et `tab-*` par `$$(".view-tab")` et `$$(".view")`, `shell`, `who`,
 `work` sont des ancres CSS ou de navigation — et deux, `benchReading` et
 `friezeTrack`, sont du contenu statique. **Aucun identifiant orphelin réel.** Le
-chiffre « 110 / 99 / 0 » de `BIBLIOTHEQUE.md` § 6.6 est confirmé au 8 août 2026.
+chiffre « 110 / 99 / 0 » de `docs/bibliotheque/partie-audit.md` § 6.6 est confirmé au 8 août 2026.
 
 ## 17.7 Les bancs du poste **[MESURÉ, 2026-08-08]**
 
@@ -628,7 +628,7 @@ L'artefact en compte **58**. Recomptés sur `tests/fixtures/api/episodes.json` :
 58 épisodes, dont **57 valeurs de marge distinctes**. Le numérateur est juste, le
 dénominateur est faux d'une unité.
 
-Le chiffre 58 est celui de la partie A, de `BIBLIOTHEQUE.md` § IX et de
+Le chiffre 58 est celui de la partie A, de `docs/bibliotheque/partie-audit.md` § IX et de
 `project_metrics.json`. **Quatre sources concordent, le commentaire du front est
 seul.** À corriger sur place : « sépare 57 épisodes sur 58 ».
 
@@ -650,7 +650,7 @@ aucune interface »* — reste vrai et l'était ; ce sont ses chiffres qui ont v
 pendant que le code changeait sous eux.
 
 > **Effet de bord utile.** Le recomptage montre au passage que
-> `BIBLIOTHEQUE.md` § VI.1 annonce `alarms.py` à **561** lignes et
+> `docs/bibliotheque/partie-audit.md` § VI.1 annonce `alarms.py` à **561** lignes et
 > `test_alarm_store.py` à **291** — mesurés à **617** et **335**. La consigne B4
 > reprend le 561. **Trois documents portent la même valeur périmée**, parce
 > qu'ils se sont recopiés. §20 devra partir de la mesure, pas de la consigne.
@@ -662,7 +662,7 @@ Traité en § 17.2. Écart d'un dixième, mais dans le sens flatteur.
 ### Un point à trancher, pas à corriger d'office
 
 `app.js:1695` se déclare **« dix-neuvième occurrence du motif de cet audit »**.
-`BIBLIOTHEQUE.md` § XI et la partie A en recensent **dix-huit**. L'un des deux a
+`docs/bibliotheque/partie-audit.md` § XI et la partie A en recensent **dix-huit**. L'un des deux a
 raison et je ne peux pas le déterminer sans reprendre le journal d'audit
 intégral (`analyse-architecture.md`, 10 183 lignes), ce qui excède le périmètre
 de cette session.
@@ -675,7 +675,7 @@ Deux lectures possibles, et elles n'ont pas les mêmes conséquences :
 - le commentaire s'est compté lui-même en double, et 18 tient.
 
 **Décision ouverte, référencée `UI-1`.** Elle est de la même famille que les huit
-de `BIBLIOTHEQUE.md` § XII, et elle appartient à l'auteur : *on ne choisit pas un
+de `docs/bibliotheque/partie-audit.md` § XII, et elle appartient à l'auteur : *on ne choisit pas un
 chiffre en fonction de celui qui arrange le récit.*
 
 ### Le bilan, qui est le résultat de la section
@@ -872,10 +872,26 @@ session**, a fait échouer ces deux contrôles au premier lancement :
 
 **Le défaut n'était pas dans la bibliothèque** : elle citait mot pour mot la
 docstring de `src/models/detector.py`. Et l'historique du contrôle raconte la
-suite — la phrase disait auparavant « 511 points d'alarme », jumeau de « 511
-heures atypiques » ; la première occurrence a été corrigée, **la seconde a
-survécu en changeant de mot**, puis a été « arrondie » à une valeur encore plus
-fausse. Un chiffre faux corrigé en un chiffre plus faux.
+suite. La même grandeur était publiée deux fois, à trois lignes d'écart, sous
+deux noms — « points d'alarme » et « heures atypiques » — et portait dans les
+deux cas la valeur **511**, là où l'artefact en mesure **530**. La première
+occurrence a été corrigée ; **la seconde a survécu en changeant de mot**, puis a
+été « arrondie » à une valeur encore plus fausse. Un chiffre faux corrigé en un
+chiffre plus faux.
+
+*(Les deux valeurs historiques sont écrites ici détachées du terme qu'elles
+qualifiaient. Accolées, elles se relisent comme une affirmation courante — et
+c'est exactement ce qui a donné vingt lots de survie à la charge d'alertes
+fautive. Le contrôle `test_aucun_chiffre_cle_ne_contredit_les_artefacts` refuse
+l'adjacence, à juste titre : il n'a aucun moyen de distinguer ce qu'on affirme
+de ce qu'on cite.)*
+
+> **Anecdote qui vaut démonstration.** La première rédaction de la parenthèse
+> ci-dessus citait la charge fautive en chiffres, accolée au mot « épisodes ».
+> Le contrôle l'a rejetée — **la phrase qui explique le piège est tombée dedans
+> en l'écrivant.** C'est la meilleure preuve que le garde-fou ne se satisfait pas
+> des bonnes intentions de l'auteur, et qu'un contrôle par le texte doit être
+> aveugle à l'intention pour valoir quelque chose.
 
 C'est l'argument de gouvernance le plus solide du mémoire, parce qu'il n'est pas
 une explication : **deux documents écrits sans coordination, et c'est l'artefact

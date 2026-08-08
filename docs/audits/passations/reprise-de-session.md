@@ -307,7 +307,7 @@ fichier.
 > Tu as accès à mon projet. Avant toute chose, lis ces deux fichiers
 > intégralement, dans cet ordre :
 >
-> 1. `docs/audits/reprise-de-session.md`
+> 1. `docs/audits/passations/reprise-de-session.md`
 > 2. `docs/audits/analyse-architecture.md`
 >
 > Ils viennent d'une session précédente qui a lu **environ 31 500 des 32 000

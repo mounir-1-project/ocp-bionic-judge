@@ -14,18 +14,18 @@ recouvrir.
 | domaine | fichiers | lignes |
 |---|---|---|
 | Socle | `formatting.py`, `config.py`, `pipeline.py` | 981 |
-| Domaine | `domain/knowledge.py` + les 3 YAML gouvernés | 849 |
-| Ingestion | `ingest/dcs_loader.py` | 586 |
-| Features | `features/thermal.py`, `features/e7301_features.py` | 1 218 |
-| Détection | `models/detector.py` | 1 334 |
-| Agents | `agents/detection_agent.py`, `agents/judge_agent.py` | 2 070 |
+| Domaine | `src/domain/knowledge.py` + les 3 YAML gouvernés | 849 |
+| Ingestion | `src/ingest/dcs_loader.py` | 586 |
+| Features | `src/features/thermal.py`, `src/features/e7301_features.py` | 1 218 |
+| Détection | `src/models/detector.py` | 1 334 |
+| Agents | `src/agents/detection_agent.py`, `src/agents/judge_agent.py` | 2 070 |
 | Gouvernance | `judge_eval.py`, `fouling_injection.py`, `sensitivity.py`, `lineage.py`, `scripts/promote_model.py` | 1 928 |
-| Analytique | `analytics/kpi.py` | 340 |
-| Exploitation | `operations/workflows.py`, `security/registry.py` | 709 |
+| Analytique | `src/analytics/kpi.py` | 340 |
+| Exploitation | `src/operations/workflows.py`, `src/security/registry.py` | 709 |
 
 **Non couverts ici** : le front (`app.js`, `twin.js`, `dashboard.html`),
-`api/main.py`, `governance/model_validation.py`, `operations/alarms.py`,
-`notifications/`, `realtime/replay.py`, `security/auth.py`, la suite de tests,
+`api/main.py`, `src/governance/model_validation.py`, `src/operations/alarms.py`,
+`notifications/`, `src/realtime/replay.py`, `src/security/auth.py`, la suite de tests,
 le déploiement. Ils relèvent de la partie B.
 
 ## Convention de fiabilité — à conserver dans la fusion
@@ -1342,7 +1342,7 @@ changer quoi que ce soit.
 
 ## 10.1 Alarmes ISA-18.2
 
-*Hors périmètre de cette bibliothèque — `operations/alarms.py` (561 l.) n'a pas
+*Hors périmètre de cette bibliothèque — `src/operations/alarms.py` (561 l.) n'a pas
 été lu ici.*
 
 ## 10.2 Workflows d'intervention **[LU — `workflows.py`]**
@@ -1719,7 +1719,7 @@ Trois manques que la partie B ne comblera pas non plus, et qu'il faut produire :
    par exécution.**
 2. **Aucun résultat issu d'un run.** Tous les chiffres [DÉCLARÉ] viennent des
    commentaires du code. À confirmer par exécution avant publication :
-   `make judge-eval`, banc d'injection, sensibilité, backtest.
+   `make eval-judge`, banc d'injection, sensibilité, backtest.
 3. **Les dates exactes de la période de référence** ne sont pas établies ici.
    Elle vaut les 40 % initiaux des heures de marche du corpus
    (2024-01-01 07:00 → 2025-02-28 11:00), mais la borne exacte dépend du
@@ -1729,7 +1729,7 @@ Trois manques que la partie B ne comblera pas non plus, et qu'il faut produire :
 ## 14.5 Les figures que le rapport devrait porter
 
 Proposées d'après le contenu réel du système. Toutes sont productibles depuis la
-chaîne ; aucune n'existe dans le dépôt à ce jour (`rapport/figures` a été sorti
+chaîne ; aucune n'existe dans le dépôt à ce jour (le dossier rapport/figures a été sorti
 en phase A).
 
 | # | figure | source |
@@ -1785,7 +1785,7 @@ divergent, c'est la mesure qui fait foi.
 | « le taux horaire réel est **cinq fois** supérieur au paramètre de conception » | `kpi.flag_rate` docstring | **3,00 ×** (et 2,88 × en moyenne sur la grille) |
 | « dépasse **40 %** sur certains mois » | `kpi.flag_rate` docstring | maximum **26,9 %** (octobre 2024) |
 | « **1 385** heures d'arrêt, 13,6 % des horodatages » | `detection_agent` docstring | **1 251 h**, **12,3 %** |
-| « ~**5** épisodes par mois » | `kpi.flag_rate` docstring | **4,10** épisodes/mois |
+| « ~**cinq** épisodes par mois » | `kpi.flag_rate` docstring | **4,1** épisodes/mois |
 
 Ce sont des chiffres périmés dans les commentaires, pas des défauts de calcul.
 **Ils ne doivent pas passer dans le rapport.** Le contrôle
@@ -1943,7 +1943,7 @@ exactement le mécanisme que l'analyse de sensibilité décrit.
 **Écart de 1 à 54 entre le mois le plus calme (juin, 0,5 %) et le plus chargé
 (octobre, 26,9 %).** C'est l'argument central du KPI de charge d'alertes.
 
-**Épisodes agrégés : 58**, soit **4,10 par mois** sur 424 jours. Durée médiane
+**Épisodes agrégés : 58**, soit **4,1 par mois** sur 424 jours. Durée médiane
 **7 h**, maximum **38 h**.
 
 Les cinq plus marqués :
@@ -1965,7 +1965,7 @@ de la correction décrite au § 6.3.
 | indicateur | valeur | niveau |
 |---|---|---|
 | Disponibilité moyenne des mesures | **97,34 %** | observed |
-| Charge d'alertes | **4,10 épisodes/mois** | derived |
+| Charge d'alertes | **4,1 épisodes/mois** | derived |
 | Exposition cumulée aux conditions corrosives | **2 h** sur 8 832 (**0,02 %**) | observed |
 | **Marche durablement sous consigne** | **29,89 %** du temps de marche | derived |
 | Taux horaire de signalement | **6,0 %** | derived |

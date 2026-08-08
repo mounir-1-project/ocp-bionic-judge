@@ -14,6 +14,36 @@ déterministe** avant qu'elle n'atteigne l'exploitant.
 
 ---
 
+## Par où commencer
+
+Ce document est long parce qu'il justifie chaque choix. Selon ce que vous
+cherchez :
+
+| vous voulez… | allez à |
+|---|---|
+| **voir le système tourner** | la section *Démarrage* ci-dessous — deux commandes |
+| **comprendre le raisonnement scientifique** | *Quatre décisions qui font le système*, plus bas |
+| **naviguer dans la documentation** | `docs/README.md` — la carte de tout le reste |
+| **écrire ou relire le rapport** | `docs/bibliotheque/` — la source unique, ≈ 4 100 lignes |
+| **savoir pourquoi tel choix technique** | `docs/decisions/INDEX.md` — les onze ADR |
+| **exploiter le poste** | `docs/runbooks/runbook-operations.md` |
+
+**Les trois idées à retenir**, si vous ne lisez rien d'autre :
+
+1. **L'indicateur évident était faux.** Le résidu de puissance thermique semblait
+   mesurer l'encrassement (R² = 0,968). Il est **algébriquement circulaire** : il
+   redit l'écart de consigne, changé de signe. Corrélation mesurée : **−0,938**.
+2. **Le vrai indicateur exige une donnée absente.** Le coefficient d'échange UA
+   demande la température d'eau de mer, non instrumentée. Elle vient de la
+   **climatologie de Safi** — la seule entrée du système extérieure à toute
+   boucle de régulation, et c'est ce qui lui donne sa valeur.
+3. **Le système déclare ce qu'il ne voit pas.** 30,2 % du risque AMDEC est
+   couvert par les données ; le reste relève du plan préventif. Les deux modes
+   les plus critiques de l'équipement sont **hors de portée**, et le poste
+   l'affiche.
+
+---
+
 ## ⚠ Ce dépôt ne peut pas être public
 
 `data/raw/DATA.xlsx` est **versionné délibérément** : il fait partie du livrable
@@ -538,14 +568,18 @@ La période de référence n'est pas ancrée sur une date de révision. Sa sensi
 
 | Fichier | Contenu |
 |---|---|
+| `docs/README.md` | **La carte de la documentation** — où lire quoi |
+| `docs/bibliotheque/` | **Source unique du rapport** : ≈ 4 100 lignes, chaque affirmation portant son marqueur de provenance |
 | `docs/decisions/` | Onze décisions d'architecture, du cœur analytique à l'interface |
 | `docs/rapport_technique.md` | Dossier technique complet |
 | `docs/architecture.md` | Vue d'ensemble des couches |
+| `docs/audits/` | Journal d'audit — l'histoire des corrections, avec leurs preuves |
 | `notebooks/01_analyse_E7301.ipynb` | Analyse justifiant chaque choix de conception |
 | `src/domain/tags.yaml` | Référentiel des tags : sens, bases d'établissement, seuils |
 | `src/domain/amdec.yaml` | AMDEC du 23/09/2019, plan préventif, gammes, check-lists |
 | `src/domain/topology.yaml` | Pièces, position des capteurs, rattachement des codes |
 | `reports/project_metrics.json` | Source unique des chiffres du projet |
+| `reports/chiffres_front.txt` | Chiffres mesurés du poste opérateur, horodatés |
 
 ## Suites recommandées
 

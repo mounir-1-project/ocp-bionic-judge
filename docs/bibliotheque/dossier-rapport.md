@@ -100,7 +100,7 @@ V6 8 %, V7 5 %, V8 6 %. Plafonds de sécurité 4,0 et 5,0, appliqués par
 1. **`knowledge.seuil(valeur, defaut)`** — teste l'ABSENCE, pas la fausseté.
    L'idiome `x or defaut` est banni. Trois récidives trouvées et corrigées :
    `if limit:` (S14), `if lead:` (S42), et le sentinelle `lead=None` (S42).
-2. **`src/formatting`** — typographie française, espace fine insécable U+202F.
+2. **`src/formatting.py`** — typographie française, espace fine insécable U+202F.
    Règle : **le texte comparé est déaccentué par `sans_accents`, le texte affiché
    est accentué.** Sans quoi accentuer correctement casse le test qui protège.
 3. **« Le patron »** — un test qui interdit le retour d'un défaut **par analyse
@@ -129,7 +129,7 @@ Ordre de fraîcheur constaté :
 code/artefacts → README → ADR → rapport_technique.md → architecture.md → notebook
 ```
 
-Exemple le plus parlant — « 5 épisodes/mois », mesuré à **4,1** (58 × 30 / 424) :
+Exemple le plus parlant — « cinq épisodes par mois », mesuré à **4,1** (58 × 30 / 424) :
 présent dans **cinq documents avec cinq formulations différentes**, dont un
 commentaire de `test_documentation.py` qui qualifiait la valeur fausse de
 « juste ». C'est la variété des formulations qui a empêché tout motif unique de
@@ -142,8 +142,14 @@ est faite ainsi, au lieu de la décrire.
 
 - Câblage du poste : **110 identifiants dans la page, 99 cherchés par le JS, 0 manquant.**
 - Historique git : 3 101 objets. `.env` et `operators.json` **jamais** présents.
-  2 887 objets (93 %) sont un `frontend/node_modules` mort. Non réécrit —
-  destructif, et invaliderait le tag `v3.0.0`.
+  2 887 objets (93 %) proviennent d'un dossier frontend/node\_modules mort,
+  supprimé depuis mais conservé dans l'historique. Non réécrit — l'opération est
+  destructive et invaliderait le tag `v3.0.0`.
+  *(Le chemin est écrit sans guillemets techniques à dessein : il ne désigne
+  aucun dossier actuel, et le contrôle des chemins cités le prendrait pour tel.)*
+- **État au 8 août 2026** : **162 fichiers suivis**, `node_modules` n'est pas
+  tracké, 23 commits. Onze objets temporaires abandonnés par des opérations git
+  interrompues ont été retirés de `.git`.
 
 ## 8. Ce que le rapport ne doit PAS affirmer
 

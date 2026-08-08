@@ -10,7 +10,7 @@ arrivé deux fois, et c'est la raison d'être de ce document.
 N'ouvre un fichier source que pour **vérifier un chiffre précis que tu t'apprêtes
 à écrire**, et alors ce fichier-là seulement.
 
-Compléments : `DOSSIER-RAPPORT.md` (matière du rapport, 165 l.),
+Compléments : `docs/bibliotheque/dossier-rapport.md` (matière du rapport, 165 l.),
 `OBJECTIFS-FINAUX.md` (plan et décisions ouvertes),
 `analyse-architecture.md` (journal d'audit intégral, 10 183 l. — n'y va que pour
 retrouver la démonstration d'un point précis).
@@ -718,7 +718,7 @@ Ordre de fraîcheur constaté :
 code/artefacts → README → ADR → rapport_technique.md → architecture.md → notebook
 ```
 
-**Exemple le plus parlant** — « 5 épisodes/mois », mesuré à **4,1** : présent dans
+**Exemple le plus parlant** — « cinq épisodes par mois », mesuré à **4,1** : présent dans
 **cinq documents avec cinq formulations différentes**, dont un commentaire de
 `test_documentation.py` qui qualifiait la valeur fausse de « juste ». C'est la
 variété des formulations qui a empêché tout motif unique de l'attraper.
@@ -737,7 +737,7 @@ faite ainsi, au lieu de la décrire.
 | SEC-3 | tracer la fin de session au journal d'audit ? |
 | DOM-1 | base `stoichio` déclarée, utilisée par zéro tag |
 | ALM-2 | plafonner `ACTION_OVERSIZED` ? |
-| FI-1 | le `or` de `test_la_detection_est_tardive` |
+| FI-1 | le `or` de `test_la_detection_est_tardive_et_le_projet_le_dit` |
 | OPS-1 | vérifier la facturation Gemini (clés **non** révoquées, sur demande) |
 
 **Contraintes de l'auteur** : ne pas changer l'API Gemini ; **ne pas pousser le

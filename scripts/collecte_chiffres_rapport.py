@@ -1,7 +1,7 @@
 """
 Collecte des chiffres reels du systeme, pour la bibliotheque du rapport.
 
-Tous les chiffres de `docs/BIBLIOTHEQUE-RAPPORT-partieA.md` marques [DECLARE]
+Tous les chiffres de `docs/bibliotheque/partie-A.md` marques [DECLARE]
 viennent des commentaires du code. Ce script les RECALCULE depuis les donnees,
 pour qu'ils deviennent des mesures.
 
