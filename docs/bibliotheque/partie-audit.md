@@ -435,7 +435,7 @@ détection**.
 
 ## 6.1 Registre d'alarmes ISA-18.2 (`alarms.py`)
 
-Persistance SQLite. États : `ACTIVE`, `ACKNOWLEDGED`, `SHELVED`,
+Persistance SQLite. **617 lignes** (mesurées le 2026-08-08). États : `ACTIVE`, `ACKNOWLEDGED`, `SHELVED`,
 `RETURNED_NORMAL`, `CLOSED`. Chaque alarme porte `alarm_key`, `trigger_rule`,
 `occurrence_count`, `evidence`, et un **historique immuable**.
 

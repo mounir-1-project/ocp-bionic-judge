@@ -186,19 +186,53 @@ du code qui implémente la correction. Valeurs réelles : **1,988 / 3,183 / 0,58
 > annonçait 12,8 % en expliquant que le 0 % était une erreur de calcul. Le texte
 > portait la correction, le tableau non.
 
-## Demeure — 4d. Quatre chapitres
+## Levé — 4e. Les huit chapitres sont écrits *(8 août 2026)*
 
-Manquent **20** (alarmes), **21** (notifications), **22** (rejeu et sécurité),
-**24** (déploiement).
+**La partie B est complète** : sections **17 à 24**, 2 526 lignes, 44 marqueurs
+`[LU]`, 20 `[MESURÉ]`, **aucun `[DÉCLARÉ]`**.
 
-§ 17.6 et § 18.7 leur laissent deux prises fermes : le module `workflows` est
-servi et testé **sans aucune interface**, et `POST /api/auth/refresh` n'est
-appelé par personne. § 17.8 en laisse une troisième : `alarms.py` fait **617**
-lignes et non 561 — `docs/bibliotheque/partie-audit.md` et la consigne B4
-portent tous deux la valeur périmée. **§20 doit partir de la mesure, pas de la
-consigne.**
+Fichiers lus intégralement pour la partie B : `dashboard.html`, `app.js`,
+`twin.js`, `app.css`, `main.py`, `model_validation.py`, `alarms.py`, `email.py`,
+`redaction.py`, `replay.py`, `auth.py`, plus `Dockerfile`, `ci.yml`, `Makefile`
+et `validate_release.py`.
 
-## Demeure — 5. Les figures
+### Ce que §20 à §24 ont établi
+
+**§20 — alarmes.** 5 états, 4 actions, 8 libellés de transition, 26 colonnes.
+AL-1 et AL-2 clos ; **AL-3 reste ouvert** et il est bloquant pour un registre :
+une alarme dont la condition cesse sans réémission du même code ne peut ni se
+résoudre ni être close — *le registre n'accumule que des ouvertures*. Trois
+décisions de sécurité conditionnent le correctif, elles appartiennent à l'auteur.
+
+**Constat nouveau** : le `CHECK` SQL d'`alarms.py` recopie les constantes Python,
+alors que `workflows.py` le **dérive** (défaut WF-3, corrigé là-bas). Le
+vocabulaire vit en deux exemplaires qui peuvent diverger. Correction mécanique,
+laissée à l'auteur parce qu'elle touche au schéma.
+
+**§21 — notifications.** Le défaut central est revenu **deux fois** : une alerte
+critique sans destinataire disparaissait sans trace, corrigée, puis
+réintroduite **par l'ordre de deux appels** — `_deposer` avant `_tracer`, et
+`_deposer` lève quand aucun dépôt n'est configuré. *La trace d'abord, le dépôt
+ensuite.* Mesure de concurrence marquante : sur 200 000 retraits de
+destinataire, l'ensemble a été vu vide **54 098 fois**.
+
+**§22 — rejeu et sécurité.** La promesse « seule la fenêtre [début, t] est
+transmise » a été **vérifiée ligne à ligne**, étage par étage. Elle est **vraie**
+— parce que la fonction de score est ponctuelle : `score_center_` et
+`score_scale_` sont figés à l'ajustement, jamais recalculés sur le lot. Mais elle
+n'est **imposée nulle part** : c'est S7-2, *vrai par accident*. Le verrou réel est
+comportemental.
+
+**SEC-3 reste ouvert** : la fin de session n'est pas tracée, et le test censé
+l'attraper **gelait l'absence** au lieu de la signaler.
+
+**§24 — déploiement.** Deux confusions de natures, corrigées, et de même forme :
+la sonde du conteneur exigeait `status:"ok"`, **inatteignable par construction**
+— l'image était marquée `unhealthy` en permanence ; et `validate_release.py`
+bloquait la CI sur les cinq portes de promotion, dont deux qu'aucun commit ne
+peut franchir — **la chaîne était rouge par construction**.
+
+## Demeure — 5. Les figures, seul manque de la bibliothèque
 
 Aucune n'existe. La plus importante — nuage **résidu de duty × écart de consigne,
 r = −0,938** — est l'argument qui justifie la refonte, et elle n'est pas illustrée.

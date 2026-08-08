@@ -1342,7 +1342,8 @@ changer quoi que ce soit.
 
 ## 10.1 Alarmes ISA-18.2
 
-*Hors périmètre de cette bibliothèque — `src/operations/alarms.py` (561 l.) n'a pas
+*Hors périmètre de cette bibliothèque — `src/operations/alarms.py` (**617 l.**, mesurées le 2026-08-08 ;
+ce document portait 561) n'a pas
 été lu ici.*
 
 ## 10.2 Workflows d'intervention **[LU — `workflows.py`]**

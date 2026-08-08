@@ -13,9 +13,9 @@ t'apprêtes à écrire**, et alors ce fichier-là seulement.
 
 | document | lignes | ce qu'il porte |
 |---|---|---|
-| `partie-A.md` | 2 329 | sections **0 à 16** — le problème, le corpus, ADR-001 et ADR-002, l'architecture, les features, la détection, **l'AMDEC intégrale**, les agents, la gouvernance, les limites, les résultats mesurés, les recommandations |
-| `partie-B.md` | 911 | sections **17 et 23** — la réalisation (le poste opérateur) et la stratégie de validation logicielle |
-| `partie-audit.md` | 765 | la bibliothèque de l'audit : invariants de service, conventions de test, **tableau des chiffres**, décisions ouvertes |
+| `partie-A.md` | 2 330 | sections **0 à 16** — le problème, le corpus, ADR-001 et ADR-002, l'architecture, les features, la détection, **l'AMDEC intégrale**, les agents, la gouvernance, les limites, les résultats mesurés, les recommandations |
+| `partie-B.md` | **2 526** | sections **17 à 24** — la réalisation, l'API, la validation du modèle, les alarmes, les notifications, le rejeu et la sécurité, la validation logicielle, le déploiement |
+| `partie-audit.md` | 775 | la bibliothèque de l'audit : invariants de service, conventions de test, **tableau des chiffres**, décisions ouvertes |
 | `dossier-rapport.md` | 186 | la matière condensée du rapport — à lire en premier si le temps manque |
 
 Les deux parties se **concatènent directement** : A occupe les sections 0–16,
@@ -72,23 +72,49 @@ un correctif.
 
 ---
 
-## État au 8 août 2026
+## État au 8 août 2026 — la bibliothèque est complète
 
-**Écrit** : partie A complète (0–16), partie B sections **17**, **18**, **19**
-et **23**.
+**Partie A** : sections 0 à 16.
+**Partie B** : sections **17 à 24**, soit les huit chapitres demandés.
+**2 526 lignes**, 44 marqueurs `[LU]`, 20 `[MESURÉ]`, **aucun `[DÉCLARÉ]`**.
 
-**Manquant** : sections **20** (alarmes ISA-18.2), **21** (notifications et
-escalade), **22** (rejeu et sécurité), **24** (déploiement). Consigne détaillée
-dans `docs/audits/CONSIGNE-BIBLIOTHEQUE-B.md`, **avec ses amendements**, qui
-corrigent deux prémisses périmées.
+| § | chapitre | source lue |
+|---|---|---|
+| 17 | la réalisation — le poste opérateur | `dashboard.html`, `app.js`, `twin.js`, `app.css`, ADR-008 |
+| 18 | le contrat d'API | `api/main.py` |
+| 19 | la validation du modèle | `src/governance/model_validation.py` |
+| 20 | les alarmes ISA-18.2 | `src/operations/alarms.py` |
+| 21 | notifications et escalade | `src/notifications/email.py`, `redaction.py` |
+| 22 | rejeu temps réel et sécurité | `src/realtime/replay.py`, `src/security/auth.py` |
+| 23 | la stratégie de validation logicielle | les 20 fichiers de test |
+| 24 | le déploiement | `Dockerfile`, `ci.yml`, `Makefile`, `validate_release.py` |
 
-**Avertissement pour §20** : `alarms.py` fait **617** lignes et non 561.
-`partie-audit.md` § VI.1 et la consigne B4 portent tous deux la valeur périmée.
-Partir de la mesure, pas de la consigne.
+> **Les tailles de fichier de la consigne ont toutes dérivé.** Mesurées le
+> 8 août : `alarms.py` **617** (annoncé 561), `email.py` **546** (512),
+> `redaction.py` **312** (294), `replay.py` **502** (430), `auth.py` **414**
+> (300), `main.py` **1 830** (1 759), `app.js` **2 445** (2 407). Corrigées là où
+> elles se lisent. **Partir de la mesure, jamais de la consigne.**
 
-**Figures** : aucune des douze n'existe. La plus importante est le nuage
-**résidu de duty × écart de consigne, r = −0,938** — elle montre en un coup d'œil
-que l'indicateur de la v2 était l'écart de consigne réécrit, et c'est l'argument
-qui justifie toute la refonte.
+## Le seul manque : les figures
+
+Aucune des douze n'existe. La plus importante est le nuage **résidu de duty ×
+écart de consigne, r = −0,938** — elle montre en un coup d'œil que l'indicateur
+de la v2 était l'écart de consigne réécrit, et c'est l'argument qui justifie
+toute la refonte.
+
+Attention à la numérotation : la **figure 12** de la partie A est déjà la capture
+de la vue Salle, et § 17.9 la reprend en la précisant. La partie B n'ouvre de
+nouveaux numéros qu'à partir de **13**.
+
+## Les décisions encore ouvertes, rencontrées en écrivant
+
+| réf | § | question |
+|---|---|---|
+| **AL-3** | 20.6 | une alarme dont la condition cesse sans réémission ne peut ni se résoudre ni être close |
+| **SEC-3** | 22.6 | la fin de session n'est pas tracée au journal d'audit |
+| **UI-1** | 17.8 | le front se déclare 19ᵉ occurrence du motif, les tableaux en recensent 18 |
+| — | 20.3 | le `CHECK` SQL d'`alarms.py` recopie les constantes au lieu de les dériver, contrairement à `workflows.py` |
+
+Les quatre appartiennent à l'auteur. Aucune n'a été tranchée par défaut.
 
 Avancement détaillé : `docs/audits/ETAT-DE-FUSION.md`.

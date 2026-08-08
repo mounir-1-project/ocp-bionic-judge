@@ -96,7 +96,8 @@ mesurés (§ 15.8) mais ignore **comment ils sont construits**. À produire :
 
 ### B4. Les alarmes ISA-18.2
 
-`src/operations/alarms.py`, 561 lignes. À produire : le cycle de vie complet,
+`src/operations/alarms.py`, 561 lignes — **valeur périmée : 617 au 8 août 2026,
+partir de la mesure**. À produire : le cycle de vie complet,
 le schéma SQLite, la **clé de déduplication** (`_key`) et le déclencheur
 (`_trigger`), l'anti-rebond, l'inhibition (*shelving*), le journal d'audit — et
 ce que la norme ISA-18.2 exige d'un système d'alarmes.

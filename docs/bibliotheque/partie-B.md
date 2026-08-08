@@ -1409,6 +1409,767 @@ interne redondante**, et la redondance hors modèle qui fait échouer sa porte.
 
 ---
 
+# 20. Les alarmes ISA-18.2
+
+`src/operations/alarms.py`, **617 lignes** — et non 561, valeur que
+`partie-audit.md` § VI.1 et la consigne B4 portaient toutes deux. Le fichier de
+test associé fait **335 lignes** pour **11 tests**.
+
+C'est **le seul état du poste qui survive à un redémarrage**. Tout le reste est
+recalculé au démarrage ; le registre d'alarmes, lui, est la mémoire du système.
+
+## 20.1 Ce que la norme exige, et ce que ce registre en applique
+
+ANSI/ISA-18.2 encadre le cycle de vie d'un système d'alarmes industriel. Quatre
+exigences la structurent, et il faut dire pour chacune ce que ce projet fait —
+et ce qu'il ne fait pas.
+
+| exigence ISA-18.2 | ce que le registre applique |
+|---|---|
+| **cycle de vie explicite** — une alarme a des états nommés et des transitions permises | 5 états, 4 actions opérateur, transitions refusées si invalides |
+| **acquittement traçable** — on sait qui a vu quoi, et quand | `acknowledged_by` / `acknowledged_at`, journal immuable |
+| **inhibition encadrée** (*shelving*) — temporaire, motivée, réversible | motif **obligatoire**, `shelved_by` / `shelved_at` / `shelve_reason` |
+| **retour à la normale distinct de la clôture** | `RETURNED_NORMAL` puis `CLOSED`, jamais l'un pour l'autre |
+
+> **Ce que ce registre n'est pas, et le poste l'écrit à l'écran** : *« il ne
+> remplace ni l'alarme DCS ni la GMAO »*. Il ne pilote aucun organe, ne suspend
+> aucune alarme de conduite, et n'a aucune autorité sur la ligne. C'est un
+> registre de **traçabilité** de ce que le système de surveillance a signalé.
+>
+> La norme demande aussi une **rationalisation** — justifier chaque alarme,
+> fixer sa priorité et son temps de réponse — et une mesure de performance de la
+> philosophie d'alarmes. Le projet couvre la première par l'AMDEC et les
+> criticités ; **il ne fait pas la seconde**, faute d'exploitation réelle.
+
+## 20.2 Les cinq états et les quatre actions **[MESURÉ]**
+
+```
+                    condition détectée
+                            │
+                            ▼
+       ┌──────────────► ACTIVE ◄──────────┐
+       │                 │    │            │ unshelve
+       │      acknowledge│    │shelve      │
+       │                 ▼    ▼            │
+       │         ACKNOWLEDGED ──shelve──► SHELVED
+       │                 │                 │
+       │  condition      │                 │ (la condition peut cesser :
+       │  cesse          │                 │  inscrit au journal, l'état
+       ▼                 ▼                 │  SHELVED est conservé)
+  RETURNED_NORMAL ◄──────┘                 │
+       │                                   │
+       │ close                             │
+       ▼                                   │
+    CLOSED                                 │
+   (terminal)                              │
+```
+
+| | |
+|---|---|
+| `VALID_STATES` | **5** — `ACTIVE`, `ACKNOWLEDGED`, `SHELVED`, `RETURNED_NORMAL`, `CLOSED` |
+| `OPEN_STATES` | **3** — les trois premiers |
+| actions opérateur | **4** — `acknowledge`, `shelve`, `unshelve`, `close` |
+| libellés de transition au journal | **8** |
+
+Deux règles de transition méritent d'être soulignées, parce qu'elles ferment des
+portes qu'on ouvre naturellement par commodité.
+
+**`close` n'est permis que depuis `RETURNED_NORMAL`.** On ne clôture pas une
+alarme dont la condition est toujours présente. C'est la bonne règle — et c'est
+aussi ce qui rend AL-3 bloquant (§ 20.6).
+
+**Une alarme inhibée ne revient pas silencieusement à la normale.** Le
+commentaire du code raconte l'inversion :
+
+> Il affirmait que « l'inhibition ne doit jamais masquer une résolution
+> automatique », **et le code retournait immédiatement sans rien enregistrer** :
+> l'inhibition masquait donc exactement cela.
+
+Conserver l'état `SHELVED` est le comportement correct — inhiber sert précisément
+à figer une alarme le temps d'une intervention, et une désinhibition doit rendre
+la main sur une alarme dont l'état n'a pas été décidé en son absence. Mais le
+retour aux conditions normales est un **fait**, et il est désormais inscrit au
+journal sous `RETURN_TO_NORMAL_WHILE_SHELVED`. Sans lui, l'opérateur qui
+désinhibe ne peut pas savoir que la condition avait cessé entre-temps.
+
+## 20.3 Le schéma SQLite **[LU + MESURÉ]**
+
+Deux tables, **26 colonnes** pour `alarms`, **9** pour `alarm_history`, **2**
+index, **3** `PRAGMA`.
+
+```sql
+PRAGMA foreign_keys = ON     -- l'historique ne peut pas orpheliner
+PRAGMA journal_mode = WAL    -- lecture concurrente pendant l'écriture
+```
+
+L'ouverture pose `isolation_level=None` — SQLite ne gère plus les transactions
+implicitement — et chaque écriture est encadrée par un `BEGIN IMMEDIATE`
+explicite, sous un `threading.RLock`. C'est ce qui rend les observations
+concurrentes atomiques : **20 fils, 1 alarme, 20 occurrences**, verrouillé par
+test.
+
+**Le `CHECK` du statut est écrit en SQL et duplique les constantes Python.** À
+noter, parce que c'est le motif inverse de celui appliqué dans `workflows.py` :
+là-bas, le `CHECK` est **dérivé** des constantes par `_contrainte()` (défaut
+WF-3, corrigé), ici les cinq états sont recopiés dans le littéral SQL. Le
+vocabulaire vit donc en deux exemplaires qui peuvent diverger sans bruit — le
+défaut de S8-2, corrigé dans un module et pas dans son voisin.
+
+> **Constat ouvert, non référencé jusqu'ici** : ce que `workflows.py` a corrigé,
+> `alarms.py` ne l'a pas. La correction est mécanique et sans risque. Elle est
+> laissée à l'auteur plutôt que faite au passage, parce qu'elle touche au schéma.
+
+**Migration non destructive.** `_add_missing_columns()` compare `PRAGMA
+table_info` au schéma attendu et ajoute ce qui manque : **24 colonnes** peuvent
+être ajoutées à une base créée par une version antérieure, sans perte. Deux
+`UPDATE` de rattrapage complètent l'ancien format (`alarm_uid` vide,
+`to_status` absent). Un registre qui perdrait son historique à chaque montée de
+version ne serait pas opposable.
+
+**La preuve est stockée en JSON**, sur l'alarme *et* sur chaque ligne
+d'historique : horodatage, score d'anomalie, état procédé, codes de constatation,
+valeurs citées, accord du contrôleur. C'est ce qui rend le registre **opposable**
+— une transition sans sa preuve n'est qu'une affirmation.
+
+## 20.4 La clé de déduplication **[LU]**
+
+```python
+alarm_key = f"{equipement}::{constatation_dominante}"
+```
+
+**La sévérité n'entre pas dans la clé**, et c'est délibéré : une même condition
+qui passe de `WARNING` à `CRITICAL` doit rester **la même alarme** qui s'aggrave,
+pas une seconde alarme. La sévérité stockée est d'ailleurs monotone —
+`CRITICAL in {ancienne, nouvelle}` — donc une alarme montée en critique n'en
+redescend jamais tant qu'elle est ouverte.
+
+Le choix de la constatation dominante est le défaut **AL-1**, et il est **clos**.
+
+> `RuleEngine.evaluate` appelle `_rule_sensor_health` **en premier**. Dès qu'un
+> capteur dérivait, `SENSOR_FAULT` devenait donc la clé de l'alarme — même
+> lorsqu'un `CONC_DROP_SEVERE`, suspicion de percement de tube, figurait dans la
+> même analyse.
+
+Trois conséquences, mesurées sur le code :
+
+1. le registre nommait l'alarme d'après **le capteur qui dérive**, pas d'après le
+   tube qui fuit — alors que l'agent, lui, retenait correctement la constatation
+   dominante. *Le diagnostic affiché et l'alarme persistée ne désignaient pas la
+   même chose* ;
+2. `observe` cherche `WHERE alarm_key=?` avec la clé **courante**. Si la
+   constatation-clé disparaissait alors qu'une autre subsistait, la ligne n'était
+   plus retrouvée : une **seconde** alarme naissait et la première restait
+   `ACTIVE` indéfiniment ;
+3. la sévérité stockée est celle de la décision : une alarme nommée
+   `SENSOR_FAULT` pouvait porter `CRITICAL`.
+
+La correction **réutilise `_priorite`**, le barème de l'agent, au lieu d'en écrire
+un second : *deux règles de priorité qui doivent coïncider ne se recopient pas.*
+
+Détail à retenir, parce qu'il est l'idiome banni du dépôt :
+
+> `if lead:` **testait la fausseté, pas l'absence**. Le champ est déclaré
+> `str | None` : seul `None` signifie « l'agent n'a pas tranché ». Une chaîne
+> vide tombait dans le repli sans que rien ne le dise. Troisième récidive de
+> l'idiome, après `if limit:` (rejeu) et le sentinelle `lead=None`.
+
+## 20.5 Le déclencheur, et le défaut AL-2 **[LU]**
+
+`observe()` pose **deux questions séparées**, et les avoir séparées est la
+correction.
+
+```python
+condition_presente = severite in {"WARNING", "CRITICAL"}
+accepted_alarm     = condition_presente and verdict.agreement
+```
+
+Le test valait auparavant `sévérité alarmante ET accord du Judge`. Sa négation
+partait donc vers la résolution dans **deux cas de natures opposées** :
+
+| cas | traitement d'alors | correct ? |
+|---|---|---|
+| la condition a cessé | résolution | oui |
+| la condition **persiste**, le Judge a rejeté la rédaction | résolution | **absurde** |
+
+> Mesuré : une alarme `CRITICAL` levée à t₁, réobservée à t₂ avec la même
+> constatation et `agreement = False`, passait à `RETURNED_NORMAL` — **alors que
+> le percement suspecté était toujours là**.
+
+C'est exactement ce que l'en-tête du module interdit : *« le registre ne déduit
+jamais qu'une alarme a disparu parce qu'une autre analyse est normale »*. Ici il
+le déduisait d'un désaccord de gouvernance, **ce qui est pire** :
+
+> **Le Judge conteste la rédaction d'un diagnostic. Il ne dit rien du procédé.**
+
+Trois branches désormais, et la branche du milieu ne fait **rien** :
+
+| état | effet sur le registre |
+|---|---|
+| condition présente **et** acceptée | levée ou répétition |
+| condition présente, **contestée** | **aucun** — le désaccord est déjà publié par `/api/replay/disagreements` |
+| condition absente | retour à la normale |
+
+**AL-2 est clos**, verrouillé par test au lot S42.
+
+## 20.6 AL-3 — la décision encore ouverte **[LU]**
+
+C'est le seul « correctif identifié, jamais appliqué » qui subsiste ; AL-1 et
+AL-2 sont clos.
+
+Quand l'agent n'a pas désigné de constatation dominante, `_trigger` retombe sur
+`findings[0]` — c'est-à-dire **l'ordre d'écriture des règles**. Le commentaire
+qui justifiait ce repli affirmait que *« l'ordre des règles y est sans
+conséquence : la clé recherchée est celle déjà enregistrée »*. **C'est l'inverse
+qui est vrai** : `observe` calcule la clé sur l'analyse **courante**, puis cherche
+avec cette clé-là.
+
+Le scénario, mesuré sur trois instants :
+
+| instant | ce qui se passe | état du registre |
+|---|---|---|
+| t₁ | `CONC_DROP_SEVERE` dominant | alarme `::CONC_DROP_SEVERE` **ACTIVE** |
+| t₂ | nominal, `SENSOR_FAULT` en INFO | clé cherchée `::SENSOR_FAULT` → aucune ligne, **alarme intacte** |
+| t₃ | plus aucune constatation | `_key` rend `None`, `observe` sort immédiatement |
+| — | clôture manuelle tentée | **refusée** : `close` n'est permis que depuis `RETURNED_NORMAL` |
+
+> **L'alarme ne peut ni se résoudre, ni être close. Elle reste `ACTIVE`
+> indéfiniment, et le registre ISA-18.2 n'accumule que des ouvertures.** La voie
+> de résolution ne fonctionne que pour une règle qui réémet le **même code** à
+> une sévérité plus basse — cas rare.
+
+C'est un défaut de fond pour un registre d'alarmes : une supervision dont les
+alarmes ne se ferment jamais devient illisible en quelques jours, et l'exploitant
+apprend à ne plus la regarder.
+
+**Pourquoi il n'est pas corrigé**, et la raison est bonne. Balayer les alarmes
+ouvertes dont la condition n'est plus observée suppose **trois décisions de
+sécurité** :
+
+1. qu'une analyse **sans constatation** vaille preuve de retour à la normale —
+   or l'en-tête du module dit exactement le contraire ;
+2. ce qu'on fait d'une **ligne à l'arrêt** — c'est le piège de S7-1, où des
+   fenêtres calmes parce que la ligne ne tournait pas comptaient comme des
+   non-événements ;
+3. comment un **capteur en défaut** interagit avec le balayage — un capteur mort
+   ne prouve pas que la condition a cessé.
+
+Aucune ne se tranche sans pouvoir rejouer la suite complète. **Décision de
+l'auteur, pas de la session.**
+
+## 20.7 Ce que la section 20 ne permet pas d'affirmer
+
+- que le registre soit **conforme ISA-18.2** — il en applique le cycle de vie et
+  la traçabilité ; il ne fait ni rationalisation formelle ni mesure de
+  performance de la philosophie d'alarmes ;
+- qu'il ait été **éprouvé en exploitation** — il n'a jamais tourné hors du poste
+  de développement, et le journal d'escalade est resté vide (§ 21) ;
+- que le **cycle de vie soit complet** — AL-3 laisse une branche par laquelle une
+  alarme ne se ferme jamais ;
+- que le **schéma soit à l'abri d'une divergence** — le `CHECK` SQL recopie les
+  constantes Python au lieu d'en dériver, contrairement à `workflows.py` ;
+- qu'une alarme **atteigne un opérateur** — le registre trace, il n'escalade pas.
+  C'est le rôle du canal de § 21, et un seul instant du corpus atteint la
+  sévérité critique en marche établie.
+
+---
+
+# 21. Notifications et escalade
+
+`src/notifications/email.py` (**546 lignes**) et `redaction.py` (**312**) — et
+non 512 et 294, valeurs que la consigne porte encore.
+
+Ce chapitre est court à décrire et lourd de conséquences : c'est la seule voie
+par laquelle le système atteint quelqu'un qui n'est pas devant l'écran.
+
+## 21.1 Le filtre d'escalade — quatre gardes en série **[LU]**
+
+`notify()` reçoit **toutes** les analyses du rejeu et n'en laisse passer presque
+aucune. Dans l'ordre :
+
+| garde | condition | ce qu'il devient sinon |
+|---|---|---|
+| **1. exutoire** | un relais SMTP **ou** un dépôt local | sortie immédiate, rien n'est comptabilisable |
+| **2. accord du contrôleur** | `verdict.agreement` | `_suppressed += 1` — *une décision rejetée ne réveille personne* |
+| **3. sévérité minimale** | `ALERT_MIN_SEVERITY`, défaut **`CRITICAL`** | `_suppressed += 1` |
+| **4. anti-rebond** | `ALERT_COOLDOWN_MINUTES`, défaut **60 min**, par couple destinataire × événement | ignoré silencieusement |
+
+La clé d'anti-rebond est `sévérité:modes AMDEC triés`, préfixée du destinataire.
+Deux points comptent :
+
+- **le cooldown n'est validé qu'après livraison SMTP réussie** — un envoi qui
+  échoue ne consomme pas la fenêtre de silence, sinon une panne de relais
+  produirait une heure de mutisme non voulue ;
+- `_pending_keys` empêche qu'un même événement soit mis en file deux fois pendant
+  que le worker travaille.
+
+**Conséquence sur le corpus, et il faut l'écrire** : avec `CRITICAL` en seuil,
+**un seul instant des quatorze mois** atteint la sévérité critique en marche
+établie. Le journal d'escalade reste donc vide tant que le rejeu ne l'a pas
+franchi, et le poste le dit à l'écran plutôt que d'afficher un compteur à zéro
+sans explication.
+
+## 21.2 Le dépôt local — la preuve de passage **[LU]**
+
+C'est le dispositif le plus intéressant du module.
+
+> Sans relais SMTP, la version précédente ne faisait **rien du tout** : pas
+> d'envoi, pas de trace, pas de moyen de vérifier que la chaîne d'escalade
+> fonctionne. Une supervision industrielle ne peut pas se permettre ce silence —
+> si le canal sortant tombe, il faut pouvoir dire **après coup** quelles alertes
+> auraient dû partir.
+
+Chaque message est donc écrit sur disque au **format RFC 822** (`.eml`), dans
+`data/runtime/escalades/`, avec un état explicite :
+
+| état | signification |
+|---|---|
+| `envoye` | le relais a accepté |
+| `depose` | aucun relais — le message est sur disque |
+| `echec` | le relais a refusé, après 3 tentatives |
+| `non distribue` | l'alerte était qualifiée et **aucune adresse ne pouvait la recevoir** |
+
+Le **journal en mémoire** (200 entrées, 25 exposées) alimente l'interface ; les
+fichiers survivent à l'arrêt. C'est ce couple qui rend l'escalade vérifiable :
+*un compteur à zéro ne distingue pas « rien à escalader » de « canal mort ».*
+
+### Le défaut le plus grave du module, et il est revenu deux fois
+
+**Une alerte critique sans destinataire disparaissait sans trace.**
+
+Le garde d'entrée était `if not self.enabled` — or `enabled` exige un
+destinataire actif. Sans session ouverte et sans `ALERT_EMAIL_TO`, une décision
+`CRITICAL` validée par le contrôleur repartait en silence : *pas d'envoi, pas de
+fichier, pas de ligne de journal, pas même un incrément de compteur.* Rien.
+
+> Et le moment où l'alerte automatique compte le plus est précisément celui où
+> personne n'est devant l'écran — **donc celui où aucune session n'est ouverte**.
+> La nuit, le week-end, pendant tout arrêt de poste.
+
+La correction : le garde ne retient plus que l'exutoire, et l'absence de
+destinataire est traitée après rédaction, avec un compteur dédié
+(`undelivered_no_recipient`), une ligne « non distribué » au journal, et un
+fichier `.eml` dans le dépôt.
+
+**Puis le défaut est revenu par l'ordre des appels.** `_deposer` était appelé
+**avant** `_tracer`, et il lève `RuntimeError` dès que le dépôt vaut `None` — cas
+atteignable, puisque le garde d'entrée n'exige que « relais **ou** dépôt ».
+L'exception remontait, était attrapée plus haut, et `_tracer` n'était **jamais**
+atteint : l'alerte critique disparaissait du journal d'escalade.
+
+> C'est le défaut **exact** que ce bloc avait été écrit pour corriger,
+> réintroduit par l'ordre de deux appels. La trace est la garantie ; le fichier
+> n'en est que la copie durable. **La trace d'abord, le dépôt ensuite.**
+
+Même principe appliqué à la file : une `queue.Full` incrémentait un compteur et
+écrivait dans le journal **serveur**, que l'exploitant ne lit pas. Or la
+saturation survient précisément quand le relais est lent ou tombe, *c'est-à-dire
+quand le plus d'alertes se perdent d'un coup*. Elle passe désormais par `_tracer`
+comme les trois autres issues.
+
+## 21.3 Concurrence — trois threads sur un même ensemble **[LU]**
+
+`_recipients` est lu et modifié par **trois** threads : HTTP (ouverture et
+fermeture de session), rejeu (`notify`), worker (`_send`).
+
+Le raisonnement de la correction mérite d'être cité, parce qu'il refuse le
+diagnostic facile :
+
+> **Ce n'est pas l'itération qui casse** — vérification faite, `sorted()` sur un
+> ensemble est atomique sous le GIL de CPython et ne lève jamais ici. Le défaut
+> réel est la **fenêtre de cohérence** de `remove_recipient`, qui retire
+> l'adresse puis remet le destinataire par défaut **en deux temps** : entre les
+> deux, l'ensemble est vide.
+
+**Mesure : sur 200 000 retraits, un observateur concurrent l'a vu vide 54 098
+fois.** Une alerte émise dans cette fenêtre ne trouve aucun destinataire et
+disparaît. Un `RLock` et une lecture unique par `_destinataires()` ferment la
+fenêtre.
+
+Second défaut de la même famille : `enabled` vérifie qu'un destinataire existe,
+puis **relâche le verrou** ; les envois ponctuels indexaient ensuite la liste à
+`[0]`. Entre les deux, une session peut se fermer. *C'est exactement ce qui se
+produit quand une session expire pendant qu'un rapport part : `enabled` a répondu
+vrai, la session tombe, l'indexation lève `IndexError` et l'envoi remonte en 500
+sans qu'aucune trace ne dise pourquoi.*
+
+### Le rapport partait au premier par ordre alphabétique
+
+`_premier_destinataire()` porte une correction que le poste rendait invisible :
+
+> `_destinataires()` rend une liste **triée**, et les envois ponctuels en
+> prenaient l'élément `[0]` — sans aucun rapport avec le technicien qui venait de
+> cliquer. Avec deux adresses actives, « astreinte@… » passe avant « mounir@… » :
+> **le rapport demandé par l'un arrivait chez l'autre, et l'interface annonçait un
+> succès.**
+
+L'adresse demandée n'est retenue **que si elle est déjà destinataire actif** :
+ce canal ne doit pas devenir un moyen d'expédier l'état du poste vers une adresse
+arbitraire. C'est une décision de sécurité, pas de confort.
+
+## 21.4 Ce que la rédaction expurge, et pourquoi **[LU]**
+
+C'est un sujet de **gouvernance**, pas de mise en forme — la consigne insiste, et
+elle a raison.
+
+Ce que l'endpoint `/api/notifications/governance` envoyait réellement :
+`json.dumps(payload, indent=2)`. **Trois cents lignes de structure interne,
+coefficients de régression compris, expédiées à l'adresse d'un technicien.**
+
+Trois défauts, par gravité croissante :
+
+**1. Ce n'est pas une synthèse.** Personne ne lit un dictionnaire imbriqué sur un
+téléphone. L'information qui compte — *le contrôleur est en ALERTE sur son propre
+comportement* — était noyée sous deux cents lignes de santé capteur. **Un rapport
+que son destinataire ne lit pas ne trace rien.**
+
+**2. Il divulguait l'arborescence du producteur.** Le chemin absolu du fichier
+source partait dans chaque message. Le dépôt interdit déjà cela dans ses
+artefacts, et `test_les_artefacts_ne_portent_pas_de_chemin_absolu` le vérifie —
+**le canal e-mail échappait à ce contrôle.** Seul le nom du fichier est conservé,
+et la normalisation traite les deux familles de séparateurs : un chemin Windows
+quand le service tourne sous Linux, et inversement.
+
+**3. Il était écrit en nombres anglais.** « 0.9642612800415576 » dans un document
+francophone destiné à un site marocain, quand tout le reste du poste applique la
+virgule décimale.
+
+### Quatre vocabulaires traduits
+
+Les identifiants internes ne sont pas des libellés. Le rapport annonçait
+« Régimes : 8 832 h running », « Agent : rules », « Origine :
+runtime_trained_unpromoted » — **des clés de code livrées telles quelles à un
+exploitant francophone**.
+
+| table | ce qu'elle traduit |
+|---|---|
+| `REGIMES` | `RUNNING` → « en marche », etc. |
+| `ORIGINES` | `runtime_trained_unpromoted` → « entraîné au démarrage, non promu » |
+| `ETATS_CONTROLEUR` | `ALERTE` → « le contrôleur signale une anomalie sur lui-même » |
+| `MODES_AGENT` | `rules` → « règles déterministes » |
+
+Plus `RESERVE_LIBELLES`, partagée avec l'écran : **les réserves du contrôleur
+sont traduites des deux côtés par la même table**, ce qui interdit qu'elles
+divergent.
+
+Règle de repli, et elle est juste : **un identifiant inconnu retombe sur
+lui-même** plutôt que de disparaître. *Mieux vaut un mot anglais qu'une
+information perdue.*
+
+Le rapport tient en **une page**, place le verdict en tête, et se termine par une
+section « **Ce que ce rapport n'affirme pas** » — parce qu'une supervision non
+supervisée qui laisse croire à un diagnostic confirmé est un risque, pas un
+service.
+
+### La duplication que le module correcteur avait introduite
+
+`_nombre()` reduplique `src.formatting.nombre`. Le module écrit **pour corriger un
+défaut de typographie** l'a corrigé en recopiant la conversion que
+`src/formatting.py` porte déjà — ADR-011 règle 2 : *« la mise en forme des nombres
+est centralisée »*.
+
+> **Le module qui invoque cette règle ne peut pas être celui qui l'enfreint.**
+
+L'enveloppe subsiste, mais elle délègue, et deux comportements propres au rapport
+la justifient : le défaut à **zéro décimale** (seize appels s'y fient, et
+« 3 436,0 décisions jugées » ne se lit pas), et le refus de formater un booléen —
+`float(True)` vaut 1,0, donc un champ resté à `True` s'afficherait « 1 » au lieu
+d'être signalé absent.
+
+## 21.5 Diagnostiquer un échec plutôt que le nommer **[LU]**
+
+`diagnostiquer_echec()` traduit une exception SMTP en **cause actionnable**. Le
+journal ne conservait que `type(exc).__name__` : l'interface affichait donc
+« SMTPAuthenticationError » à un exploitant, *qui n'a aucun moyen d'en déduire
+quoi faire*.
+
+| exception | ce que l'exploitant lit |
+|---|---|
+| `SMTPAuthenticationError` | Gmail n'accepte plus le mot de passe du compte depuis mai 2022 — il faut un **mot de passe d'application de 16 caractères**, sans espaces |
+| `SMTPSenderRefused` | `SMTP_FROM` doit correspondre au compte authentifié par `SMTP_USERNAME` |
+| `SMTPNotSupportedError` | le relais ne propose pas STARTTLS sur ce port — utiliser le **587** |
+| `SMTPRecipientsRefused` | le relais a refusé l'adresse du destinataire |
+| `TimeoutError` / `OSError` | vérifier `SMTP_HOST`, `SMTP_PORT`, et le pare-feu en sortie |
+
+**Le texte du serveur n'est pas recopié tel quel** : il varie selon le relais et
+peut contenir l'adresse d'authentification. Chaque cause est traduite par une
+phrase fixe, vérifiable, **qui ne divulgue aucun paramètre du poste**.
+
+Même principe pour `status()`, qui dit **pourquoi** le canal est inactif plutôt
+qu'un « désactivé » laissant croire à une panne. Le message le plus important est
+celui du canal sans destinataire :
+
+> « **AUCUNE ALERTE NE PEUT PARTIR.** Aucun destinataire actif : l'adresse d'un
+> technicien ne devient destinataire qu'à l'ouverture de sa session. Pour une
+> escalade permanente, indépendante de toute session, renseigner `ALERT_EMAIL_TO`
+> dans le fichier `.env`. »
+
+L'ancienne phrase décrivait un canal qui s'activerait tout seul à la prochaine
+session. *Elle laissait croire que la surveillance était couverte, alors qu'aucune
+alerte ne peut partir tant que personne n'est connecté.*
+
+## 21.6 Ce que la section 21 ne permet pas d'affirmer
+
+- que le canal ait **délivré une alerte réelle** — le journal d'escalade est resté
+  vide, et un seul instant du corpus atteint la sévérité critique en marche
+  établie ;
+- que l'escalade soit **permanente** — sans `ALERT_EMAIL_TO`, elle dépend d'une
+  session ouverte, donc elle est absente la nuit et le week-end. Le poste
+  l'écrit ;
+- que le **relais ait été éprouvé** — les envois sont testés contre un faux
+  serveur, jamais contre un relais OCP ;
+- que la **rédaction couvre tout** — le corps de l'alerte et le message de test
+  sont écrits dans `email.py`, hors du parcours du test de typographie, qui ne
+  visite que les surfaces exposées par une API. Le message de test a été
+  rattrapé à la main (NOTIF-1) ; **rien n'empêche un troisième corps d'échapper
+  au contrôle.**
+
+---
+
+# 22. Rejeu temps réel et sécurité
+
+`src/realtime/replay.py` (**502 lignes**) et `src/security/auth.py` (**414**) —
+et non 430 et 300. Le registre technicien (`registry.py`) est couvert par la
+partie A ; il n'est pas repris ici.
+
+## 22.1 La promesse de causalité, vérifiée ligne à ligne **[LU]**
+
+La consigne demande une vérification prioritaire : *le système promet qu'« à
+l'instant t, seule la fenêtre [début, t] est transmise à la détection ».*
+
+**La promesse, telle qu'elle était écrite, est fausse.** Le module l'a reconnu
+lui-même dans son en-tête, et le dire est plus utile que de la répéter :
+
+> **Ce module ne transmet aucune fenêtre.** Il appelle `pipeline.analyze_at(ts)`,
+> qui passe la table de features **entière** à ses trois étages.
+
+Voici la chaîne, étage par étage, telle qu'elle a été relue :
+
+| étage | ce qui est reçu | ce qui est lu |
+|---|---|---|
+| `DCSReplay._loop` | — | appelle `analyze_at(ts)` |
+| `pipeline.analyze_at` | table entière | la passe telle quelle aux trois étages |
+| `detector.analyze` | table entière | `row = features.loc[ts]` puis **`history = features.loc[:ts]`** — tronqué |
+| `rules.evaluate` | `row`, `history` | ne voit que le tronqué |
+| étage statistique | `row` seule | une ligne, pas une fenêtre |
+| `_recent_exceedances` | table entière | `score_series(features)` **sur tout**, puis `s.index <= ts` |
+| `judge.judge` | table entière | ne la consulte qu'à travers `detector.analyze` **au même horodatage** |
+
+**Le point à vérifier était `_recent_exceedances`**, et c'est le seul endroit où
+un doute était permis : il score la table **entière**, futur compris, avant de
+tronquer. Si ce scoring normalisait sur le lot, le futur fuirait dans le passé.
+
+Vérification faite dans `StatisticalDetector` :
+
+```python
+def _normalize(self, raw):
+    z = np.clip((raw - self.score_center_) / self.score_scale_, -60.0, 60.0)
+    return 1.0 / (1.0 + np.exp(-z))
+```
+
+`score_center_` et `score_scale_` sont **figés à l'ajustement** — médiane et MAD
+de la période de référence — et non recalculés sur le lot présenté. Le score
+d'une ligne ne dépend donc **que de cette ligne** et du modèle ajusté :
+`score_series(table)` et `score_series(table[:t])` rendent des valeurs
+identiques sur les lignes communes. La troncature qui suit est saine.
+
+> **La propriété est donc vraie, et vraie pour une bonne raison** — la fonction
+> de score est ponctuelle. Mais elle n'est **imposée nulle part**. Ajouter à
+> `analyze_at` un consommateur qui lirait un quantile sur la table entière
+> suffirait à la rompre, et ce fichier continuerait de l'affirmer.
+
+C'est la situation de S7-2 : **vrai par accident, pas par construction**. D'où le
+verrou, qui est **comportemental** et non déclaratif :
+
+> `test_le_rejeu_ne_lit_jamais_l_aval` rejoue **la même analyse** sur la table
+> complète et sur la table tronquée à `t`, et exige un résultat identique.
+
+C'est la bonne forme de contrôle pour cette propriété : elle ne dépend d'aucune
+inspection de code, elle échouerait sur n'importe quelle fuite, quelle qu'en soit
+la forme syntaxique.
+
+## 22.2 La décimation, et l'instant qu'elle sautait **[LU]**
+
+Le rejeu n'analyse qu'un instant sur `analyze_every` — trois par défaut. Le
+défaut qui en découlait est le plus spectaculaire du module.
+
+> Sur ce corpus, **un unique horodatage** atteint la sévérité critique en marche
+> établie : le **2 octobre 2024 à 18 h**, température de sortie acide à
+> **72,15 °C**, position **6 610** dans la série. **6 610 n'est pas multiple de
+> trois.**
+>
+> Départ au début des données, cet instant n'était donc **jamais analysé** : pas
+> de rouge sur le jumeau, pas d'alarme ouverte, pas d'escalade. *Le seul
+> événement critique de quatorze mois disparaissait par une règle de
+> performance.*
+
+`_instants_incontournables()` marque tout instant franchissant un seuil du
+référentiel — **62 sur le corpus** — et ceux-là sont analysés quelle que soit
+leur position. Le filtre est vectoriel, calculé une fois : son coût est celui
+d'une comparaison de colonnes.
+
+Trois détails de mise en œuvre méritent d'être retenus :
+
+**Les horodatages, pas les positions.** Le rejeu peut démarrer au milieu de la
+série, auquel cas les positions ne coïncident plus.
+
+**Un franchissement pendant un arrêt ne désigne rien.** Le masque est intersecté
+avec `process_state ∈ {RUNNING, TRANSIENT}` — les transitoires sont conservés,
+parce que c'est là que la perte de contrôle s'installe.
+
+**`except Exception` avalait tout.** La fonction qui lit un seuil du référentiel
+attrapait n'importe quelle panne — alias inexistant, référentiel mal chargé — et
+rendait `None`, c'est-à-dire *pas de seuil, donc pas d'instant incontournable*.
+**La garantie disparaissait en silence par le mécanisme même censé la tenir.**
+Seule l'absence déclarée est désormais tolérée.
+
+Et la fonction s'appelait `seuil`, nom de la fonction canonique de
+`knowledge` — le piège exact de M-1, où une locale de ce nom rendait la fonction
+importée inaccessible à l'endroit même où le défaut se reproduisait. Le nom est
+libéré.
+
+### La garantie ne valait que pour un des deux chemins
+
+`run_sync()` — celui qu'empruntent **les tests et les scripts hors ligne** —
+décimait par simple découpage `[::analyze_every]`, sans consulter
+`_obligatoires`.
+
+> *La propriété était affirmée dans un chemin et vérifiée dans l'autre.*
+
+Corrigé, et verrouillé par `test_service_invariants`. Au passage, `limit=0`
+valait « aucune limite » : `if limit:` teste la fausseté au lieu de l'absence, et
+la signature annonce `int | None`. **Zéro instant est une demande légitime**, et
+elle rejouait le corpus entier. Deuxième récidive de l'idiome, après `if lead:`
+dans le registre d'alarmes.
+
+## 22.3 La vitesse publiée est celle qui est appliquée **[LU]**
+
+Le délai valait `analyze_every / speed`, appliqué à **chaque entrée d'index**.
+La vitesse effective valait donc `speed / analyze_every`.
+
+> Avec les valeurs par défaut du dépôt — `REPLAY_SPEED=120`, `REPLAY_STEP=3` — le
+> rejeu défilait à **40 h/s** pendant que l'API publiait
+> `speed_hours_per_second: 120`. **Un facteur trois sur le seul réglage que
+> l'exploitant manipule.**
+
+Une entrée d'index vaut une heure de process : le délai est `1 / speed`, quel que
+soit le nombre d'instants analysés. La vitesse est **relue à chaque tour** sous
+verrou, pour que `set_speed()` prenne effet sans redémarrer, et l'attente passe
+par `Event.wait()` — interruptible, donc `stop()` reste immédiat même à basse
+vitesse.
+
+**Un arrêt qui n'arrête pas ne se déclare pas arrêté.** `running` était remis à
+faux sans vérifier que le thread avait fini. Passé le délai de garde, l'état
+annonçait donc un rejeu arrêté pendant qu'un thread continuait d'émettre — et
+`start()`, qui ne se protège que par ce booléen, **en aurait lancé un second**,
+deux boucles alimentant le même état. Le cas demande qu'une analyse dépasse cinq
+secondes ; il n'est pas atteint aujourd'hui, *et il ne signalerait rien s'il
+l'était*.
+
+## 22.4 Les sessions **[LU + MESURÉ]**
+
+| paramètre | valeur | source |
+|---|---|---|
+| dérivation du mot de passe | **PBKDF2-SHA256, 600 000 itérations** | `auth.py` |
+| longueur minimale | **12 caractères** | `MIN_PASSWORD_LENGTH` |
+| tentatives avant blocage | **5**, la 6ᵉ lève `TooManyAttemptsError` | `MAX_ATTEMPTS` |
+| jeton de session | `token_urlsafe(32)` — opaque | — |
+| jeton CSRF | `token_urlsafe(24)` | — |
+| expiration par **inactivité** | **30 min** | `AUTH_IDLE_MINUTES` |
+| expiration **absolue** | **8 h** | `AUTH_ABSOLUTE_HOURS` |
+
+**La limitation de débit est vérifiée avant le mot de passe.** L'ordre compte :
+vérifier après ferait payer la dérivation PBKDF2 à chaque tentative, ce qui
+transforme le garde anti-force-brute en amplificateur de déni de service.
+L'événement `LOGIN_RATE_LIMITED` nomme le compte visé **et** la clé client.
+
+**`MIN_PASSWORD_LENGTH` vivait dans `registry.py`**, qui importe `auth` —
+`hash_password` ne pouvait donc pas l'importer et codait la valeur en dur. Deux
+exemplaires d'une même règle, séparés par une dépendance circulaire. La constante
+est descendue dans `auth.py`.
+
+## 22.5 SEC-2 — la rotation qui invalidait des requêtes légitimes **[LU]**
+
+C'est le défaut le plus instructif du module, parce que **le diagnostic était
+juste et le correctif ne le traitait pas**.
+
+La version précédente portait :
+
+```python
+# LE JETON CSRF ETAIT REMPLACE HORS VERROU, donc pendant qu'une
+# requete concurrente pouvait le lire [...] : la rotation faisait
+# echouer des requetes legitimes.
+session.csrf_token = secrets.token_urlsafe(24)   # ← déplacé sous le verrou
+```
+
+> Déplacer l'affectation **sous** le verrou ne change rien, **parce que le
+> lecteur ne prend jamais le verrou** : `api/main.py` compare
+> `X-CSRF-Token != session.csrf_token` sur l'objet que `validate()` lui a rendu,
+> verrou déjà relâché. **Le verrou sérialise les écrivains entre eux ; il n'a
+> jamais protégé personne d'une mutation en place.**
+
+Déroulé du défaut, avec `/api/auth/refresh` appelé pendant qu'une écriture est en
+vol :
+
+1. la requête **A** obtient la session par `validate()` ;
+2. la requête **B** fait tourner le jeton et **écrase `csrf_token` sur l'objet que
+   A tient toujours** ;
+3. A compare son en-tête — l'ancien jeton — à la valeur nouvelle, et reçoit
+   **403 « Jeton de session invalide » sur une requête parfaitement légitime**.
+
+La correction applique la doctrine établie au lot S11 sur le registre technicien
+(SEC-1) : **la publication atomique**.
+
+> *On ne modifie pas l'objet que d'autres tiennent ; on en publie un nouveau.*
+
+`dataclasses.replace` construit une session neuve, l'ancienne restant intacte
+pour les requêtes en vol. `created_at` est recopié tel quel : **la rotation ne
+prolonge pas l'expiration absolue**, ce que la première ligne promet.
+
+**Second défaut fermé au passage** : `validate()` prenait puis relâchait le verrou
+avant que `rotate` ne le reprenne. Deux rotations concurrentes du même jeton
+produisaient donc **deux cookies valides pour une seule ouverture de session**.
+La validation et la publication tiennent maintenant dans une seule prise.
+
+## 22.6 SEC-3 — la décision encore ouverte **[LU]**
+
+`auth.py` ne porte **qu'un seul** `self._audit.append`, atteint depuis
+`authenticate` seul.
+
+`rotate()` et `destroy()` n'inscrivent rien : **la fin de session n'est pas
+tracée**. Un journal d'authentification qui enregistre les ouvertures et pas les
+fermetures ne permet pas de reconstituer qui était en poste à un instant donné —
+ce qui est précisément l'usage attendu, puisque l'adresse de session détermine le
+destinataire des escalades critiques.
+
+Le contrôle qui aurait dû l'attraper l'a **gelé** au lieu de le signaler :
+
+> `test_session_opaque_csrf_et_invalidation` comparait le journal d'audit
+> **entier** après `rotate()` et `destroy()`. Il figeait donc l'absence de toute
+> trace de fin de session, **et cassait si on l'ajoutait**. C'est la forme « plus
+> large que l'objet » du défaut de test dominant (§ 23.3).
+
+**Décision de l'auteur.** Le correctif est de deux lignes ; ce qui se décide,
+c'est ce qu'on inscrit — une déconnexion volontaire, une expiration par
+inactivité et une expiration absolue ne se lisent pas de la même façon dans un
+journal d'audit.
+
+## 22.7 Ce que la section 22 ne permet pas d'affirmer
+
+- que la **causalité soit garantie par construction** — elle est vraie, vérifiée
+  étage par étage, et tenue par un test comportemental, pas par le code ;
+- que le rejeu **soit un flux DCS** — c'est un rejeu d'historique. Le poste
+  n'a **aucune connexion temps réel** à un DCS ou à un historian ;
+- que l'**authentification soit éprouvée** — aucun test d'intrusion, et le
+  registre local est un mécanisme de démonstration mono-poste. Le service bloque
+  d'ailleurs son démarrage en production tant qu'un fournisseur IAM OIDC n'est pas
+  intégré ;
+- que la **fin de session soit traçable** — elle ne l'est pas (SEC-3) ;
+- que `stop()` **arrête toujours** — au-delà du délai de garde de cinq secondes,
+  il refuse de mentir et laisse l'état à « en cours », ce qui est le comportement
+  correct mais n'est pas un arrêt.
+
+---
+
 # 23. La stratégie de validation logicielle
 
 ## 23.1 Le périmètre **[MESURÉ, 2026-08-08]**
@@ -1424,7 +2185,7 @@ sont issues.
 | `test_fouling_injection.py` | 229 | méthode du banc d'injection |
 | `test_model_governance.py` | 283 | manifeste, portes, promotion |
 | `test_replay.py` | 157 | causalité et décimation du rejeu |
-| `test_alarm_store.py` | 291 | cycle de vie ISA-18.2 |
+| `test_alarm_store.py` | **335** | cycle de vie ISA-18.2 |
 | `test_workflows.py` | 312 | barrières HSE, états, schéma SQL |
 | `test_access_notifications.py` | 332 | sessions, CSRF, canal d'escalade |
 | `test_service_invariants.py` | 389 | invariants de la couche HTTP, par AST |
@@ -1603,3 +2364,163 @@ Un chapitre de validation honnête cite aussi les erreurs de la méthode.
 **Sept sur huit ont été trouvées par la lecture intégrale, aucune par
 l'exécution.** C'est l'argument empirique en faveur de la méthode d'audit
 retenue, et la raison pour laquelle la suite verte de ce dépôt ne suffisait pas.
+
+---
+
+# 24. Le déploiement
+
+`Dockerfile` (95 l.), `docker-compose.yml` (128), `.github/workflows/ci.yml`
+(209), `Makefile` (135), `requirements-runtime.lock` (46) et
+`scripts/validate_release.py` (89).
+
+## 24.1 Deux environnements distincts, et ils le restent **[LU]**
+
+| fichier | rôle | cible |
+|---|---|---|
+| `requirements.txt` | développement et analyse complets | **Python 3.10+** |
+| `requirements-runtime.txt` | dépendances d'exécution, non figées | — |
+| `requirements-runtime.lock` | **versions exactes**, dérivées du précédent | **Python 3.11** |
+
+> Le verrou **n'est pas installable sur 3.10**, et c'est assumé : l'image Docker
+> installe le `.lock`, le poste de développement installe `requirements.txt`.
+> Confondre les deux produit une erreur de résolution immédiate, ce qui vaut
+> mieux qu'une divergence silencieuse de versions entre le poste et le serveur.
+
+## 24.2 L'image — deux étapes, aucun compilateur à l'arrivée **[LU]**
+
+La construction est en **deux étapes**. Les roues scientifiques sont compilées
+dans une image jetable qui embarque `gcc` et `g++` ; seul l'environnement virtuel
+résultant est copié dans l'image finale. Celle-ci ne contient donc **ni
+compilateur ni en-têtes de développement** — moins de surface d'attaque, image
+nettement plus légère.
+
+Quatre décisions à retenir :
+
+**L'application ne tourne jamais en root.** Un utilisateur dédié, uid 10001,
+shell `nologin`. *Un service de supervision n'a aucune raison de disposer des
+droits d'administration de la machine.*
+
+**Les données et les modèles sont montés en volume**, pas embarqués : l'export
+DCS évolue indépendamment du code, et l'image ne doit pas transporter quatorze
+mois d'exploitation OCP.
+
+**Un seul worker, et la raison est écrite.** La chaîne charge l'historique
+complet et entraîne le modèle au démarrage, **en mémoire**. Plusieurs workers
+dupliqueraient ce travail et ce modèle sans aucun gain — la charge de ce service
+est très inférieure à ce qu'un seul processus absorbe (**45 analyses par
+seconde** mesurées, pour un équipement échantillonné à l'heure).
+
+**Le point d'entrée honore la configuration.** Une version précédente écrivait
+l'hôte et le port en dur dans le `CMD` : *les variables prévues pour les régler
+n'avaient alors aucun effet.*
+
+### La sonde du conteneur, et le piège qu'elle a évité
+
+C'est le défaut le plus coûteux de ce fichier, et il découle directement de la
+gouvernance décrite en § 19.5.
+
+> Une version précédente exigeait `"status":"ok"` dans `/api/health`. Or ce
+> statut est **inatteignable par construction** : il vaut `degraded` dès lors que
+> le modèle n'est pas promu, et **aucun modèle ne peut l'être** —
+> `build_manifest` écrit toujours `candidate`, absent de
+> `MODEL_ALLOWED_STATUSES`.
+>
+> **Le conteneur livré était donc marqué `unhealthy` en permanence**, et un
+> orchestrateur l'aurait retiré de la rotation ou redémarré en boucle.
+
+La sonde porte désormais sur `/api/health/ready`, avec `start-period=90s` — le
+temps de charger l'historique et d'entraîner le modèle. *La disponibilité du
+service et la promotion du modèle sont deux questions distinctes* : la première
+est `/api/health/ready`, la seconde `/api/health/model`.
+
+C'est la même distinction qui structure les portes de déploiement, appliquée à
+l'infrastructure.
+
+## 24.3 L'intégration continue — quatre étages **[LU]**
+
+```
+  qualite ──┐
+  tests   ──┼──► image
+  frontend ─┘
+```
+
+| étage | ce qu'il fait | bloquant ? |
+|---|---|---|
+| **qualite** | analyse statique | **oui** |
+| — typage | mypy | **non** — `continue-on-error: true`, déclaré informatif |
+| **tests** | suite complète sur matrice de versions Python | **oui** |
+| — Judge | banc de pièges, 6 cas | **oui**, sur trois critères |
+| — validation | `validate_release.py` | **oui**, sur les portes **logicielles** |
+| **frontend** | fixtures régénérées depuis le service réel, puis les 3 bancs jsdom | **oui** |
+| **image** | construction, démarrage du conteneur, réponse vérifiée | **oui** — dépend des trois autres |
+
+**Le banc du Judge est bloquant sur des seuils explicites** :
+`trap_success_rate ≥ 0,85`, `false_positive_rate ≤ 0,20`, `separation ≥ 2,0`. Ce
+sont des garde-fous de non-régression, pas des mesures de performance — et le
+troisième est le seul non borné par construction, donc le seul qui discrimine.
+
+**Les fixtures du front sont régénérées depuis le service réel avant les bancs.**
+C'est ce qui empêche les 98 vérifications de § 17.7 de tourner sur des données
+figées qui ne correspondraient plus à ce que l'API sert. Sans cette étape, les
+bancs vérifieraient la cohérence du poste avec un contrat périmé.
+
+**Les preuves sont publiées en artefact**, 90 jours de rétention :
+`reports/model_validation.json` et le manifeste du modèle, avec
+`if-no-files-found: error` — *une preuve absente doit faire échouer la
+publication, pas passer inaperçue*.
+
+## 24.4 Ce qui bloque une fusion, et ce qui se publie sans bloquer **[LU]**
+
+C'est le point que la consigne désigne, et il est le prolongement direct de
+§ 19.5.
+
+`validate_release.py` publie **les deux listes** et n'en fait décider **qu'une** :
+
+```python
+bloquantes = failed_software_gates(validation)   # 3 portes
+# failed_mandatory_gates(validation)             # 5 portes, publiées
+```
+
+Le défaut corrigé mérite d'être cité en entier, parce qu'il montre ce que coûte
+une confusion de natures :
+
+> Le code de retour portait sur les **cinq portes de promotion**, dont
+> `labels_gmao` et `validation_externe`, qui exigent un historique de pannes
+> étiqueté. Ce script étant appelé par l'intégration continue **sans
+> `continue-on-error`**, le job `tests` échouait à chaque exécution et le job
+> `image`, qui en dépend, **n'était jamais construit**.
+>
+> **La chaîne était rouge par construction, et aucun commit ne pouvait la rendre
+> verte.**
+
+| ensemble | portes | ce qu'il décide |
+|---|---|---|
+| `MANDATORY_GATES` | **5** | la **promotion** d'un artefact — `promote_model.py` et `validate_model_manifest` les exigent toutes, inchangés |
+| `SOFTWARE_GATES` | **3** | le **code de retour de la CI** — ce qu'un commit peut casser |
+
+> **Le principe, et il vaut pour tout le projet** : on ne restreint pas un
+> critère pour qu'il passe — cela **remasque** ce que l'auteur avait délibérément
+> rendu visible. On sépare ce qu'un développeur peut corriger de ce qu'OCP n'a
+> pas fourni, on publie les deux, et on ne bloque que sur le premier.
+
+Une chaîne rouge en permanence n'est pas une chaîne exigeante : c'est une chaîne
+que l'équipe apprend à ignorer.
+
+## 24.5 Ce que la section 24 ne permet pas d'affirmer
+
+- que le système ait été **déployé** — l'image est construite et démarrée en CI ;
+  elle n'a jamais tourné sur une infrastructure OCP ;
+- que la **production soit autorisée** — le service refuse de se déclarer
+  `ready_for_production` tant que `APP_ENV != production` **et** que le modèle
+  n'est pas promu, ce qui est définitivement impossible sur ce corpus ;
+- que l'**identité soit gérée** — le démarrage reste bloqué en production tant
+  que le fournisseur IAM OIDC de l'entreprise n'est pas intégré. Le registre local
+  est un mécanisme de démonstration mono-poste ;
+- que le **dépôt soit publiable** — `data/raw/DATA.xlsx` est versionné
+  délibérément, et il porte quatorze mois d'exploitation réelle d'une
+  installation OCP. **Le dépôt distant doit rester privé** : ce n'est pas une
+  préférence, c'est la condition qui rend acceptable le choix de versionner
+  l'export ;
+- que les **45 analyses par seconde** soient une mesure de charge en exploitation
+  — c'est un débit mesuré sur le poste de développement, sur des données déjà
+  chargées en mémoire.
