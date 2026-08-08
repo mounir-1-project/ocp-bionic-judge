@@ -1254,10 +1254,36 @@ déplacée ou trois déciles jamais visités, et ce n'est pas le même constat.*
 
 ### Ce que le PSI mesure — et ce qu'il ne mesure pas **[MESURÉ]**
 
-La correspondance entre extrapolation saisonnière et PSI est **monotone et sans
-exception** : plus la fenêtre de test sort de la plage d'eau de mer vue à
-l'apprentissage, plus le PSI monte. Le maximum tombe sur le pli **entièrement**
-hors plage, le minimum sur le pli qui extrapole le moins.
+La correspondance entre extrapolation saisonnière et PSI est **forte, et elle
+n'est pas strictement monotone**. Mesurée le 8 août 2026, figure **F20** :
+
+| grandeur | valeur |
+|---|---|
+| paires concordantes | **5 sur 6** |
+| τ de Kendall | **+0,667** |
+| ρ de Spearman | +0,800 |
+| r de Pearson | **+0,966** |
+
+Les deux plis fortement extrapolants — 76,5 % et 100 % — portent les deux PSI
+les plus élevés. Entre les plis 3 et 4, **faiblement extrapolants tous deux**,
+l'ordre s'inverse : le pli 4 extrapole davantage (12,8 % contre 5,2 %) et dérive
+moins (0,068 contre 0,580).
+
+> **Cette nuance a été découverte en produisant la figure, et elle corrige la
+> bibliothèque.** Trois documents et un commentaire de code annonçaient une
+> « correspondance monotone parfaite ». Elle l'était **avant** la correction de
+> l'extrapolation du pli 4 — mesurée à 12,8 % et non 0 %, parce que
+> `train.index` et `test.index` ne portent que les heures de marche.
+>
+> *Corriger un chiffre a défait une propriété que la phrase voisine affirmait, et
+> personne ne l'avait revue.* C'est une variante inédite du fil conducteur : non
+> pas une valeur périmée, mais une **conclusion** rendue fausse par la correction
+> d'une autre valeur — et rien, dans une relecture, ne signale qu'il faut la
+> reprendre.
+
+**L'argument survit intact**, et c'est ce qui compte : le maximum tombe sur le
+seul pli **entièrement** hors de la plage apprise, et il ne dépend pas de la
+monotonie stricte.
 
 **Ce que cela réfute.** La preuve affichée attribuait ce chiffre à « deux
 excursions de sur-refroidissement » entre les deux moitiés de la période. Les

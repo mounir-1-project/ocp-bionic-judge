@@ -596,10 +596,21 @@ def validate_unsupervised_detector(
     # fichier. Le code corrige, son commentaire non : rien n'execute un
     # commentaire.
     #
-    # La correspondance est parfaite et monotone. Le maximum publie — 3,1826 —
-    # tombe sur le SEUL pli dont la fenetre de test est entierement hors de la
-    # plage d'eau de mer que l'apprentissage a vue, et le minimum sur le pli
-    # qui extrapole le moins.
+    # La correspondance est FORTE mais PAS strictement monotone : cinq paires
+    # concordantes sur six, tau de Kendall +0,667, r de Pearson +0,966. Les
+    # plis 3 et 4, faiblement extrapolants tous deux, sont inverses l'un par
+    # rapport a l'autre.
+    #
+    # Ce commentaire annoncait « parfaite et monotone ». Il l'etait AVANT la
+    # correction de l'extrapolation du pli 4 — mesuree a 12,8 % et non 0 %,
+    # parce que `train.index` et `test.index` ne portent que les heures de
+    # marche. Corriger un chiffre a defait une propriete que la phrase voisine
+    # affirmait, et personne ne l'avait revu. Recalcule le 2026-08-08 par
+    # `scripts/generer_figures.py`, qui produit la figure F20.
+    #
+    # Le maximum publie — 3,1826 — tombe sur le SEUL pli dont la fenetre de
+    # test est entierement hors de la plage d'eau de mer apprise. C'est ce qui
+    # porte l'argument, et cela ne depend pas de la monotonie stricte.
     #
     # CE QUE CELA REFUTE. La preuve affichee attribuait ce chiffre a « deux
     # excursions de sur-refroidissement » entre les deux moities de la periode.

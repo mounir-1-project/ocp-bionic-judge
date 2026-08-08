@@ -232,10 +232,43 @@ la sonde du conteneur exigeait `status:"ok"`, **inatteignable par construction**
 bloquait la CI sur les cinq portes de promotion, dont deux qu'aucun commit ne
 peut franchir — **la chaîne était rouge par construction**.
 
-## Demeure — 5. Les figures, seul manque de la bibliothèque
+## Levé — 5. Neuf figures produites *(8 août 2026)*
 
-Aucune n'existe. La plus importante — nuage **résidu de duty × écart de consigne,
-r = −0,938** — est l'argument qui justifie la refonte, et elle n'est pas illustrée.
+`scripts/generer_figures.py` → `reports/figures/` + `MANIFESTE.md`. Toutes sont
+recalculées depuis `data/raw/DATA.xlsx` et les artefacts : **aucune n'est
+dessinée à la main**, chacune porte sa source en pied.
+
+**F6 est produite**, et son coefficient est recalculé : **r = −0,938** sur
+8 756 heures de marche établie, 87,9 % de variance partagée. C'est l'argument qui
+justifie toute la refonte, et il est désormais illustré.
+
+Produites : **F3, F4, F5, F6, F7, F10**, plus trois figures ajoutées —
+**F18** (les trois indicateurs candidats côte à côte, sur échelle commune),
+**F19** (disponibilité des douze capteurs), **F20** (PSI contre extrapolation).
+
+Déclarées manquantes, avec leur raison : F1 et F2 (schémas), F8, F9, F11
+(exigent l'étage statistique), F12 à F17 (captures, exigent le service démarré).
+
+### La production des figures a défait une conclusion
+
+Tracer F20 a révélé que la **« correspondance monotone parfaite »** entre
+extrapolation saisonnière et PSI — affirmée par `partie-audit.md`,
+`dossier-rapport.md`, `partie-B.md` et un commentaire de `model_validation.py` —
+**ne tient plus**.
+
+Elle tenait **avant** la correction de l'extrapolation du pli 4, mesurée à
+12,8 % et non 0 %. Recalculé : **cinq paires concordantes sur six**, τ de Kendall
+**+0,667**, ρ de Spearman +0,800, r de Pearson **+0,966**. Les plis 3 et 4 sont
+inversés — le pli 4 extrapole davantage et dérive moins.
+
+> **Variante inédite du fil conducteur.** Ce n'est pas une valeur périmée : c'est
+> une **conclusion** rendue fausse par la correction d'une autre valeur. Aucune
+> relecture ne signale qu'il faut la reprendre, et aucun contrôle ne l'attrape —
+> **il a fallu la dessiner pour la voir.**
+>
+> L'argument survit : le maximum tombe sur le seul pli entièrement hors de la
+> plage apprise, et cela ne dépend pas de la monotonie stricte. Corrigé aux
+> quatre endroits.
 
 § 17.9 signale un **conflit de numérotation** : la figure 12 de la partie A est
 déjà la capture de la vue Salle. La partie B la reprend en la précisant et

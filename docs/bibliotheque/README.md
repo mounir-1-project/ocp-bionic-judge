@@ -95,16 +95,48 @@ un correctif.
 > (300), `main.py` **1 830** (1 759), `app.js` **2 445** (2 407). Corrigées là où
 > elles se lisent. **Partir de la mesure, jamais de la consigne.**
 
-## Le seul manque : les figures
+## Les figures — neuf produites, six déclarées manquantes
 
-Aucune des douze n'existe. La plus importante est le nuage **résidu de duty ×
-écart de consigne, r = −0,938** — elle montre en un coup d'œil que l'indicateur
-de la v2 était l'écart de consigne réécrit, et c'est l'argument qui justifie
-toute la refonte.
+`python scripts/generer_figures.py` → `reports/figures/`, avec son
+`MANIFESTE.md`. **Aucune figure n'est dessinée à la main** : chacune est
+recalculée depuis `data/raw/DATA.xlsx` et les artefacts, et porte sa source en
+pied. Si une valeur change dans la chaîne, la figure change avec elle.
+
+| # | figure | ce qu'elle établit |
+|---|---|---|
+| **F6** | nuage résidu de duty × écart de consigne | **r = −0,938 recalculé** — l'indicateur de la v2 était l'écart de consigne réécrit |
+| F3 | distribution de `T_ACID_OUT` | la bande de 3 °C qui condamne l'approche générique |
+| F4 | UA observé contre attendu | la saisonnalité d'eau de mer, et ce que la référence en retire |
+| F5 | climatologie de Safi | la seule entrée extérieure à toute boucle |
+| F7 | couverture du risque AMDEC | 30,2 % détecté, 18,5 % partiel, 51,2 % préventif |
+| F10 | note du contrôleur par faute injectée | l'écart de discrimination, pas le taux |
+| F18 | les trois indicateurs candidats côte à côte | une droite, un nuage, une bande verticale |
+| F19 | disponibilité des douze capteurs | les deux capteurs exclus, et pourquoi |
+| F20 | PSI contre extrapolation saisonnière | le PSI mesure le découpage, pas le procédé |
+
+**Non produites, et déclarées telles** : F1 et F2 (schémas), F8, F9 et F11
+(exigent l'étage statistique), F12 à F17 (captures d'écran, exigent le service
+démarré et un navigateur).
+
+> Une figure absente est déclarée absente. **Aucune n'est remplacée par une
+> approximation** ni par un schéma qui prétendrait être une mesure.
 
 Attention à la numérotation : la **figure 12** de la partie A est déjà la capture
 de la vue Salle, et § 17.9 la reprend en la précisant. La partie B n'ouvre de
 nouveaux numéros qu'à partir de **13**.
+
+### Ce que la production des figures a corrigé
+
+Tracer F20 a défait une affirmation que quatre documents portaient :
+
+> **« Correspondance monotone parfaite »** entre extrapolation saisonnière et
+> PSI. Elle l'était **avant** la correction de l'extrapolation du pli 4 —
+> mesurée à 12,8 % et non 0 %. Recalculée : **cinq paires concordantes sur six**,
+> τ de Kendall +0,667, r de Pearson +0,966. Les plis 3 et 4 sont inversés.
+
+C'est une variante inédite du fil conducteur : non pas une valeur périmée, mais
+une **conclusion** rendue fausse par la correction d'une autre valeur. Rien, dans
+une relecture, ne signale qu'il faut la reprendre — **il a fallu la dessiner**.
 
 ## Les décisions encore ouvertes, rencontrées en écrivant
 

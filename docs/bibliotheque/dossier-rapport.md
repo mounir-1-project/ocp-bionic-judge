@@ -68,7 +68,8 @@ La preuve publiée accusait « deux excursions de sur-refroidissement ». Les pl
 la réfutent : **les plis 3 et 4 testent les périodes les PLUS RÉCENTES et dérivent
 le MOINS, d'un facteur 55**. Une dérive ferait l'inverse.
 
-Cause réelle, correspondance monotone parfaite avec la part d'heures de test
+Cause réelle : correspondance forte mais **non strictement monotone** — cinq
+paires concordantes sur six, τ de Kendall +0,667 — avec la part d'heures de test
 hors de la plage d'eau de mer apprise :
 
 | pli | couverture hors plage | PSI |

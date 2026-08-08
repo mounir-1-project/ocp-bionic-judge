@@ -363,8 +363,9 @@ Verrouillé par `test_une_porte_publiee_non_bloquante_n_empeche_pas_la_promotion
 la réfutent** : les plis 3 et 4 testent les périodes **les plus récentes** et
 dérivent **le moins**, d'un facteur **47** (3,183 / 0,068). Une dérive réelle ferait l'inverse.
 
-Cause réelle — correspondance **monotone parfaite** avec la part d'heures de test
-hors de la plage d'eau de mer apprise :
+Cause réelle — correspondance **forte mais non strictement monotone** avec la part d'heures de test hors de la plage d'eau de mer apprise : **cinq paires concordantes sur six**, τ de Kendall +0,667, r de Pearson +0,966. Les deux plis fortement extrapolants portent les deux PSI les plus élevés ; entre les plis 3 et 4, faiblement extrapolants tous deux, l'ordre s'inverse.
+
+Le détail, par extrapolation croissante :
 
 | pli | heures hors plage | PSI |
 |---|---|---|
