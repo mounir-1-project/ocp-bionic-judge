@@ -731,6 +731,684 @@ qu'à partir de 13.
 
 ---
 
+# 18. Le contrat d'API
+
+`api/main.py`, **1 830 lignes**, **47 routes**. C'est la couche que le jury ne
+verra pas et sur laquelle tout repose : le poste de §17 n'affiche rien qu'elle
+ne serve.
+
+Tous les chiffres de cette section viennent de
+`scripts/collecte_chiffres_api.py` → `reports/chiffres_api.txt`, par analyse de
+l'arbre syntaxique. Un `grep` ne conviendrait pas : un décorateur est un appel,
+et une chaîne citée dans un docstring ressemble à une route.
+
+## 18.1 Les familles **[MESURÉ, 2026-08-08]**
+
+| famille | routes | ce qu'elle porte |
+|---|---|---|
+| **Donnees** | 5 | séries temporelles, topologie, fiche capteur, santé instrumentation, épisodes |
+| **Temps reel** | 7 | pilotage et lecture du rejeu |
+| **Maintenance** | 5 | modèles d'intervention et cycle de vie |
+| **Acces** | 5 | session, CSRF, rotation, journal d'authentification |
+| **Sante** | 5 | sondes d'orchestrateur |
+| **Systeme** | 4 | synthèse de santé, gouvernance, configuration, fiche équipement |
+| **Gouvernance** | 3 | sensibilité, couverture du risque, validation du modèle |
+| **Notifications** | 3 | état du canal, test, synthèse |
+| **Alarmes** | 2 | registre et transitions |
+| **Judge** | 2 | auto-surveillance et banc de pièges |
+| **Analyse** | 2 | analyse d'un instant, instants notables |
+| *(sans étiquette)* | 1 | `GET /` — le tableau de bord lui-même |
+
+**46 chemins distincts, 47 couples verbe+chemin** — seul `/api/workflows` porte
+deux verbes.
+
+## 18.2 La règle de déclaration des handlers **[LU + MESURÉ]**
+
+C'est le point le plus instructif de ce fichier, et il ne se voit pas à
+l'exécution d'une requête isolée.
+
+> **Un handler est `async def` uniquement s'il `await`, ou si son corps se
+> limite à des lectures en mémoire. Tout ce qui calcule est déclaré `def` —
+> FastAPI l'exécute alors dans son pool de threads.**
+
+Le défaut d'origine : **32 des 47 handlers** étaient `async def` sans le moindre
+`await`. Leur corps entier s'exécutait sur la boucle d'événements, qui est
+unique. Trois conséquences, par gravité croissante :
+
+- `auth_login` dérive un PBKDF2 à **600 000 itérations**, volontairement coûteux.
+  Chaque tentative de connexion, réussie ou non, gelait tout le service ;
+- `analyze` appelle le modèle de langage, appel synchrone et sans délai maximal.
+  Une réponse lente figeait la supervision **sonde de vivacité comprise** — et
+  l'orchestrateur finissait par tuer un conteneur en parfait état ;
+- `notable` enchaîne jusqu'à cent analyses complètes ; `timeseries`,
+  `operational_kpi` et `episodes` balayent tout l'historique.
+
+**État au 8 août 2026** :
+
+| | |
+|---|---|
+| handlers `async def` | 29 |
+| handlers `def` | 18 |
+| `async def` sans aucun `await` | 17 |
+| dont déclarés **calculants** | **0** |
+| dont hors de la liste tolérée | **0** |
+
+Les 17 `async def` sans `await` sont des **sondes et des lectures de
+dictionnaire**, explicitement tolérées : elles doivent répondre même si le pool
+de threads est saturé. C'est le bon compromis, et il est déclaré plutôt que subi.
+
+> **Note de méthode, et elle a coûté une correction.** La première version du
+> script de mesure employait une heuristique maison — « calcule » tout handler
+> citant `_replay()` ou `_notifier()`. Elle désignait **neuf routes fautives**,
+> dont `replay_state`, qui ne fait que lire un dictionnaire.
+>
+> `tests/test_service_invariants.py` porte la liste qui fait autorité,
+> `HANDLERS_CALCULANTS`, établie à la main lors de la correction. Le script la
+> **lit** désormais. C'est la convention n° 1 du dépôt — *ne réimplémente pas
+> pour mesurer, importe le prédicat réel* — et l'avoir enfreinte a produit neuf
+> accusations fausses en une seule exécution.
+
+## 18.3 Le flux d'authentification **[LU]**
+
+Cinq routes, et un middleware qui les précède toutes.
+
+```
+  GET  /api/auth/status    → { required, authenticated, operator }
+  POST /api/auth/login     → cookie HttpOnly + jeton CSRF dans le corps
+  POST /api/auth/refresh   → rotation du cookie ET du jeton CSRF
+  POST /api/auth/logout    → destruction de session, cookie supprimé
+  GET  /api/auth/audit     → journal, réservé au rôle administrator
+```
+
+**Le cookie.** `e7301_session`, `HttpOnly`, `SameSite=strict`, `Secure` piloté
+par configuration, `max_age` égal à l'expiration absolue. Le jeton de session ne
+transite jamais par le JavaScript ; le jeton **CSRF**, lui, est rendu dans le
+corps de la réponse et renvoyé par l'écran dans l'en-tête `X-CSRF-Token`.
+
+**Le middleware `operator_access`** fait quatre choses dans cet ordre :
+
+1. il attribue un `X-Request-ID` — repris de l'appelant s'il en fournit un, sinon
+   tiré au sort — qui servira à corréler toute trace serveur ;
+2. il laisse passer sans session les chemins **publics** : `/`, `/assets/*`,
+   `/api/health`, `/api/health/*` et `/api/auth/*` ;
+3. il refuse en **401** toute autre route sans session valide ;
+4. il refuse en **403** toute mutation dont l'en-tête `X-CSRF-Token` ne
+   correspond pas au jeton de session — sauf `login` et `logout`, qui ne peuvent
+   pas en porter.
+
+Puis il journalise chaque mutation : verbe, chemin, acteur, rôle, identifiant de
+requête.
+
+**Les rôles.** Dix routes sur 47 exigent un rôle, résolu **côté serveur** :
+
+| rôles admis | routes |
+|---|---|
+| `maintenance`, `reliability_engineer`, `administrator` | les 4 routes `workflows` en écriture, les 2 routes `notifications` en envoi |
+| + `operator` | les 3 routes de pilotage du rejeu |
+| `reliability_engineer`, `administrator` | `GET /api/judge/evaluation` |
+| `administrator` seul | `GET /api/auth/audit` |
+
+`POST /api/alarms/{id}/transition` n'appelle pas `_require_roles` mais porte sa
+**propre table par action** : acquitter est ouvert à `operator`, tandis
+qu'inhiber, désinhiber et clôturer exigent au minimum `maintenance`. C'est plus
+fin que le garde générique, et c'est justifié — l'acquittement est un geste de
+quart, l'inhibition est une décision de maintenance.
+
+Restent **quatre mutations sans exigence de rôle** : les trois routes
+d'authentification, qui ne peuvent pas en avoir, et `POST /api/analyze`, qui est
+une lecture déguisée en POST — elle ne modifie rien, le verbe ne tient qu'au
+corps de requête.
+
+**Les en-têtes de défense.** `_durcir()` en pose **huit**, et c'est le seul
+endroit du fichier où un en-tête de sécurité est écrit : politique de sécurité du
+contenu, `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`,
+`Permissions-Policy`, `Cache-Control` (`no-store` sur `/api/`), l'identifiant de
+requête, et `Strict-Transport-Security` **uniquement en HTTPS** — le promettre
+sur du HTTP local serait trompeur.
+
+> Le défaut corrigé mérite d'être cité : les refus **401, 403 et 500 partaient
+> sans aucun en-tête**. Le middleware retournait directement la réponse d'erreur,
+> sautant le bloc placé après `call_next` ; et le gestionnaire d'exception
+> s'exécute *en dehors* des middlewares applicatifs. Ce sont précisément les
+> réponses qu'un attaquant provoque le plus facilement, et les seules qu'un
+> exploitant ne pouvait pas corréler à une trace serveur.
+
+## 18.4 Le flux de rejeu **[LU]**
+
+Sept routes, dont quatre en lecture.
+
+| route | rôle |
+|---|---|
+| `POST /api/replay/start` | arrête le rejeu courant s'il tourne, en **reconstruit** un neuf, l'abonne, le démarre |
+| `POST /api/replay/stop` | arrête |
+| `POST /api/replay/speed` | change la vitesse à chaud — **paramètre d'URL, pas corps JSON** |
+| `GET /api/replay/state` | instantané : curseur, nombre d'instants analysés, marche/arrêt |
+| `GET /api/replay/stream` | les *n* dernières analyses, compactées |
+| `GET /api/replay/alerts` | les *n* dernières alertes |
+| `GET /api/replay/disagreements` | les décisions **rejetées par le contrôleur** |
+
+Deux points de conception à retenir.
+
+**Le rejeu est reconstruit, jamais reconfiguré.** `_build_replay()` est le seul
+constructeur, et il **abonne systématiquement** le canal e-mail et le registre
+d'alarmes. Un rejeu ne peut donc pas exister sans ses deux consommateurs : une
+route qui construirait un `DCSReplay` directement perdrait silencieusement
+l'escalade et la persistance des alarmes.
+
+**`/api/replay/disagreements` est la route de gouvernance.** Son docstring le dit
+sans détour : *« c'est la vue la plus importante du point de vue gouvernance :
+elle montre où le système s'est contrôlé lui-même »*. Elle est servie, consommée
+par le filtre « Rejets » du journal, et c'est la seule route dont l'objet est
+d'exposer les échecs du système.
+
+Le défaut du réglage de vitesse est raconté en § 17 côté écran ; côté serveur, la
+signature `speed: float = Query(..., gt=0, le=100000)` déclare un paramètre de
+requête **obligatoire**. Le poste l'envoyait dans le corps, FastAPI répondait
+**422**, et l'erreur était avalée par un `.catch()` muet. `test_api.py` appelait
+`?speed=500`, c'est-à-dire le contrat réel : *le test passait pendant que le
+poste échouait, chaque côté cohérent avec lui-même, et les deux ne se parlaient
+pas.*
+
+## 18.5 Les six sondes de santé **[LU + MESURÉ]**
+
+| route | à qui elle s'adresse |
+|---|---|
+| `GET /api/health` | **synthèse humaine** — la seule que le poste appelle |
+| `GET /api/health/live` | *liveness* — le processus HTTP répond, sans prétendre que ses dépendances sont prêtes |
+| `GET /api/health/ready` | *readiness* — **503** tant que la chaîne ou l'un des deux registres manque |
+| `GET /api/health/model` | promotion du modèle, **distincte** de sa disponibilité d'exécution |
+| `GET /api/health/database` | **lecture réelle** des deux bases SQLite, 503 + motif nommé |
+| `GET /api/health/version` | versions applicative, source du modèle, signature d'exécution, version des règles |
+
+Deux de ces sondes portent une leçon.
+
+**`/api/health` répond `degraded` en permanence, et c'est voulu.** Le statut passe
+à `degraded` dès que le modèle n'est pas promu — or la promotion est
+**légitimement impossible** sur ce corpus : `labels_gmao` et `validation_externe`
+échouent faute d'historique de pannes étiqueté, et aucun commit ne les
+franchira.
+
+> La tentation était de ramener `status` à l'état du **service** et de renvoyer
+> la gouvernance à `ready_for_production`. Elle a été écartée, et le raisonnement
+> est le même que pour les portes de déploiement : *restreindre un critère « pour
+> qu'il puisse passer » remasque ce que l'auteur avait délibérément rendu
+> visible.* Ce qui manquait n'était pas la nuance, c'était sa **raison** — d'où
+> le champ `status_reason`, qui distingue « dégradé par un défaut réparable » de
+> « dégradé par une limite définitive du corpus ».
+
+**`/api/health/database` vérifiait et ne décidait de rien.** Le verdict était figé
+*avant* la lecture — `store is not None` — donc il mesurait la construction de
+l'objet au démarrage, jamais l'état de la base. La lecture était bien exécutée,
+et son résultat jeté. Pire : quand elle échouait — fichier verrouillé, base
+corrompue, disque plein, c'est-à-dire les seules pannes qu'une sonde de base
+existe pour voir — l'exception remontait au gestionnaire générique et la route
+répondait **500**. Une sonde qui répond 500 au lieu d'« indisponible » se confond
+avec un bogue applicatif et n'apprend rien à un orchestrateur.
+
+## 18.6 Les bornes, et ce qu'elles empêchent **[MESURÉ]**
+
+**19 paramètres de requête sont bornés.** Aucun paramètre de pagination ou de
+fenêtre n'est libre :
+
+| paramètre | plage | pourquoi |
+|---|---|---|
+| `limit` (alarmes, épisodes, workflows, audit) | 1 → 500 | une liste non bornée est un déni de service offert |
+| `n` (flux, alertes) | 1 → 500 | idem |
+| `max_points` (timeseries) | 100 → 20 000 | le rendu s'effondre au-delà |
+| `window_h` (capteur) | 6 → 20 000 | 20 000 h > le corpus entier : la borne est large mais existe |
+| `n_cases` (banc du Judge) | 2 → 30 | chaque cas est une analyse complète |
+| `duration_days` (banc d'encrassement) | 14 → 180 | une rampe plus courte ne mesure rien |
+| `speed` (rejeu) | ]0 ; 100 000] | obligatoire, sans défaut |
+
+Sept **modèles Pydantic** valident les corps de requête, tous avec des bornes
+explicites — et trois avec un motif fermé : `AlarmTransitionRequest.action`,
+`WorkflowCreateRequest.template_id`, `WorkflowStepRequest.status`. Un état
+d'étape inconnu est refusé **avant** d'atteindre le magasin SQLite.
+
+Le contrôle de plage du banc d'encrassement mérite d'être cité, parce qu'il
+protège un **résultat** et non un service :
+
+> Une sévérité est une **fraction** de perte de UA. Laisser passer 1, 2 ou 3
+> produirait des scénarios où l'échangeur n'échange plus rien, détectés par
+> construction : *le banc afficherait 100 % sans rien démontrer.*
+
+## 18.7 Routes et champs orphelins **[MESURÉ]**
+
+C'est la vérification que la consigne demande explicitement, dans les deux sens.
+
+### Routes servies et consommées par personne — 14
+
+Reprises de § 17.6, avec leur nature :
+
+| nature | nombre | verdict |
+|---|---|---|
+| `GET /` | 1 | sert la page — orphelin par construction |
+| sondes d'orchestrateur `/api/health/*` | 5 | **normal** — elles s'adressent à Docker et à la CI |
+| famille `workflows` | 5 | **le module n'a pas d'interface** |
+| `GET /api/config`, `GET /api/notable`, `GET /api/auth/audit`, `POST /api/auth/refresh` | 4 | réellement inertes |
+
+**Aucun appel fantôme dans l'autre sens** : le poste ne demande rien que le
+serveur ne serve.
+
+### Champs servis que l'écran ne lit jamais — 35 sur 79
+
+Le décompte porte sur les clés de premier niveau des dictionnaires littéraux
+retournés par les handlers.
+
+> **Portée exacte de ce constat, et elle est étroite.** Un champ non lu par le
+> poste n'est pas mort : il peut servir à un orchestrateur, à un test, ou à un
+> lecteur de la documentation OpenAPI. Le contrôle dit ce qu'il mesure — *ce que
+> l'écran ignore* — et rien de plus. Vingt-quatre des trente-cinq sont
+> légitimes : ce sont les champs des cinq sondes de santé et les accusés de
+> réception `accepted`.
+
+Restent **onze champs de routes métier**, et trois sont des trouvailles :
+
+| route | champ | constat |
+|---|---|---|
+| `/api/health` | **`status_reason`** | ajouté précisément pour qu'un jury lise *pourquoi* le service est `degraded` — **l'écran ne le lit pas** |
+| `/api/equipment` | **`process_states`** | les trois définitions `RUNNING` / `TRANSIENT` / `STOPPED` |
+| `/api/equipment` | `baremes` | les trois barèmes GRV / OCC / DET |
+| `/api/equipment` | `partially_observable` | la liste des modes en observabilité partielle |
+| `/api/equipment` | `tag_registry_change_history` | l'historique des changements du référentiel |
+| `/api/sensor/{alias}` | `criticality_link` | seul `criticality_link_label` est lu |
+| `/api/sensor/{alias}` | `kind` | nature du tag |
+| `/api/kpi` | `stabilite_regulation` | série calculée, jamais tracée |
+| `/api/judge/evaluation` | `report` | le rapport textuel du banc |
+
+**`process_states` est le cas exemplaire, et il est cité par le serveur
+lui-même.** Le commentaire d'`api/main.py` explique pourquoi le champ a été
+ajouté :
+
+> *« La classification STOPPED / TRANSIENT / RUNNING est la décision la plus
+> déterminante du système — c'est elle qui décide quelles heures sont jugeables —
+> et un exploitant qui voit "ligne à l'arrêt" sur son écran n'avait aucun moyen
+> de savoir quel critère l'avait déclenché. »*
+
+Le serveur a été corrigé. **L'écran ne l'a jamais été.** L'exploitant lit
+toujours « À l'arrêt » sans pouvoir savoir quel critère l'a produit, alors que la
+réponse voyage déjà jusqu'à son navigateur à chaque chargement de page.
+
+> **Vingtième occurrence du motif de cet audit**, et dans le sens habituel : le
+> code de service porte la version juste, l'affichage la version périmée. Elle
+> se distingue des précédentes sur un point — ici l'affichage ne porte pas une
+> valeur *fausse*, il porte une **absence**. Un champ servi et jamais rendu ne
+> déclenche aucun test, ne produit aucune contradiction visible, et ne se voit
+> qu'en confrontant les deux côtés. C'est le seul défaut de cette famille qu'un
+> banc de rendu ne peut pas attraper.
+>
+> *(Le rang « vingtième » dépend de la résolution de **UI-1**, § 17.8 : le front
+> se déclare dix-neuvième occurrence, les tableaux en recensent dix-huit. Le
+> compte relatif est sûr, sa base ne l'est pas.)*
+
+## 18.8 Ce que la section 18 ne permet pas d'affirmer
+
+- que les **latences** tiennent en exploitation — aucune n'a été mesurée : le
+  service exige le chargement de `DATA.xlsx` et l'entraînement du modèle au
+  démarrage, hors de portée de cette session. C'est le premier chiffre à
+  produire pour compléter ce chapitre ;
+- que les **35 champs non lus** sont morts — le contrôle ne mesure que ce que
+  l'écran ignore, et vingt-quatre d'entre eux servent légitimement ailleurs ;
+- que le **contrôle d'accès a été éprouvé** — il est lu, testé par
+  `test_api.py` et `test_access_notifications.py`, et jamais soumis à un test
+  d'intrusion ;
+- que `POST /api/analyze` **devrait** exiger un rôle — c'est une lecture, et
+  trancher appartient à l'auteur.
+
+---
+
+# 19. La validation du modèle
+
+`src/governance/model_validation.py`, **834 lignes**. La partie A dispose des
+**résultats** (§ 15.8) et ignore **comment ils sont construits**. C'est l'objet de
+ce chapitre.
+
+Chiffres relus dans `reports/model_validation.json`, l'artefact que produit
+`make test` — jamais dans un commentaire.
+
+## 19.1 Le plan d'expérience **[LU]**
+
+```
+validate_unsupervised_detector(
+    features, readings, quality, domain, references,
+    contamination, random_state,
+    n_splits = 4,        # quatre plis
+    gap_hours = 24,      # écart causal
+)
+```
+
+**Pourquoi une fenêtre croissante et non des blocs disjoints.** `TimeSeriesSplit`
+produit un apprentissage strictement antérieur au test, et **grandissant** : le
+pli 1 apprend sur 1 055 heures, le pli 4 sur 6 551. C'est le seul découpage qui
+reproduise la situation réelle d'exploitation — à chaque instant, le système ne
+dispose que de son passé. Un découpage par blocs disjoints, ou pire une
+validation croisée aléatoire, entraînerait le modèle sur des heures postérieures
+à celles qu'il score : une fuite temporelle qui gonfle toute métrique.
+
+**Pourquoi quatre plis.** Contrainte du corpus, pas choix méthodologique. Chaque
+fenêtre de test compte environ 1 800 heures ; en exiger davantage réduirait
+l'apprentissage du premier pli sous le seuil d'utilisabilité, et le code refuse
+explicitement un pli trop maigre — `train < 100` ou `test < 50` lève une
+`ValueError` plutôt que de produire un chiffre creux.
+
+**Pourquoi un écart causal, et pourquoi 25 h et non 24.** Le paramètre vaut
+`gap_hours = 24`. Le gap **mesuré** vaut **25,0 h** sur les quatre plis, et
+l'écart d'une heure n'est pas une erreur : `TimeSeriesSplit` laisse 24 pas
+d'index entre la dernière heure d'apprentissage et la première de test, ce qui
+fait 25 heures d'horloge entre les deux bornes incluses.
+
+Ce détail est publié parce que le champ a changé de nature :
+
+> **Le gap publié était le paramètre reçu, pas celui obtenu** — un champ qui
+> affirme au lieu de constater. Il est désormais recalculé
+> (`gap_mesure = (test_start − train_end) / 1h`) et c'est cette valeur que le
+> rapport porte.
+
+Ce que l'écart protège : les features portent des tendances glissantes sur 14
+jours et des références ajustées. Sans lui, la dernière heure d'apprentissage et
+la première de test partageraient des fenêtres de calcul — l'apprentissage
+verrait le test par la bande.
+
+**Ce qui est réajusté à chaque pli.** Cinq objets, et le manifeste les nomme :
+`thermal_reference`, `causal_features`, `scaler`, `isolation_forest`,
+`threshold`. Les **trois références** — conductance, effort de régulation, entrée
+acide — sont réajustées sur le seul passé du pli. C'est indispensable : la
+référence d'entrée acide apprend `T_in` en fonction de la charge et du débit ; si
+elle voyait le corpus entier, elle aurait déjà vu l'été que le pli 1 est censé
+découvrir.
+
+## 19.2 `causal_pipeline_refit` — le champ qui était un littéral **[LU]**
+
+Le champ portait la valeur `True`, écrite en dur.
+
+> Exactement le défaut que le commentaire des portes dénonce vingt lignes plus
+> bas à propos de `causalite_temporelle` — *« aucune mesure, aucune possibilité
+> d'échec »* — reproduit un cran plus bas, dans le détail des plis. Et le test
+> l'affirmait : `assert all(fold["causal_pipeline_refit"] ...)`, **c'est-à-dire
+> un test qui vérifiait une constante.**
+
+Ce que le nom promet est désormais **mesuré**, sur les trois choses qui peuvent
+le démentir :
+
+```python
+refit_causal = (
+    fin_references <= train_end     # les 3 références s'arrêtent au passé
+    and fin_detecteur <= train_end  # l'Isolation Forest aussi
+    and gap_mesure >= gap_hours     # l'écart est réellement tenu
+)
+```
+
+Et — c'est le point qui manquait — **un pli en défaut remonte jusqu'à la porte**.
+Les manquements sont collectés dans `fuites_de_pli` et injectés dans
+`_causality_audit` : auparavant, une fuite dans un pli laissait
+`causalite_temporelle` afficher « franchie ».
+
+## 19.3 L'audit de causalité — trois niveaux **[LU]**
+
+La porte `causalite_temporelle` était, elle aussi, un littéral `True`. Elle est
+maintenant établie par trois contrôles de natures différentes, et c'est leur
+empilement qui fait la solidité.
+
+### Niveau 1 — reconstruction réelle sur histoire tronquée
+
+Le contrôle affirmait reconstruire et ne le faisait pas :
+
+```python
+tronque = features.loc[:coupe, colonnes]
+complet = features.loc[:coupe, colonnes]   # la MÊME expression
+```
+
+Deux fois la même expression, puis `complet` supprimé sans jamais être comparé.
+La seule vérification effective était qu'une ligne n'était pas entièrement vide.
+
+La chaîne est désormais **réellement reconstruite** sur l'histoire tronquée, à
+trois coupes (40, 60, 80 % du corpus), **références figées** pour que la
+comparaison porte sur le calcul des grandeurs et non sur un réajustement
+légitime. L'état de marche — là où vivait le `shift(-1)` historique — est
+reclassé et comparé séparément.
+
+Le principe tient en une phrase : *une chaîne causale doit produire, à l'instant
+t, exactement la même valeur qu'elle produirait si les données s'arrêtaient à t.*
+
+### Niveau 2 — inspection statique du source, littéraux blanchis
+
+`_decalages_non_causaux()` cherche dans **tout `src/`** les motifs qui trahissent
+une lecture de l'aval : `shift(-n)`, `center=True`, `.bfill(`, `backfill`,
+`method="b"`, `.transform("sum")`.
+
+L'histoire de son périmètre est un cas d'école :
+
+> Le balayage portait `if "governance" not in chemin.parts`, **sans un mot de
+> justification**, sous un commentaire annonçant au contraire que « le périmètre
+> couvre toute la chaîne, pas trois fichiers ». La raison réelle était mécanique
+> et personne ne l'avait écrite : le motif contient l'alternative `backfill`,
+> donc **la ligne de source qui porte le motif contient le mot `backfill`**. Le
+> balayage se signalait lui-même.
+
+Blanchir chaînes et commentaires **par tokenisation** — `_code_sans_litteraux()`,
+qui préserve la numérotation des lignes — fait disparaître les faux positifs sans
+rien exclure. L'exclusion coûtait cher : `sensitivity.py`,
+`fouling_injection.py` et `judge_eval.py` produisent des chiffres publiés dans le
+rapport, et un `shift(-1)` introduit dans l'un d'eux n'aurait rien déclenché.
+
+Détail à retenir : **un module illisible est déclaré suspect, jamais ignoré.** Un
+contrôle de causalité qui échoue en silence vaut moins que pas de contrôle.
+
+### Niveau 3 — agrégation des fuites de pli
+
+Les manquements relevés pli par pli (§ 19.2) remontent dans le même verdict.
+
+**Résultat au dernier artefact : porte franchie.** Aucun décalage négatif ni
+fenêtre centrée dans le code exécutable de `src`, gouvernance comprise ; chaîne
+reconstruite et vérifiée sur les trois troncatures.
+
+## 19.4 Le PSI — comment il est calculé, et ce qu'il mesure vraiment
+
+C'est le passage le plus important du chapitre.
+
+### Le calcul **[LU]**
+
+`_population_stability_index(reference, observed)` découpe les scores
+d'apprentissage en **déciles**, y range les scores de test, et somme
+`(obs_p − ref_p) · ln(obs_p / ref_p)`.
+
+**La correction d'epsilon, et pourquoi ce n'était pas un lissage.** La version
+précédente écrasait les deux distributions à `1e-6`, sous le mot « lissage ». Sur
+des déciles de référence — donc `ref_p = 0,1` par construction — une seule
+cellule **vide** côté observé contribue alors :
+
+```
+(1e-6 − 0,1) × ln(1e-6 / 0,1) = 1,1513
+```
+
+soit, à elle seule, **plus de quatre fois la borne de 0,25** opposée au total.
+
+> Le PSI publié comptait donc, pour l'essentiel, des **cellules vides multipliées
+> par une constante arbitraire**. Et `1e-6` n'est même pas une fréquence
+> atteignable : sur ~1 800 heures de test, la plus petite fréquence non nulle
+> vaut 5,6 × 10⁻⁴.
+
+Le plancher est désormais `0,5 / n` — la **correction de continuité usuelle**,
+donc rattachée à la taille de l'échantillon au lieu d'être posée. Même cellule
+vide, même corpus : **0,589 au lieu de 1,1513**.
+
+La fonction rend en outre le **nombre de déciles vides**, parce que sans lui la
+valeur n'est pas interprétable : *un PSI de 3,7 peut signifier une distribution
+déplacée ou trois déciles jamais visités, et ce n'est pas le même constat.*
+
+### Les valeurs mesurées **[MESURÉ, `reports/model_validation.json`]**
+
+| pli | n train | n test | gap | seuil | alertes | **PSI** | déciles vides | **extrapolation** |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 1 055 | 1 786 | 25,0 h | 0,9661 | 16,1 % | **1,988** | 0 | **76,5 %** |
+| 2 | 2 841 | 1 837 | 25,0 h | 0,9656 | 4,4 % | **3,183** | **1** | **100,0 %** |
+| 3 | 4 702 | 1 873 | 25,0 h | 0,9647 | 7,3 % | **0,580** | 0 | **5,2 %** |
+| 4 | 6 551 | 1 908 | 25,0 h | 0,9653 | 3,5 % | **0,068** | 0 | **12,8 %** |
+
+> **Ces valeurs corrigent le tableau des chiffres de `partie-audit.md` § IX**, qui
+> portait les valeurs **d'avant** la correction d'epsilon — « 1,989 / 3,745 » — et
+> une couverture hors plage « 73,8 / 100 / 5,9 / 0 % » que son propre § 5.3
+> dément deux lignes plus bas en annonçant 12,8 % sur le pli 4. Un document qui se
+> contredit à deux lignes d'écart, dans le tableau écrit pour faire autorité.
+> Corrigé à chaque occurrence le 8 août 2026.
+
+### Ce que le PSI mesure — et ce qu'il ne mesure pas **[MESURÉ]**
+
+La correspondance entre extrapolation saisonnière et PSI est **monotone et sans
+exception** : plus la fenêtre de test sort de la plage d'eau de mer vue à
+l'apprentissage, plus le PSI monte. Le maximum tombe sur le pli **entièrement**
+hors plage, le minimum sur le pli qui extrapole le moins.
+
+**Ce que cela réfute.** La preuve affichée attribuait ce chiffre à « deux
+excursions de sur-refroidissement » entre les deux moitiés de la période. Les
+plis 3 et 4 testent les périodes **les plus tardives**, donc les plus éloignées de
+la référence : cette explication prédit qu'ils dérivent le plus. **Ils dérivent le
+moins, d'un facteur 47.** Une affirmation juste par ailleurs, écrite à côté de
+chiffres qui la démentent.
+
+**Ce que cela établit.**
+
+> Le PSI élevé des premiers plis mesure **l'année incomplète de la fenêtre
+> d'apprentissage**. Un backtest à fenêtre croissante sur quatorze mois ne peut
+> pas avoir vu un cycle entier d'eau de mer avant son dernier pli. C'est une
+> propriété du **plan d'expérience**, pas du modèle — aucun commit ne la
+> déplacera, et aucun seuil, de quelque domaine qu'il vienne, n'est interprétable
+> sur un pli qui extrapole.
+
+`seasonal_extrapolation` est la mesure qui l'établit :
+
+```python
+mer_train = seawater_temperature(train.index)
+mer_test  = seawater_temperature(test.index)
+hors_plage = ((mer_test < mer_train.min()) | (mer_test > mer_train.max())).mean()
+```
+
+Elle compare les **heures de marche réellement présentes** dans chaque fenêtre,
+via `train.index` et `test.index`. C'est ce qui explique le 12,8 % du pli 4, là où
+un calcul sur calendrier continu donnerait 0 % : les heures d'arrêt ne sont pas
+dans l'index, et leur absence décale la couverture.
+
+**Conséquence sur la porte** : `plis_couverts` ne retient que les plis à
+extrapolation nulle. Au dernier artefact, **`n_seasonally_covered_folds = 0`** et
+`max_score_psi_seasonally_covered = None`. La porte échoue faute de pli
+interprétable, pas faute de stabilité.
+
+> **Troisième occurrence du même motif dans ce dépôt** : un dénominateur qui
+> contient des essais où rien ne pouvait être mesuré. `judge_eval` comptait des
+> mutations qui ne mutaient rien (S6-2), `fouling_injection` des fenêtres calmes
+> parce que la ligne était à l'arrêt (S7-1), et ce banc-ci des plis qui
+> extrapolent. **Le critère n'a pas été assoupli pour produire un pli qualifié :
+> on ne choisit pas un critère en fonction du verdict qu'il produit.**
+
+## 19.5 Les sept portes — ce que chacune calcule, et d'où vient son seuil
+
+C'est la demande explicite de la consigne : la partie A signale que le 0,25 du
+PSI vient du scoring de crédit ; voici l'origine de chacun des autres.
+
+| porte | prédicat | seuil | **origine du seuil** | verdict |
+|---|---|---|---|---|
+| `causalite_temporelle` | aucun écart sur 3 troncatures, aucun motif non causal, aucune fuite de pli | **aucun seuil** — binaire | propriété logique, rien à calibrer | **franchie** |
+| `redondance_features` | 0 paire à \|r\| ≥ 0,90 dans la matrice du modèle, conditionnement calculable | **0,90** | seuil usuel de colinéarité en régression ; au-delà, l'inversion devient instable | **franchie** |
+| `redondance_hors_modele` | aucune grandeur du modèle à \|r\| ≥ 0,80 avec une variable régulée hors modèle | **0,80** | seuil retenu par le projet, verrouillé par `test_effort_de_regulation_est_redondant_et_le_declare` | **échec permanent** |
+| `stabilite_hors_periode` | taux d'alertes moyen ≤ limite | **max(0,15 ; 5 × contamination)** | **dérivé du réglage**, pas importé : cinq fois la contamination visée, plancher à 15 % | **franchie** — 7,8 % pour 15 % admis |
+| `derive_de_distribution` | PSI max sur plis couverts ≤ limite | **0,25** | **scoring de crédit**, où les populations comparées sont supposées échangeables. Transfert non argumenté | **échec** — 0 pli mesurable |
+| `labels_gmao` | existence d'une vérité terrain | **aucun** | — | **échec définitif** |
+| `validation_externe` | existence d'une annotation indépendante | **aucun** | — | **échec définitif** |
+
+**3 / 7 franchies**, et c'est ce que le poste affiche.
+
+### Le seul seuil vraiment arbitraire, et le seul qui soit dérivé
+
+Deux entrées de ce tableau méritent d'être opposées.
+
+**`derive_de_distribution` — 0,25, importé.** Le seuil vient du *Population
+Stability Index* tel qu'il est employé en scoring de crédit, où les deux
+populations comparées sont censées être échangeables. **Le dossier n'argumente
+nulle part son transfert à des scores d'Isolation Forest**, et la preuve de la
+porte le dit à l'écran, en toutes lettres. C'est la seule constante du fichier
+qui vienne d'un autre domaine.
+
+Elle est nommée **une seule fois**, `PSI_LIMIT = 0.25`, et le commentaire explique
+pourquoi :
+
+> La version précédente l'écrivait **deux fois** — dans le prédicat de la porte
+> et dans la preuve affichée — à onze lignes d'écart. C'est le défaut de S8-2,
+> commis dans le fichier qui porte le principe.
+
+**`stabilite_hors_periode` — dérivé du réglage.**
+`alert_rate_limit = max(0.15, contamination * 5)` ne vient d'aucune littérature :
+il se déduit du paramètre que l'exploitant règle. Changer la contamination déplace
+la limite, ce qui est le comportement voulu — la porte demande « le détecteur
+reste-t-il cohérent avec sa propre calibration », pas « le taux est-il bon dans
+l'absolu ».
+
+### Deux natures de portes, et les confondre rendait la chaîne rouge à jamais
+
+| ensemble | portes | ce qu'il conditionne |
+|---|---|---|
+| `MANDATORY_GATES` | **5** — causalité, redondance features, stabilité, labels GMAO, validation externe | la **promotion** d'un artefact |
+| `SOFTWARE_GATES` | **3** — causalité, redondance features, stabilité | ce que la **CI** peut bloquer |
+
+La différence est le cœur de la gouvernance du projet. `labels_gmao` et
+`validation_externe` échouent définitivement, faute de données OCP : les inclure
+dans ce que la CI bloque aurait rendu toute fusion impossible pour une raison
+qu'aucun développeur ne peut lever.
+
+Et deux portes sont **publiées, en échec, et délibérément non bloquantes** :
+
+- **`redondance_hors_modele`** — le résidu d'effort *est* l'écart de consigne
+  (ADR-001, r = −0,938). C'est une propriété **algébrique permanente** : aucun
+  commit ne peut la franchir. On ne masque pas la redondance pour autant — c'était
+  le défaut d'origine, et publier « 0 paire redondante » deux cents lignes
+  au-dessus d'un −0,938 mesuré était malhonnête ;
+- **`derive_de_distribution`** — aucun pli saisonnièrement couvert. Elle
+  **n'est pas** algébriquement impossible : un modèle autrement conçu, ou un
+  corpus de deux ans, déplacerait ce chiffre. Elle sort du blocage faute de seuil
+  justifié et faute de plis interprétables, **pas faute de sens**.
+
+Distinguer ces deux échecs est ce qui sépare une limite déclarée d'un aveu de
+défaite. Verrouillé par
+`test_une_porte_publiee_non_bloquante_n_empeche_pas_la_promotion`.
+
+## 19.6 L'audit de redondance — le contrôle qui se validait lui-même **[LU]**
+
+`_feature_audit()` calculait la colinéarité sur la seule matrice du modèle, d'où
+`control_deviation` est **absente**. Il concluait donc « 0 paire redondante » en
+ayant justement écarté la variable qui révèle la redondance.
+
+L'audit porte désormais sur deux questions séparées, et le fait de les **séparer**
+est ce qui l'a corrigé :
+
+| question | prédicat | seuil |
+|---|---|---|
+| colinéarité **interne** au modèle | paires de features | \|r\| ≥ 0,90 |
+| redondance avec une variable **régulée hors modèle** | features × `control_deviation`, `delta_t`, `duty_kw`, `T_ACID_OUT`, en marche établie | \|r\| ≥ 0,80 |
+
+La seconde est celle qui expose ADR-001. Chaque paire trouvée porte sa lecture en
+clair : *« cette grandeur est une réécriture de la variable régulée : elle ne
+constitue pas une preuve indépendante »*.
+
+Au dernier artefact : **11 features**, conditionnement calculable, **0 paire
+interne redondante**, et la redondance hors modèle qui fait échouer sa porte.
+
+## 19.7 Ce que la section 19 ne permet pas d'affirmer
+
+- que le backtest mesure une **performance de détection** — il mesure stabilité et
+  charge d'alerte. Le rapport le déclare : *« aucune AUC, précision, rappel ou
+  réduction de panne revendiquée »* ;
+- que le **PSI actuel dit quoi que ce soit du procédé** — sur zéro pli
+  saisonnièrement couvert, il ne mesure rien d'interprétable ;
+- que le seuil de **0,25 soit valide ici** — son transfert depuis le scoring de
+  crédit n'est pas argumenté, et le dépôt l'écrit à l'écran ;
+- que `causalite_temporelle` **prouve** l'absence de fuite — elle établit
+  l'absence de trois familles de fuite, sur trois troncatures. Une quatrième
+  famille, non anticipée, ne serait pas vue ;
+- que **quatre plis suffisent** — c'est le maximum que le corpus autorise, pas un
+  optimum. Un corpus de deux ans donnerait le premier pli réellement
+  interprétable.
+
+---
+
 # 23. La stratégie de validation logicielle
 
 ## 23.1 Le périmètre **[MESURÉ, 2026-08-08]**

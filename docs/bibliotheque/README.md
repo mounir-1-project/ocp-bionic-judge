@@ -74,13 +74,17 @@ un correctif.
 
 ## État au 8 août 2026
 
-**Écrit** : partie A complète (0–16), partie B sections **17** et **23**.
+**Écrit** : partie A complète (0–16), partie B sections **17**, **18**, **19**
+et **23**.
 
-**Manquant** : sections **18** (contrat d'API), **19** (validation du modèle),
-**20** (alarmes ISA-18.2), **21** (notifications et escalade), **22** (rejeu et
-sécurité), **24** (déploiement). Consigne détaillée dans
-`docs/audits/CONSIGNE-BIBLIOTHEQUE-B.md`, **avec ses amendements**, qui corrigent
-deux prémisses périmées.
+**Manquant** : sections **20** (alarmes ISA-18.2), **21** (notifications et
+escalade), **22** (rejeu et sécurité), **24** (déploiement). Consigne détaillée
+dans `docs/audits/CONSIGNE-BIBLIOTHEQUE-B.md`, **avec ses amendements**, qui
+corrigent deux prémisses périmées.
+
+**Avertissement pour §20** : `alarms.py` fait **617** lignes et non 561.
+`partie-audit.md` § VI.1 et la consigne B4 portent tous deux la valeur périmée.
+Partir de la mesure, pas de la consigne.
 
 **Figures** : aucune des douze n'existe. La plus importante est le nuage
 **résidu de duty × écart de consigne, r = −0,938** — elle montre en un coup d'œil

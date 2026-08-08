@@ -144,16 +144,59 @@ source** : « 57 épisodes sur 59 » (58), « 849 lignes, six routes » (952, de
 ADR-008 « 4,6:1 » (4,54:1). Une reste ouverte — **UI-1**, le rang du motif
 d'audit : le front se dit 19ᵉ occurrence, les tableaux en recensent 18.
 
-## Demeure — 4b. Six chapitres
+## Levé — 4c. Les sections 18 et 19 sont écrites *(8 août 2026)*
 
-Manquent **18** (API), **19** (validation du modèle), **20** (alarmes),
-**21** (notifications), **22** (rejeu et sécurité), **24** (déploiement).
+`api/main.py` (1 830 l.) et `src/governance/model_validation.py` (834 l.) ont été
+**lus intégralement**. Chiffres produits par `scripts/collecte_chiffres_api.py` →
+`reports/chiffres_api.txt`, et relus dans `reports/model_validation.json`.
 
-§ 17.6 leur laisse deux prises fermes : le module `workflows` est servi et testé
-sans aucune interface, et `POST /api/auth/refresh` n'est appelé par personne.
-§ 17.8 en laisse une troisième : `alarms.py` fait **617** lignes et non 561 —
-`docs/bibliotheque/partie-audit.md`, la partie A et la consigne B4 portent tous trois la valeur
-périmée. **§20 doit partir de la mesure, pas de la consigne.**
+**§18 — Le contrat d'API.** Acquis :
+
+| grandeur | mesure |
+|---|---|
+| routes | 47 couples verbe+chemin, 46 chemins, 11 familles |
+| handlers calculant sur la boucle d'événements | **0** — la règle tient |
+| routes exigeant un rôle | 10 sur 47 |
+| paramètres bornés | 19 |
+| champs servis / jamais lus par l'écran | 79 / **35**, dont 11 sur des routes métier |
+
+**Trouvaille de §18** : `/api/equipment` sert `process_states` — les trois
+définitions `RUNNING` / `TRANSIENT` / `STOPPED` — précisément parce que
+« l'exploitant n'avait aucun moyen de savoir quel critère l'avait déclenché ».
+**Le serveur a été corrigé, l'écran ne l'a jamais été.** Même chose pour
+`status_reason`, ajouté pour qu'un jury lise *pourquoi* le service est `degraded`.
+Vingtième occurrence du motif — et la première où l'affichage porte une
+**absence** plutôt qu'une valeur fausse, ce qu'aucun banc de rendu ne peut
+attraper.
+
+**§19 — La validation du modèle.** Acquis : le plan d'expérience (4 plis, fenêtre
+croissante, écart causal mesuré à 25 h et non 24), la construction du PSI et sa
+correction d'epsilon, `seasonal_extrapolation`, et **l'origine de chacun des sept
+seuils de porte**. Un seul est importé d'un autre domaine — le 0,25 du PSI, venu
+du scoring de crédit — et le dépôt l'écrit à l'écran.
+
+**Correction propagée** : les valeurs de PSI **d'avant** la correction d'epsilon
+— « 1,989 / 3,745 » et « 73,8 / 100 / 5,9 / 0 % » — survivaient dans **quatre
+endroits**, dont le commentaire de `model_validation.py` lui-même, à vingt lignes
+du code qui implémente la correction. Valeurs réelles : **1,988 / 3,183 / 0,580 /
+0,068** et **76,5 / 100 / 5,2 / 12,8 %**. Corrigées à chaque occurrence.
+
+> `partie-audit.md` § 5.3 se contredisait **à dix lignes d'écart** : son tableau
+> annonçait 0 % d'extrapolation sur le pli 4, son propre paragraphe suivant
+> annonçait 12,8 % en expliquant que le 0 % était une erreur de calcul. Le texte
+> portait la correction, le tableau non.
+
+## Demeure — 4d. Quatre chapitres
+
+Manquent **20** (alarmes), **21** (notifications), **22** (rejeu et sécurité),
+**24** (déploiement).
+
+§ 17.6 et § 18.7 leur laissent deux prises fermes : le module `workflows` est
+servi et testé **sans aucune interface**, et `POST /api/auth/refresh` n'est
+appelé par personne. § 17.8 en laisse une troisième : `alarms.py` fait **617**
+lignes et non 561 — `docs/bibliotheque/partie-audit.md` et la consigne B4
+portent tous deux la valeur périmée. **§20 doit partir de la mesure, pas de la
+consigne.**
 
 ## Demeure — 5. Les figures
 

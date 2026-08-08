@@ -585,21 +585,27 @@ def validate_unsupervised_detector(
     # Mesure sur le corpus, pli par pli :
     #
     #   pli | heures de test hors de la plage d'eau de mer apprise |  PSI
-    #     1 |  73,8 %                                              | 1,989
-    #     2 | 100,0 %                                              | 3,745
-    #     3 |   5,9 %                                              | 0,580
-    #     4 |   0,0 %                                              | 0,068
+    #     1 |  76,5 %                                              | 1,988
+    #     2 | 100,0 %                                              | 3,183
+    #     3 |   5,2 %                                              | 0,580
+    #     4 |  12,8 %                                              | 0,068
     #
-    # La correspondance est parfaite et monotone. Le maximum publie — 3,7446,
-    # celui que le rapport cite — tombe sur le SEUL pli dont la fenetre de test
-    # est entierement hors de la plage d'eau de mer que l'apprentissage a vue,
-    # et le minimum sur le seul pli qui n'extrapole pas du tout.
+    # Relu dans `reports/model_validation.json` le 2026-08-08. Ce tableau
+    # portait « 73,8 / 1,989 / 3,745 / 5,9 / 0,0 » — les valeurs d'AVANT la
+    # correction d'epsilon implementee vingt lignes plus haut, dans ce meme
+    # fichier. Le code corrige, son commentaire non : rien n'execute un
+    # commentaire.
+    #
+    # La correspondance est parfaite et monotone. Le maximum publie — 3,1826 —
+    # tombe sur le SEUL pli dont la fenetre de test est entierement hors de la
+    # plage d'eau de mer que l'apprentissage a vue, et le minimum sur le pli
+    # qui extrapole le moins.
     #
     # CE QUE CELA REFUTE. La preuve affichee attribuait ce chiffre a « deux
     # excursions de sur-refroidissement » entre les deux moities de la periode.
     # Les plis 3 et 4 testent les periodes les PLUS TARDIVES, donc les plus
     # eloignees de la reference : cette explication predit qu'ils derivent le
-    # plus, et ils derivent le moins, d'un facteur cinquante-cinq. Une
+    # plus, et ils derivent le moins, d'un facteur quarante-sept. Une
     # affirmation juste par ailleurs, ecrite a cote de chiffres qui la
     # dementent.
     #
@@ -710,7 +716,7 @@ def validate_unsupervised_detector(
         #
         # `stable` valait `mean_rate <= max(0.15, contamination*5) and max_psi <= 0.25`.
         # Sur le corpus : taux d'alertes 7,8 % contre 15 % admis — FRANCHI ; PSI
-        # 3,745 contre 0,25 — echoue d'un facteur quinze. La porte n'echouait
+        # 3,183 contre 0,25 — echoue d'un facteur treize. La porte n'echouait
         # donc que sur le second terme, et entrainait le premier avec elle.
         #
         # Le taux d'alertes hors periode est une propriete que le code decide :

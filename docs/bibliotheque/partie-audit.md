@@ -345,28 +345,38 @@ Verrouillé par `test_une_porte_publiee_non_bloquante_n_empeche_pas_la_promotion
 
 ## 5.3 Le backtest 4 plis et le PSI — le passage le plus important
 
-`PSI_LIMIT = 0,25`. Valeurs mesurées par pli :
+`PSI_LIMIT = 0,25`. Valeurs mesurées par pli, relues dans
+`reports/model_validation.json` le 2026-08-08 :
 
 | pli | PSI |
 |---|---|
-| 1 | 1,989 |
-| 2 | 3,745 |
+| 1 | 1,988 |
+| 2 | **3,183** |
 | 3 | 0,580 |
 | 4 | 0,068 |
 
+> Ce tableau portait « 1,989 / 3,745 » — les valeurs d'**avant** la correction
+> d'epsilon décrite plus bas dans cette même section. Le texte expliquait la
+> correction ; le tableau gardait les chiffres qu'elle remplace.
+
 **La preuve publiée accusait « deux excursions de sur-refroidissement ». Les plis
 la réfutent** : les plis 3 et 4 testent les périodes **les plus récentes** et
-dérivent **le moins**, d'un facteur **55**. Une dérive réelle ferait l'inverse.
+dérivent **le moins**, d'un facteur **47** (3,183 / 0,068). Une dérive réelle ferait l'inverse.
 
 Cause réelle — correspondance **monotone parfaite** avec la part d'heures de test
 hors de la plage d'eau de mer apprise :
 
 | pli | heures hors plage | PSI |
 |---|---|---|
-| 1 | 73,8 % | 1,989 |
-| 2 | 100 % | 3,745 |
-| 3 | 5,9 % | 0,580 |
-| 4 | 0 % | 0,068 |
+| 1 | **76,5 %** | 1,988 |
+| 2 | 100 % | **3,183** |
+| 3 | **5,2 %** | 0,580 |
+| 4 | **12,8 %** | 0,068 |
+
+> La dernière ligne portait « 0 % », que le paragraphe *Extrapolation
+> saisonnière* dément dix lignes plus bas en annonçant 12,8 %. Deux valeurs de
+> la même grandeur, dans la même section, dont l'une est expliquée comme une
+> erreur corrigée — et l'autre restée dans le tableau.
 
 > **Le PSI mesure la couverture saisonnière du découpage, pas une dérive du
 > procédé.** Troisième banc du dépôt dont le dénominateur contenait des
@@ -658,8 +668,8 @@ cd C:\dev\ocp-bionic-judge
 | corr(résidu, écart consigne) | **−0,938** (arrondi −0,94) |
 | T eau de mer Safi | 17,0 → 22,0 °C |
 | `PSI_LIMIT` | 0,25 |
-| PSI par pli | 1,989 / 3,745 / 0,580 / 0,068 |
-| couverture hors plage | 73,8 / 100 / 5,9 / 0 % |
+| PSI par pli | 1,988 / 3,183 / 0,580 / 0,068 |
+| couverture hors plage | 76,5 / 100 / 5,2 / 12,8 % |
 | delta epsilon prédit / mesuré | 0,5622 / 0,5620 |
 | extrapolation saisonnière pli 4 | 12,8 % |
 | plis qualifiés | 0 |

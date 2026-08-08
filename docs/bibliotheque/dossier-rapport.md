@@ -61,7 +61,8 @@ chapitre à écrire.
 
 ### Le PSI ne mesure pas une dérive
 
-`PSI_LIMIT = 0,25`. Valeurs par pli : **1,989 / 3,745 / 0,580 / 0,068**.
+`PSI_LIMIT = 0,25`. Valeurs par pli : **1,988 / 3,183 / 0,580 / 0,068**
+(relues dans `reports/model_validation.json`, 2026-08-08).
 
 La preuve publiée accusait « deux excursions de sur-refroidissement ». Les plis
 la réfutent : **les plis 3 et 4 testent les périodes les PLUS RÉCENTES et dérivent
@@ -72,10 +73,10 @@ hors de la plage d'eau de mer apprise :
 
 | pli | couverture hors plage | PSI |
 |---|---|---|
-| 1 | 73,8 % | 1,989 |
-| 2 | 100 % | 3,745 |
-| 3 | 5,9 % | 0,580 |
-| 4 | 0 % | 0,068 |
+| 1 | 76,5 % | 1,988 |
+| 2 | 100 % | 3,183 |
+| 3 | 5,2 % | 0,580 |
+| 4 | 12,8 % | 0,068 |
 
 **Le PSI mesure la couverture saisonnière du découpage, pas une dérive du procédé.**
 Troisième banc du dépôt dont le dénominateur contenait des non-événements

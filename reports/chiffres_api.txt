@@ -1,0 +1,288 @@
+COLLECTE DES CHIFFRES DE L'API — 2026-08-08T19:21:59+00:00
+dépôt : /sessions/exciting-optimistic-fermi/mnt/ocp-bionic-judge
+
+==========================================================================
+1. LES ROUTES, PAR FAMILLE
+==========================================================================
+  fichier   : api/main.py, 1830 lignes
+  routes    : 47 couples verbe+chemin
+  chemins   : 46 distincts
+
+  (sans étiquette) — 1 route(s)
+      GET    /                                            dashboard
+
+  Acces — 5 route(s)
+      GET    /api/auth/audit                              auth_audit
+      POST   /api/auth/login                              auth_login
+      POST   /api/auth/logout                             auth_logout
+      POST   /api/auth/refresh                            auth_refresh
+      GET    /api/auth/status                             auth_status
+
+  Alarmes — 2 route(s)
+      GET    /api/alarms                                  alarm_registry
+      POST   /api/alarms/{alarm_id}/transition            alarm_transition
+
+  Analyse — 2 route(s)
+      POST   /api/analyze                                 analyze
+      GET    /api/notable                                 notable
+
+  Donnees — 5 route(s)
+      GET    /api/episodes                                episodes
+      GET    /api/sensor-health                           sensor_health
+      GET    /api/sensor/{alias}                          sensor_detail
+      GET    /api/timeseries                              timeseries
+      GET    /api/topology                                topology
+
+  Gouvernance — 4 route(s)
+      GET    /api/coverage                                coverage
+      GET    /api/detection/fouling-bench                 fouling_bench
+      GET    /api/model/validation                        model_validation
+      GET    /api/sensitivity                             sensitivity
+
+  Indicateurs — 1 route(s)
+      GET    /api/kpi                                     operational_kpi
+
+  Judge — 2 route(s)
+      GET    /api/judge/audit                             judge_audit
+      GET    /api/judge/evaluation                        judge_evaluation
+
+  Maintenance — 6 route(s)
+      GET    /api/workflows                               workflow_list
+      POST   /api/workflows                               workflow_create
+      GET    /api/workflows/templates                     workflow_templates
+      GET    /api/workflows/{workflow_id}                 workflow_detail
+      POST   /api/workflows/{workflow_id}/complete        workflow_complete
+      PATCH  /api/workflows/{workflow_id}/steps/{step_id} workflow_step_update
+
+  Notifications — 3 route(s)
+      POST   /api/notifications/governance                notification_governance
+      GET    /api/notifications/status                    notification_status
+      POST   /api/notifications/test                      notification_test
+
+  Sante — 5 route(s)
+      GET    /api/health/database                         database_health
+      GET    /api/health/live                             liveness
+      GET    /api/health/model                            model_availability
+      GET    /api/health/ready                            readiness
+      GET    /api/health/version                          version_health
+
+  Systeme — 4 route(s)
+      GET    /api/config                                  effective_config
+      GET    /api/equipment                               equipment
+      GET    /api/governance                              governance
+      GET    /api/health                                  health
+
+  Temps reel — 7 route(s)
+      GET    /api/replay/alerts                           replay_alerts
+      GET    /api/replay/disagreements                    replay_disagreements
+      POST   /api/replay/speed                            replay_speed
+      POST   /api/replay/start                            replay_start
+      GET    /api/replay/state                            replay_state
+      POST   /api/replay/stop                             replay_stop
+      GET    /api/replay/stream                           replay_stream
+
+
+==========================================================================
+2. RÈGLE DE DÉCLARATION DES HANDLERS
+==========================================================================
+  Un handler est `async def` UNIQUEMENT s'il `await`, ou si son corps
+  se limite à des lectures en mémoire. Tout ce qui calcule est `def` :
+  FastAPI l'exécute alors dans son pool de threads.
+
+  handlers `async def`            : 29
+  handlers `def`                  : 18
+  `async def` sans aucun `await`  : 17
+  dont declares CALCULANTS        : 0
+  dont hors de la liste toleree   : 0
+  handlers declares calculants    : 18
+  handlers asynchrones toleres    : 17
+      aucun — la regle tient
+
+  Le commentaire d'api/main.py annonce « 32 des 47 handlers » comme
+  etat D'ORIGINE, avant correction. Le decompte ci-dessus est l'etat
+  COURANT : les deux se lisent ensemble, jamais l'un pour l'autre.
+
+==========================================================================
+3. CONTRÔLE D'ACCÈS
+==========================================================================
+  Chemins publics — traversent le middleware sans session :
+      request.url.path == "/"
+      startswith("/assets/")
+      == "/api/health"
+      startswith("/api/health/")
+      startswith("/api/auth/")
+
+  routes exigeant un rôle : 10 sur 47
+    [administrator, maintenance, reliability_engineer]
+        PATCH /api/workflows/{workflow_id}/steps/{step_id}
+        POST /api/notifications/governance
+        POST /api/notifications/test
+        POST /api/workflows
+        POST /api/workflows/{workflow_id}/complete
+    [administrator, maintenance, operator, reliability_engineer]
+        POST /api/replay/speed
+        POST /api/replay/start
+        POST /api/replay/stop
+    [administrator]
+        GET /api/auth/audit
+    [administrator, reliability_engineer]
+        GET /api/judge/evaluation
+
+  routes de mutation : 13
+  dont sans exigence de rôle explicite : 5
+      POST   /api/auth/login
+      POST   /api/auth/logout
+      POST   /api/auth/refresh
+      POST   /api/alarms/{alarm_id}/transition
+      POST   /api/analyze
+
+  CSRF : jeton exigé sur POST/PUT/PATCH/DELETE, sauf login et logout
+         (2 occurrences de l'en-tête dans le service)
+  en-têtes de défense posés par `_durcir` : 8
+
+==========================================================================
+4. PARAMÈTRES DE REQUÊTE ET LEURS BORNES
+==========================================================================
+  GET /api/auth/audit
+      limit            défaut 100, ge=1, le=500
+  GET /api/alarms
+      active_only      défaut True
+      limit            défaut 100, ge=1, le=500
+  GET /api/notable
+      limit            défaut 20, ge=1, le=100
+  GET /api/episodes
+      limit            défaut 50, ge=1, le=500
+  GET /api/sensor/{alias}
+      window_h         défaut 504, ge=6, le=20000
+      end              défaut None
+      max_points       défaut 700, ge=50, le=5000
+  GET /api/timeseries
+      start            défaut None
+      end              défaut None
+      max_points       défaut 1500, ge=100, le=20000
+  GET /api/detection/fouling-bench
+      severities       défaut 0.05,0.10,0.20,0.30
+      duration_days    défaut 60, ge=14, le=180
+  GET /api/judge/evaluation
+      n_cases          défaut 8, ge=2, le=30
+  GET /api/workflows
+      limit            défaut 100, ge=1, le=500
+  GET /api/replay/alerts
+      n                défaut 40, ge=1, le=500
+  GET /api/replay/disagreements
+      n                défaut 20, ge=1, le=200
+  POST /api/replay/speed
+      speed            défaut Ellipsis, gt=0, le=100000
+  GET /api/replay/stream
+      n                défaut 40, ge=1, le=500
+
+  19 paramètres bornés au total. Une borne absente est une dénégation de service offerte.
+
+==========================================================================
+5. CHAMPS SERVIS, ET CEUX QUE L'ÉCRAN NE LIT JAMAIS
+==========================================================================
+  champs de premier niveau servis (dict littéraux) : 79
+  jamais lus par api/static/app.js                 : 35
+
+  ATTENTION A LA PORTEE DE CE CONSTAT. Un champ non lu par le poste
+  n'est pas mort : il peut servir a un orchestrateur, a un test, ou
+  a un lecteur de la documentation OpenAPI. Le controle dit ce qu'il
+  mesure — ce que L'ECRAN ignore — et rien de plus.
+
+    GET /api/sensor/{alias}
+        criticality_link
+        kind
+    GET /api/kpi
+        stabilite_regulation
+    GET /api/judge/evaluation
+        report
+    POST /api/notifications/governance
+        accepted
+    POST /api/notifications/test
+        accepted
+    GET /api/health/database
+        alarm_store
+        reasons
+        workflow_store
+    GET /api/health/live
+        version
+    GET /api/health/model
+        approved_for_production
+        artifact_rejection_reason
+        promotion_status
+        runtime_available
+        scientific_claim
+    GET /api/health/ready
+        checks
+    GET /api/health/version
+        application
+        model_promotion_status
+        model_runtime_signature
+        rule_version
+    GET /api/equipment
+        baremes
+        partially_observable
+        process_states
+        tag_registry_change_history
+    GET /api/health
+        agent_mode
+        judge_mode
+        liveness
+        model_promotion_status
+        n_samples
+        readiness
+        ready_for_demo
+        ready_for_production
+        sampling
+        status_reason
+        version
+
+==========================================================================
+6. LES SONDES DE SANTÉ
+==========================================================================
+  6 sondes servies :
+      GET   /api/health/database       lecture réelle des deux registres SQLite, 503 + motifs
+      GET   /api/health/live           liveness Kubernetes / Docker HEALTHCHECK
+      GET   /api/health/model          état de promotion du modèle, distinct de sa disponibilité
+      GET   /api/health/ready          readiness — 503 tant que la chaîne n'est pas construite
+      GET   /api/health/version        versions applicative et signature du détecteur
+      GET   /api/health                synthèse humaine — lue par le poste au démarrage
+
+  réponses 503 explicites dans le service : 5
+
+==========================================================================
+7. MODÈLES DE REQUÊTE
+==========================================================================
+  LoginRequest — 2 champ(s)
+      email              min_length=5, max_length=254
+      password           min_length=1, max_length=1024
+
+  AlarmTransitionRequest — 2 champ(s)
+      action             pattern='^(acknowledge|shelve|unshelve|close)$'
+      comment            max_length=1000
+
+  WorkflowCreateRequest — 3 champ(s)
+      template_id        pattern='^(INSPECTION_EXTERNE|INSPECTION_INTERNE|TAMPONNAGE)$'
+      owner              min_length=2, max_length=254
+      planned_at         max_length=64
+
+  WorkflowStepRequest — 6 champ(s)
+      status             pattern='^(TODO|IN_PROGRESS|BLOCKED|COMPLETED|NOT_APPLICABLE)$'
+      measurement        max_length=500
+      unit               max_length=32
+      comment            max_length=1000
+      proof_ref          max_length=500
+      expected_version   ge=1
+
+  WorkflowCompleteRequest — 2 champ(s)
+      signature          min_length=2, max_length=254
+      proof_ref          max_length=500
+
+  AnalyzeRequest — 1 champ(s)
+      timestamp          
+
+  ReplayConfig — 3 champ(s)
+      speed              gt=0, le=100000
+      start              
+      analyze_every      ge=1, le=24
+
