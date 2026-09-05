@@ -1702,113 +1702,6 @@ const MESURE_LABEL = {
  * `test_les_portes_publiees_ont_toutes_un_intitule_a_l_ecran` l'interdit
  * désormais.
  */
-const GATE_LABEL = {
-  causalite_temporelle: "Causalité temporelle",
-  redondance_features: "Redondance des grandeurs",
-  redondance_hors_modele: "Redondance hors modèle",
-  stabilite_hors_periode: "Stabilité hors référence",
-  derive_de_distribution: "Dérive de distribution",
-  labels_gmao: "Vérité terrain GMAO",
-  validation_externe: "Validation externe",
-};
-
-function renderValidation(report) {
-  const gates = report?.deployment_gates || [];
-  const passed = gates.filter((g) => g.passed).length;
-  const chip = $("validationChip");
-  chip.textContent = `${passed} / ${gates.length} portes franchies`;
-  chip.dataset.tone = passed === gates.length ? "ok" : passed >= gates.length - 1 ? "warn" : "fault";
-
-  const gen = report?.generated_from || {};
-  const audit = report?.feature_audit || {};
-  const bt = report?.temporal_backtest || {};
-
-  const cells = [
-    ["Plis temporels", gen.n_splits ?? (bt.folds || []).length, "apprentissage strictement sur le passé"],
-    ["Gap train / test", gen.gap_calendar_hours ? `${gen.gap_calendar_hours} h` : "—", "empêche la fuite temporelle"],
-    ["Features", audit.n_features ?? "—", `conditionnement ${fmt(audit.condition_number, 2)}`],
-    ["Paires redondantes", (audit.redundant_pairs_abs_r_ge_0_90 || []).length, "|r| ≥ 0,90 entre features"],
-  ];
-
-  // Les portes portent un code machine en snake_case. L'écran affichait
-  // « CAUSALITE TEMPORELLE » et « STABILITE HORS PERIODE » — le code
-  // désoulignné, sans accents. Le code reste la référence pour l'API et les
-  // tests ; l'écran affiche l'intitulé métier.
-  const gateCells = gates.map((g) => [
-    GATE_LABEL[g.gate] || g.gate.replace(/_/g, " "),
-    g.passed ? "franchie" : "non franchie",
-    g.evidence || "",
-  ]);
-
-  // LA PREUVE ÉTAIT COUPÉE À 120 CARACTÈRES, ET C'EST LA RÉSERVE QUI TOMBAIT.
-  //
-  // Les preuves des portes font 300 à 500 caractères depuis qu'elles portent
-  // leur réserve — l'origine credit-scoring du seuil PSI, le caractère
-  // algébrique de la redondance hors modèle, ADR-001. Toutes ces phrases sont
-  // placées APRÈS la mesure, donc toutes tombaient. L'exploitant lisait
-  // « PSI max 3,745 […] pour 0,25 admis » et rien de ce qui en relativise la
-  // portée : le chiffre nu, sans ce qui le rend défendable.
-  //
-  // Le texte est désormais rendu en entier. C'est la seule partie de cet écran
-  // qu'un jury lit ligne à ligne.
-  $("valid").innerHTML = [...cells, ...gateCells].map(([k, v, s]) => `
-    <div class="valid-cell">
-      <span class="micro">${esc(k)}</span>
-      <strong style="${v === "non franchie" ? "color:var(--warn)" : ""}">${esc(v ?? "—")}</strong>
-      <small>${esc(String(s))}</small>
-    </div>`).join("");
-
-  $("controlLimits").innerHTML = (report?.limitations || [])
-    .map((l) => `<li>${esc(l)}</li>`).join("");
-}
-
-function renderBench(result) {
-  const s = result?.summary || {};
-  const aveugle = s.blind_mutations || {};
-  $("benchScore").textContent = fmt(s.separation, 2);
-
-  // LE CHIFFRE DE GÉNÉRALISATION ÉTAIT CALCULÉ, PUIS PERDU.
-  //
-  // Le projet construit deux mesures et explique partout que seule la seconde
-  // vaut quelque chose : la non-régression des huit contrôles face à des
-  // pièges conçus contre eux, et la généralisation face à des mutations qui
-  // n'en visent aucun. Ce panneau n'affichait que la première. Le lecteur
-  // repartait avec le taux flatteur, et l'aveu restait dans le code.
-  $("benchMeta").innerHTML = `
-    <span data-key="true">
-      <strong data-alert="${(aveugle.flagged_rate ?? 1) < 0.5}">${
-        aveugle.flagged_rate === undefined ? "—" : `${fmt(aveugle.flagged_rate * 100, 0)} %`
-      }</strong>fautes d'un genre non anticipé
-    </span>
-    <span><strong>${fmt((s.trap_success_rate ?? 0) * 100, 0)} %</strong>pièges conçus : vus ET sanctionnés</span>
-    <span><strong>${fmt((s.trap_detection_rate ?? 0) * 100, 0)} %</strong>pièges conçus : vus</span>
-    <span><strong>${fmt(s.clean_score_mean, 2)}</strong>note des cas sains</span>
-    <span><strong>${fmt((s.false_positive_rate ?? 0) * 100, 0)} %</strong>faux positifs</span>`;
-
-  const traps = result?.by_trap || [];
-  if (!traps.length) return;
-
-  // Le tableau est trié par note croissante : la première ligne est la faute
-  // que le contrôleur sanctionne le moins fermement, c'est-à-dire son point
-  // faible. Trier par ordre alphabétique, comme auparavant, plaçait douze
-  // « 100 % » les uns sous les autres sans rien hiérarchiser.
-  const tries = [...traps].sort((a, b) => (a.score_mean ?? 0) - (b.score_mean ?? 0));
-  $("bench").innerHTML = `
-    <p class="panel-note">Ces pièges sont <b>conçus</b> contre les huit contrôles :
-       un taux de détection élevé mesure la non-régression, pas la capacité à
-       repérer une faute d'un genre nouveau. La colonne qui informe est la
-       <b>note</b> : plus elle est basse, plus la sanction est ferme.</p>
-    <div class="tbl"><table>
-    <thead><tr><th>Faute injectée</th><th>Cas</th><th>Détection</th><th>Sanction</th><th>Note</th></tr></thead>
-    <tbody>${tries.map((t) => `<tr>
-      <td>${esc(t.trap)}</td>
-      <td class="num">${t.n}</td>
-      <td class="num">${fmt(t.detection_rate, 0)} %</td>
-      <td class="num">${fmt(t.penalty_rate, 0)} %</td>
-      <td class="num" data-alert="${(t.score_mean ?? 0) > 7}">${fmt(t.score_mean, 2)}</td></tr>`).join("")}
-    </tbody></table></div>`;
-}
-
 function renderFlagRate(kpi) {
   const monthly = kpi?.signalement_mensuel || [];
   const figure = (kpi?.figures || []).find((f) => f.label.includes("signalement"));
@@ -1949,53 +1842,6 @@ const BASE_LABEL = {
   climatology: "climatologie",
 };
 
-function renderSensitivity(payload) {
-  if (!payload) return;
-  const cont = payload.contamination;
-  const per = payload.periode_reference;
-
-  const contRows = cont.grid.map((g) => `<tr${g.contamination === cont.valeur_retenue ? ' class="is-on"' : ""}>
-      <td class="num">${fmt(g.contamination * 100, 1)} %</td>
-      <td class="num">${fmt(g.taux_signalement_pct, 2)} %</td>
-      <td class="num">×${fmt(g.ratio_sur_cible, 2)}</td>
-      <td class="num">${g.heures_signalees} h</td></tr>`).join("");
-
-  // LA COLONNE QUI COMPTE EST CELLE DE L'ENCRASSEMENT.
-  // Le tableau ne publiait que la dérive du résidu d'entrée — une grandeur de
-  // contexte — et sa lecture concluait pourtant sur le coefficient d'échange.
-  // C'est la part d'heures que le système déclarerait en encrassement qui
-  // décide du résultat central du projet ; elle figure donc ici, en dernière
-  // colonne, avec sa qualité d'ajustement.
-  const perRows = per.grid.map((g) => `<tr${g.fraction_reference === per.valeur_retenue ? ' class="is-on"' : ""}>
-      <td class="num">${fmt(g.fraction_reference * 100, 0)} %</td>
-      <td class="num">${esc(String(g.fin_reference).slice(0, 10))}</td>
-      <td class="num">${fmt(g.r2_ua, 3)}</td>
-      <td class="num">${g.min_ua_trend_sigma === null ? "—" : `${fmt(g.min_ua_trend_sigma, 2)} σ`}</td>
-      <td class="num" data-alert="${g.part_fouling_pct > 0}">
-        <b>${fmt(g.part_fouling_pct, 1)} %</b></td></tr>`).join("");
-
-  $("sensBox").innerHTML = `
-    <div class="sens-grid">
-      <div>
-        <span class="micro">Contamination du détecteur</span>
-        <div class="tbl"><table>
-          <thead><tr><th>Réglage</th><th>Taux réel</th><th>Écart</th><th>Heures</th></tr></thead>
-          <tbody>${contRows}</tbody></table></div>
-        <p class="sens-note">${esc(cont.reading)}</p>
-      </div>
-      <div>
-        <span class="micro">Période de référence · effet sur le diagnostic d'encrassement</span>
-        <div class="tbl"><table>
-          <thead><tr>
-            <th>Fenêtre</th><th>Fin</th><th>R² UA</th>
-            <th>UA min</th><th>Heures en encrassement</th>
-          </tr></thead>
-          <tbody>${perRows}</tbody></table></div>
-        <p class="sens-note" data-alert="${per.sensible}">${esc(per.reading)}</p>
-      </div>
-    </div>`;
-}
-
 /**
  * Banc d'injection d'encrassement.
  *
@@ -2010,51 +1856,6 @@ function renderSensitivity(payload) {
  * Le tableau est trie par severite croissante : on lit d'abord le cas le plus
  * discret, qui est celui qui met la detection en difficulte.
  */
-function renderBenchFouling(payload) {
-  if (!payload) return;
-  const cases = [...payload.cases].sort((a, b) => a.perte_UA_pct - b.perte_UA_pct);
-  const rows = cases.map((c) => {
-    const utile = c.advancement_at_detection !== null
-      && c.advancement_at_detection <= payload.useful_advancement_threshold;
-    return `<tr>
-      <td class="num"><b>${fmt(c.perte_UA_pct, 0)} %</b></td>
-      <td class="num">${c.duration_days} j</td>
-      <td>${c.detected ? sevMark(utile ? "WARNING" : "INFO") : sevMark("NORMAL")}</td>
-      <td class="num" data-alert="${c.detected && !utile}">${
-        c.advancement_at_detection === null ? "—" : `${fmt(c.advancement_at_detection * 100, 0)} %`}</td>
-      <td class="num">${c.latency_h === null ? "—" : `${fmt(c.latency_h / 24, 0)} j`}</td>
-      <td class="num">${fmt(c.peak_ua_residual_z, 1)} σ</td></tr>`;
-  }).join("");
-
-  const plusPetite = payload.smallest_loss_detected_pct;
-  $("foulingBench").innerHTML = `
-    <div class="bench-heads">
-      <div>
-        <span class="micro">Avancement médian à la détection</span>
-        <strong data-alert="${(payload.median_advancement_at_detection ?? 1) > 0.5}">${
-          payload.median_advancement_at_detection === null ? "—"
-            : `${fmt(payload.median_advancement_at_detection * 100, 0)} %`}</strong>
-      </div>
-      <div>
-        <span class="micro">Faux positifs témoin</span>
-        <strong data-alert="${payload.false_positive_rate > 0.02}">${
-          fmt(payload.false_positive_rate * 100, 1)} %</strong>
-      </div>
-      <div>
-        <span class="micro">Plus petite perte vue</span>
-        <strong>${plusPetite === null ? "—" : `${fmt(plusPetite, 0)} %`}</strong>
-      </div>
-    </div>
-    <p class="sens-note">${esc(payload.reading)}</p>
-    <div class="tbl"><table>
-      <thead><tr>
-        <th>Perte de UA</th><th>Durée</th><th>Vu</th>
-        <th>Avancement</th><th>Délai</th><th>Écart max</th>
-      </tr></thead>
-      <tbody>${rows}</tbody></table></div>
-    <ul class="limits">${payload.limitations.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>`;
-}
-
 /**
  * État du canal e-mail : à qui partent réellement les alertes critiques.
  *
@@ -2063,67 +1864,14 @@ function renderBenchFouling(payload) {
  * SMTP absent, ou aucune session ouverte.
  */
 function renderMail(status) {
-  if (!status) return;
-  const chip = $("mailChip");
-  chip.textContent = status.enabled ? "Actif" : "Inactif";
-  chip.dataset.tone = status.enabled ? "ok" : status.transport_ready ? "warn" : "fault";
-
-  const MODE = {
-    smtp: "relais SMTP",
-    depot: "dépôt local (aucun relais)",
-    inactif: "aucun exutoire",
-  };
-  const lines = [
-    ["Acheminement", MODE[status.mode] || "—"],
-    ["Destinataire", status.recipient || "aucun"],
-    ["Sessions destinataires", status.active_recipients],
-    ["Sévérité minimale", status.minimum_severity],
-    ["Anti-répétition", `${status.cooldown_minutes} min`],
-    ["Envoyés / déposés", `${status.sent} / ${status.spooled ?? 0}`],
-    ["Échoués / retenus", `${status.failed} / ${status.suppressed ?? 0}`],
-  ];
-
-  // LE JOURNAL EST LA PREUVE QUE LA CHAINE VIT.
-  // Un compteur à zéro ne distingue pas « rien à escalader » de « canal
-  // mort ». Le journal, lui, montre chaque message que le poste a décidé
-  // d'émettre et ce qu'il en est advenu — y compris quand rien n'est parti.
-  const journal = status.journal || [];
-  const ETAT = {
-    envoye: ["ok", "envoyé"],
-    depose: ["warn", "déposé"],
-    echec: ["fault", "échec"],
-  };
-
-  $("mailBox").innerHTML = `
-    ${status.reason ? `<p class="mail-reason">${esc(status.reason)}</p>` : ""}
-    <dl class="drawer-facts">
-      ${lines.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("")}
-    </dl>
-    <p class="sens-note">
-      L'adresse saisie à l'ouverture de session devient destinataire des états
-      critiques retenus par le contrôleur, et cesse de l'être à la déconnexion.
-      ${status.requires_judge_agreement
-        ? "Une décision rejetée par le contrôleur ne déclenche aucun envoi ; elle est comptée dans « retenus »."
-        : ""}
-      ${status.last_error ? `<br><b>Dernière erreur :</b> ${esc(status.last_error)}` : ""}
-    </p>
-    <h3 class="mail-journal-title">Journal d'escalade</h3>
-    ${journal.length ? `<ul class="mail-journal">${journal.map((e) => {
-      const [tone, label] = ETAT[e.etat] || ["", e.etat];
-      return `<li data-tone="${tone}">
-        <span class="mail-when">${esc(String(e.horodatage).replace("T", " ").replace("+00:00", " UTC"))}</span>
-        <b>${esc(e.objet)}</b>
-        <span class="mail-state">${esc(label)}</span>
-        <span class="mail-to">${esc(e.destinataire)}</span>
-        ${e.detail ? `<em>${esc(e.detail)}</em>` : ""}
-      </li>`;
-    }).join("")}</ul>`
-    : `<p class="void">Aucune escalade émise depuis le démarrage du poste.
-         Sur les quatorze mois disponibles, un seul instant atteint la sévérité
-         critique en marche établie : le journal reste vide tant que le rejeu ne
-         l'a pas franchi.</p>`}`;
-
-  for (const id of ["mailTest", "mailGov"]) $(id).disabled = !status.enabled;
+  const chip = $('mailChip');
+  if (!status) { chip.textContent = '—'; chip.dataset.tone = 'fault'; return; }
+  const enabled = status.enabled ?? status.configured ?? false;
+  chip.textContent = enabled ? 'Actif' : 'Inactif';
+  chip.dataset.tone = enabled ? 'ok' : 'fault';
+  const box = $('mailBox');
+  if (!enabled) { box.innerHTML = '<p class="void">SMTP non configuré</p>'; return; }
+  box.innerHTML = '<p>Envois: ' + (status.sent_count ?? 0) + ' | Destinataires: ' + (status.recipient_count ?? 0) + '</p>';
 }
 
 /**
@@ -2210,19 +1958,11 @@ async function start() {
 
   // Les elements lents ne bloquent pas l'affichage du poste.
   api("/api/kpi").then((k) => { renderKpi(k); renderFlagRate(k); }).catch(() => {});
-  api("/api/model/validation").then(renderValidation).catch(() => {});
-  api("/api/judge/evaluation").then(renderBench).catch(() => { $("benchScore").textContent = "—"; });
   api("/api/judge/audit").then(renderAudit).catch(() => {});
   api("/api/coverage").then(renderCoverage).catch(() => {});
   api("/api/alarms?active_only=true&limit=100").then(renderAlarms).catch(() => {});
   api("/api/workflows/templates").then(renderTemplates).catch(() => {});
   api("/api/notifications/status").then(renderMail).catch(() => {});
-  api("/api/sensitivity").then(renderSensitivity).catch(() => {
-    $("sensBox").innerHTML = '<p class="void">Analyse indisponible.</p>';
-  });
-  api("/api/detection/fouling-bench?severities=0.05,0.10,0.20,0.30&duration_days=60")
-    .then(renderBenchFouling)
-    .catch(() => { $("foulingBench").innerHTML = '<p class="void">Banc indisponible.</p>'; });
 
   await loadSeries(true);
   await pump();
@@ -2371,46 +2111,6 @@ function wire() {
   });
 
   $("amdecFilter").addEventListener("input", (e) => renderAmdec(e.target.value));
-
-  $("runBench").addEventListener("click", async (e) => {
-    const btn = e.currentTarget;
-    btn.disabled = true;
-    btn.textContent = "Injection en cours…";
-    try {
-      renderBench(await api("/api/judge/evaluation?n_cases=12"));
-      toast("Banc d'injection relancé", "ok");
-    } catch (err) { toast(err.message, "fault"); }
-    btn.disabled = false;
-    btn.textContent = "Relancer un échantillon";
-  });
-
-  $("runFouling").addEventListener("click", async (e) => {
-    const btn = e.currentTarget;
-    btn.disabled = true;
-    btn.textContent = "Injection…";
-    try {
-      renderBenchFouling(
-        await api("/api/detection/fouling-bench?severities=0.05,0.10,0.15,0.20,0.30&duration_days=60"),
-      );
-      toast("Banc d'injection rejoué", "ok");
-    } catch (err) { toast(err.message, "fault"); }
-    btn.disabled = false;
-    btn.textContent = "Rejouer le banc";
-  });
-
-  const sendMail = (path, label) => async (e) => {
-    const btn = e.currentTarget;
-    btn.disabled = true;
-    try {
-      await api(path, { method: "POST" });
-      toast(`${label} placé dans la file d'envoi`, "ok");
-      renderMail(await api("/api/notifications/status"));
-    } catch (err) { toast(err.message, "fault"); }
-    btn.disabled = false;
-  };
-  $("mailTest").addEventListener("click", sendMail("/api/notifications/test", "E-mail de test"));
-  $("mailGov").addEventListener("click",
-    sendMail("/api/notifications/governance", "Synthèse de gouvernance"));
 
   $$("[data-alarms]").forEach((b) => b.addEventListener("click", () => {
     $$("[data-alarms]").forEach((o) => o.classList.toggle("is-on", o === b));

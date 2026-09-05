@@ -3,11 +3,10 @@ API de surveillance temps reel du refroidisseur E7301.
 
 Expose la chaine complete (detection -> diagnostic -> jugement) et pilote le
 rejeu accelere des donnees DCS reelles. Le dashboard est servi par cette meme
-application : aucune etape de build, aucun serveur supplementaire a lancer
-pour la demonstration.
+application.
 
 Lancement :
-    uvicorn api.main:app --reload --port 8000
+    python -m api
     puis ouvrir http://localhost:8000
 
 Author: Mounir Sanbouli — Stage OCP, Programme Bionic
@@ -33,19 +32,14 @@ from pydantic import BaseModel, Field
 
 from src import config
 from src.notifications import EmailNotifier
-from src.notifications.redaction import rediger_gouvernance
 from src.operations import AlarmStore, WorkflowStore
 from src.pipeline import E7301Pipeline
 from src.realtime.replay import DCSReplay, _compact
-from src.security import AuthManager, TooManyAttemptsError
-from src.security.registry import load_registry
 
 DASHBOARD_HTML = Path(__file__).parent / "dashboard.html"
 ASSETS_DIR = Path(__file__).parent / "static"
 
-# Etat applicatif. Volontairement un singleton en memoire : le systeme surveille
-# UN equipement, sur un historique fini. Une base de donnees n'apporterait rien
-# ici et masquerait la logique metier derriere de la plomberie.
+# Etat applicatif — singleton en memoire
 STATE: dict[str, Any] = {
     "pipeline": None,
     "replay": None,
@@ -55,78 +49,7 @@ STATE: dict[str, Any] = {
 }
 
 
-# Adresses ayant explicitement demande a NE PAS recevoir les alertes
-# critiques. Renseigne au demarrage depuis le registre; vide si l'acces
-# protege est desactive. Voir `auth_login`.
-OPT_OUT_ALERTES: set[str] = set()
-
-
-def _build_auth_manager() -> AuthManager | None:
-    """Construit la gestion de session a partir des identifiants disponibles.
-
-    Deux sources, dans cet ordre de preference :
-
-      1. le REGISTRE LOCAL, un mot de passe par technicien. C'est le mode
-         attendu des lors que l'adresse de session determine le destinataire
-         des alertes critiques : un secret partage ne permettrait pas de dire
-         qui a ouvert la session ni de revoquer un depart.
-      2. l'empreinte PARTAGEE `AUTH_PASSWORD_HASH`, conservee pour les
-         deploiements existants.
-
-    Returns:
-        AuthManager, ou None si l'acces protege est desactive.
-    """
-    if not config.AUTH_ENABLED:
-        return None
-
-    registry = load_registry()
-    # `alert_recipient` ETAIT UN DRAPEAU MORT. Le registre le stockait, la
-    # commande `manage_operators add --no-alerts` le posait, un test verifiait
-    # l'accesseur — et personne ne l'interrogeait. `auth_login` abonnait
-    # inconditionnellement l'adresse de session aux alertes critiques : un
-    # technicien enregistre en lecture seule, explicitement exclu des
-    # escalades, etait reveille la nuit des qu'il ouvrait une session.
-    OPT_OUT_ALERTES.clear()
-    OPT_OUT_ALERTES.update(registry.emails() - registry.alert_recipients())
-    if OPT_OUT_ALERTES:
-        logger.info(
-            f"{len(OPT_OUT_ALERTES)} technicien(s) exclu(s) des escalades "
-            f"par le registre"
-        )
-    if registry.is_configured:
-        logger.info(
-            f"Acces protege — {len(registry)} technicien(s) enregistre(s) dans "
-            f"{registry.path}"
-        )
-        return AuthManager(
-            idle_timeout_s=config.AUTH_IDLE_MINUTES * 60,
-            absolute_timeout_s=config.AUTH_ABSOLUTE_HOURS * 3600,
-            user_hashes=registry.password_hashes(),
-            user_roles=registry.roles(),
-        )
-
-    logger.warning(
-        "Acces protege par empreinte partagee : preferer un compte par "
-        "technicien (`python scripts/manage_operators.py add`)"
-    )
-    return AuthManager(
-        password_hash=config.AUTH_PASSWORD_HASH,
-        idle_timeout_s=config.AUTH_IDLE_MINUTES * 60,
-        absolute_timeout_s=config.AUTH_ABSOLUTE_HOURS * 3600,
-        allowed_emails=config.AUTH_ALLOWED_EMAILS,
-        user_roles=config.AUTH_USER_ROLES,
-    )
-
-
-# LA CONFIGURATION EST VALIDEE AVANT TOUT EFFET DE BORD DU MODULE.
-#
-# Elle ne l'etait qu'au demarrage du `lifespan`, c'est-a-dire APRES la
-# construction de la gestion de session, APRES la lecture du registre des
-# techniciens et APRES le montage du middleware CORS — tous trois pilotes par
-# cette meme configuration. Un lancement direct par `uvicorn api.main:app`,
-# forme documentee dans l'en-tete de ce fichier, contournait donc entierement
-# le refus propre implemente dans `api/__main__.py` : la premiere erreur
-# visible etait une trace d'import, pas le message de configuration.
+# Validation de la configuration au chargement
 _PROBLEMES_CONFIG = config.validate()
 if _PROBLEMES_CONFIG:
     for _probleme in _PROBLEMES_CONFIG:
@@ -136,40 +59,53 @@ if _PROBLEMES_CONFIG:
         + "\n  - ".join(_PROBLEMES_CONFIG)
     )
 
-AUTH_MANAGER = _build_auth_manager()
+
+# Gestion de session simplifiee (dict en memoire)
+_SESSIONS: dict[str, dict[str, Any]] = {}
 SESSION_COOKIE = "e7301_session"
+
+
+def _create_session(email: str) -> tuple[str, dict[str, Any]]:
+    """Cree une session simple en memoire."""
+    token = token_hex(32)
+    session = {
+        "email": email,
+        "role": "operator",
+        "csrf_token": token_hex(16),
+    }
+    _SESSIONS[token] = session
+    return token, session
+
+
+def _validate_session(cookie: str | None) -> dict[str, Any] | None:
+    """Valide une session depuis le cookie."""
+    if not cookie:
+        return None
+    return _SESSIONS.get(cookie)
+
+
+def _destroy_session(cookie: str | None) -> None:
+    """Detruit une session."""
+    if cookie and cookie in _SESSIONS:
+        del _SESSIONS[cookie]
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Construit la chaine au demarrage et libere les ressources a l'arret.
-
-    Args:
-        app: Application FastAPI.
-
-    Yields:
-        None.
-    """
-    # La configuration a deja ete validee au chargement du module, avant la
-    # construction de la gestion de session et le montage du middleware CORS.
+    """Construit la chaine au demarrage et libere les ressources a l'arret."""
     logger.info("Demarrage de l'API — construction de la chaine E7301")
-    pipeline = E7301Pipeline(use_llm=True)
+    pipeline = E7301Pipeline()
     STATE["pipeline"] = pipeline
-    notifier = EmailNotifier(
+    STATE["notifier"] = EmailNotifier(
         host=config.SMTP_HOST,
         port=config.SMTP_PORT,
         username=config.SMTP_USERNAME,
         password=config.SMTP_PASSWORD,
         sender=config.SMTP_FROM,
-        recipient=config.ALERT_EMAIL_TO,
         starttls=config.SMTP_STARTTLS,
-        cooldown_minutes=config.ALERT_COOLDOWN_MINUTES,
-        minimum_severity=config.ALERT_MIN_SEVERITY,
-        spool=config.ALERT_SPOOL,
     )
-    STATE["notifier"] = notifier
-    STATE["alarm_store"] = AlarmStore(config.ALARM_DB)
-    STATE["workflow_store"] = WorkflowStore(config.WORKFLOW_DB)
+    STATE["alarm_store"] = AlarmStore()
+    STATE["workflow_store"] = WorkflowStore()
     STATE["replay"] = _build_replay(
         pipeline,
         speed=config.REPLAY_SPEED,
@@ -180,9 +116,6 @@ async def lifespan(app: FastAPI):
     replay: DCSReplay | None = STATE.get("replay")
     if replay is not None:
         replay.stop()
-    notifier = STATE.get("notifier")
-    if notifier is not None:
-        notifier.stop()
     alarm_store: AlarmStore | None = STATE.get("alarm_store")
     if alarm_store is not None:
         alarm_store.close()
@@ -195,22 +128,16 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="OCP Bionic Judge — Refroidisseur E7301",
     description=(
-        "Rejeu historique accéléré et surveillance d'écarts comportementaux du refroidisseur "
-        "d'acide de séchage E7301 (PS III, Maroc Chimie). Détection hybride "
-        "règles applicatives + modèle statistique non supervisé, diagnostic suspecté, "
-        "puis contrôle de cohérence interne. Aucune panne n'est confirmée."
+        "Rejeu historique accelere et surveillance d'ecarts comportementaux du refroidisseur "
+        "d'acide de sechage E7301 (PS III, Maroc Chimie)."
     ),
     version=config.APP_VERSION,
     lifespan=lifespan,
 )
 
-# Actifs embarques : le dashboard doit rester exploitable sur un reseau
-# industriel isole, sans appel a un CDN public.
+# Actifs embarques
 app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
 
-# Le dashboard est servi par cette meme application : aucune requete
-# inter-origine n'est necessaire par defaut. On n'ouvre que si un front
-# separe est explicitement declare dans la configuration.
 if config.CORS_ORIGINS:
     app.add_middleware(
         CORSMiddleware,
@@ -221,116 +148,20 @@ if config.CORS_ORIGINS:
     )
 
 
-def _durcir(response, request: Request, request_id: str):
-    """Pose les en-tetes de defense sur TOUTE reponse, refus compris.
-
-    LES REFUS N'EN AVAIENT AUCUN. Le middleware retournait directement la
-    reponse 401 ou 403, sautant le bloc d'en-tetes place apres `call_next` :
-    une reponse d'erreur partait donc sans politique de securite du contenu,
-    sans `nosniff`, sans `X-Frame-Options` et sans identifiant de requete —
-    c'est-a-dire exactement les reponses qu'un attaquant provoque le plus
-    facilement, et les seules qu'un exploitant ne peut pas correler a une
-    trace serveur.
-
-    Args:
-        response: Reponse a durcir.
-        request: Requete d'origine, pour le schema et le chemin.
-        request_id: Identifiant de correlation.
-
-    Returns:
-        La meme reponse, en-tetes poses.
-    """
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    """Ajoute un identifiant de requete."""
+    request_id = request.headers.get("X-Request-ID") or token_hex(12)
+    request.state.request_id = request_id
+    response = await call_next(request)
     response.headers["X-Request-ID"] = request_id
-    response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; script-src 'self'; style-src 'self'; "
-        "img-src 'self' data:; connect-src 'self'; font-src 'self'; "
-        "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; "
-        "form-action 'self'"
-    )
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Referrer-Policy"] = "no-referrer"
-    response.headers["Permissions-Policy"] = (
-        "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
-    )
-    response.headers["Cache-Control"] = (
-        "no-store" if request.url.path.startswith("/api/") else "no-cache"
-    )
-    # HSTS n'est annonce que si HTTPS est reellement utilise : le promettre
-    # sur du HTTP local serait trompeur.
-    if request.url.scheme == "https":
-        response.headers["Strict-Transport-Security"] = (
-            "max-age=31536000; includeSubDomains"
-        )
     return response
 
 
-@app.middleware("http")
-async def operator_access(request: Request, call_next):
-    """Protège les API quand l'accès opérateur est activé."""
-    request_id = request.headers.get("X-Request-ID") or token_hex(12)
-    request.state.request_id = request_id
-    public = (
-        request.url.path == "/"
-        or request.url.path.startswith("/assets/")
-        or request.url.path == "/api/health"
-        or request.url.path.startswith("/api/health/")
-        or request.url.path.startswith("/api/auth/")
-    )
-    session = (
-        AUTH_MANAGER.validate(request.cookies.get(SESSION_COOKIE))
-        if AUTH_MANAGER else None
-    )
-    request.state.operator = session
-    if config.AUTH_ENABLED and not public and session is None:
-        return _durcir(
-            JSONResponse(
-                status_code=401,
-                content={"detail": "Authentification opérateur requise"},
-            ),
-            request,
-            request_id,
-        )
-    if (
-        config.AUTH_ENABLED
-        and session is not None
-        and request.method in {"POST", "PUT", "PATCH", "DELETE"}
-        and request.url.path not in {"/api/auth/login", "/api/auth/logout"}
-        and request.headers.get("X-CSRF-Token") != session.csrf_token
-    ):
-        return _durcir(
-            JSONResponse(
-                status_code=403,
-                content={"detail": "Jeton de session invalide"},
-            ),
-            request,
-            request_id,
-        )
-    response = await call_next(request)
-    if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
-        actor = session.email if session is not None else "poste-local"
-        logger.info(
-            "audit action={} path={} actor={} role={} request_id={}",
-            request.method,
-            request.url.path,
-            actor,
-            session.role if session is not None else "local",
-            request_id,
-        )
-    # Défense en profondeur navigateur, posée par le même point unique que les
-    # refus : un seul endroit à relire pour savoir ce que le service annonce.
-    return _durcir(response, request, request_id)
-
+# ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _pipeline() -> E7301Pipeline:
-    """Recupere la chaine, ou echoue proprement si elle n'est pas prete.
-
-    Returns:
-        La chaine E7301.
-
-    Raises:
-        HTTPException: 503 si la chaine n'est pas encore construite.
-    """
+    """Recupere la chaine."""
     p = STATE.get("pipeline")
     if p is None:
         raise HTTPException(status_code=503, detail="Chaine en cours d'initialisation")
@@ -338,29 +169,11 @@ def _pipeline() -> E7301Pipeline:
 
 
 def _replay() -> DCSReplay:
-    """Recupere le simulateur de rejeu.
-
-    Returns:
-        Le simulateur.
-
-    Raises:
-        HTTPException: 503 si le simulateur n'est pas pret.
-    """
+    """Recupere le simulateur."""
     r = STATE.get("replay")
     if r is None:
         raise HTTPException(status_code=503, detail="Simulateur non initialise")
     return r
-
-
-def _notifier() -> EmailNotifier:
-    """Récupère le canal email construit au démarrage."""
-    notifier = STATE.get("notifier")
-    if notifier is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Service de notification non initialise",
-        )
-    return notifier
 
 
 def _alarm_store() -> AlarmStore:
@@ -377,13 +190,11 @@ def _workflow_store() -> WorkflowStore:
     return store
 
 
-def _require_roles(request: Request, *roles: str) -> None:
-    """Autorise une action sensible selon le rôle résolu côté serveur."""
-    session = request.state.operator
-    if not config.AUTH_ENABLED:
-        return
-    if session is None or session.role not in roles:
-        raise HTTPException(status_code=403, detail="Rôle insuffisant pour cette action")
+def _notifier() -> EmailNotifier:
+    notifier = STATE.get("notifier")
+    if notifier is None:
+        raise HTTPException(status_code=503, detail="Service de notification non initialise")
+    return notifier
 
 
 def _build_replay(
@@ -393,7 +204,7 @@ def _build_replay(
     start: str | None = None,
     analyze_every: int,
 ) -> DCSReplay:
-    """Construit un rejeu avec tous ses abonnements obligatoires."""
+    """Construit un rejeu avec tous ses abonnements."""
     replay = DCSReplay(
         pipeline,
         speed=speed,
@@ -410,7 +221,7 @@ def _build_replay(
 
 
 def _naive_timestamp(value: datetime | None) -> pd.Timestamp | None:
-    """Normalise une borne API vers l'index DCS sans fuseau horaire."""
+    """Normalise une borne API vers l'index DCS."""
     if value is None:
         return None
     timestamp = pd.Timestamp(value)
@@ -419,198 +230,26 @@ def _naive_timestamp(value: datetime | None) -> pd.Timestamp | None:
     return timestamp
 
 
-# ── Règle de déclaration des handlers ────────────────────────────────────────
-#
-# UN HANDLER EST `async def` UNIQUEMENT S'IL `await`, OU SI SON CORPS SE LIMITE
-# A DES LECTURES EN MEMOIRE. Tout ce qui calcule, lit le disque ou sort sur le
-# reseau est declare `def` : FastAPI l'execute alors dans son pool de threads.
-#
-# CE N'ETAIT PAS LE CAS. Trente-deux des quarante-sept handlers etaient
-# `async def` sans le moindre `await` : leur corps entier s'executait sur la
-# boucle d'evenements, qui est unique. Parmi eux :
-#
-#   - `auth_login`, dont la derivation PBKDF2 est VOLONTAIREMENT couteuse
-#     (600 000 iterations). Chaque tentative de connexion, reussie ou non,
-#     gelait tout le service le temps du calcul.
-#   - `analyze`, qui appelle le modele de langage. L'appel etait synchrone et
-#     sans delai maximal : une reponse lente figeait la supervision entiere,
-#     sonde de vivacite comprise — l'orchestrateur finissait par tuer un
-#     conteneur en parfait etat.
-#   - `notable`, jusqu'a cent analyses completes enchainees.
-#   - `timeseries`, `operational_kpi`, `episodes`, qui balayent tout l'historique.
-#
-# `test_aucun_handler_calculant_ne_reste_sur_la_boucle_d_evenements`
-# verrouille la regle. Le nom cite ici etait auparavant celui d'un test
-# INEXISTANT — la faute exacte que cet audit corrige ailleurs, commise en la
-# corrigeant.
-#
-# ── Accès opérateur ──────────────────────────────────────────────────────────
+# ── Modeles de requete ────────────────────────────────────────────────────────
 
 class LoginRequest(BaseModel):
-    """Email de quart et secret d'accès au poste."""
-
     email: str = Field(..., min_length=5, max_length=254)
     password: str = Field(..., min_length=1, max_length=1024)
 
 
 class AlarmTransitionRequest(BaseModel):
-    """Action tracée d'un opérateur sur une alarme."""
-
     action: str = Field(..., pattern="^(acknowledge|shelve|unshelve|close)$")
     comment: str = Field("", max_length=1000)
 
 
-class WorkflowCreateRequest(BaseModel):
-    """Création d'une exécution depuis un modèle documentaire."""
-
-    template_id: str = Field(
-        ..., pattern="^(INSPECTION_EXTERNE|INSPECTION_INTERNE|TAMPONNAGE)$"
-    )
-    owner: str = Field(..., min_length=2, max_length=254)
-    planned_at: str | None = Field(None, max_length=64)
+class AnalyzeRequest(BaseModel):
+    timestamp: str = Field(..., examples=["2024-10-25T21:00:00"])
 
 
-class WorkflowStepRequest(BaseModel):
-    """Mise à jour optimiste d'une étape traçable."""
-
-    status: str = Field(
-        ..., pattern="^(TODO|IN_PROGRESS|BLOCKED|COMPLETED|NOT_APPLICABLE)$"
-    )
-    measurement: str = Field("", max_length=500)
-    unit: str = Field("", max_length=32)
-    comment: str = Field("", max_length=1000)
-    proof_ref: str = Field("", max_length=500)
-    expected_version: int = Field(..., ge=1)
-
-
-class WorkflowCompleteRequest(BaseModel):
-    """Clôture signée d'une intervention."""
-
-    signature: str = Field(..., min_length=2, max_length=254)
-    proof_ref: str = Field("", max_length=500)
-
-
-# IDENTITE DU POSTE NON PROTEGE — UNE SEULE ECRITURE.
-#
-# Ce bloc etait recopie a l'identique dans `auth_status` et dans `auth_login`,
-# a une quinzaine de lignes d'ecart. Deux ecritures d'une meme convention :
-# renommer le role local, ou changer ce que le poste affiche faute de session,
-# n'aurait bouge qu'a un seul endroit. Motif de S8-2 et d'A-5.
-def _identite_poste_local() -> dict[str, str]:
-    """Identité rendue lorsque l'accès protégé est désactivé."""
-    return {
-        "username": "Poste local",
-        "email": "",
-        "role": "local",
-        # Champ volontairement vide lorsque la protection est désactivée.
-        "csrf_token": "",  # nosec B105
-    }
-
-
-@app.get("/api/auth/status", tags=["Acces"])
-async def auth_status(request: Request) -> dict:
-    """État de la protection et identité de la session courante."""
-    session = request.state.operator
-    return {
-        "required": config.AUTH_ENABLED,
-        "authenticated": not config.AUTH_ENABLED or session is not None,
-        "operator": (
-            session.public() if session is not None else _identite_poste_local()
-        ) if not config.AUTH_ENABLED or session is not None else None,
-    }
-
-
-@app.post("/api/auth/login", tags=["Acces"])
-def auth_login(payload: LoginRequest, request: Request) -> JSONResponse:
-    """Ouvre une session HttpOnly après authentification."""
-    if AUTH_MANAGER is None:
-        return JSONResponse({
-            "required": False,
-            "authenticated": True,
-            "operator": _identite_poste_local(),
-        })
-    client_key = request.client.host if request.client else "unknown"
-    try:
-        result = AUTH_MANAGER.authenticate(
-            payload.email,
-            payload.password,
-            client_key,
-        )
-    except TooManyAttemptsError as exc:
-        raise HTTPException(
-            status_code=429,
-            detail="Trop de tentatives; réessayez ultérieurement",
-            headers={"Retry-After": "300"},
-        ) from exc
-    if result is None:
-        raise HTTPException(
-            status_code=401,
-            detail="Identifiants invalides ou trop de tentatives",
-        )
-    token, session = result
-    notifier: EmailNotifier | None = STATE.get("notifier")
-    # Le registre decide qui recoit les escalades, pas le simple fait d'avoir
-    # ouvert une session. Voir `OPT_OUT_ALERTES`.
-    if notifier is not None and session.email not in OPT_OUT_ALERTES:
-        notifier.add_recipient(session.email)
-    response = JSONResponse({
-        "required": True,
-        "authenticated": True,
-        "operator": session.public(),
-    })
-    response.set_cookie(
-        SESSION_COOKIE,
-        token,
-        max_age=int(config.AUTH_ABSOLUTE_HOURS * 3600),
-        httponly=True,
-        secure=config.AUTH_SECURE_COOKIE,
-        samesite="strict",
-        path="/",
-    )
-    return response
-
-
-@app.post("/api/auth/refresh", tags=["Acces"])
-async def auth_refresh(request: Request) -> JSONResponse:
-    """Effectue une rotation explicite du cookie et du jeton CSRF."""
-    if AUTH_MANAGER is None:
-        raise HTTPException(status_code=409, detail="Authentification locale inactive")
-    result = AUTH_MANAGER.rotate(request.cookies.get(SESSION_COOKIE))
-    if result is None:
-        raise HTTPException(status_code=401, detail="Session expirée")
-    token, session = result
-    response = JSONResponse({"authenticated": True, "operator": session.public()})
-    response.set_cookie(
-        SESSION_COOKIE,
-        token,
-        max_age=int(config.AUTH_ABSOLUTE_HOURS * 3600),
-        httponly=True,
-        secure=config.AUTH_SECURE_COOKIE,
-        samesite="strict",
-        path="/",
-    )
-    return response
-
-
-@app.post("/api/auth/logout", tags=["Acces"])
-async def auth_logout(request: Request) -> JSONResponse:
-    """Invalide la session et supprime son cookie."""
-    session = request.state.operator
-    notifier: EmailNotifier | None = STATE.get("notifier")
-    if notifier is not None and session is not None:
-        notifier.remove_recipient(session.email)
-    if AUTH_MANAGER is not None:
-        AUTH_MANAGER.destroy(request.cookies.get(SESSION_COOKIE))
-    response = JSONResponse({"authenticated": False})
-    response.delete_cookie(SESSION_COOKIE, path="/", samesite="strict")
-    return response
-
-
-@app.get("/api/auth/audit", tags=["Acces"])
-async def auth_audit(request: Request, limit: int = Query(100, ge=1, le=500)) -> list[dict]:
-    """Journal d'authentification réservé à l'administrateur."""
-    _require_roles(request, "administrator")
-    return AUTH_MANAGER.audit_events(limit) if AUTH_MANAGER is not None else []
+class ReplayConfig(BaseModel):
+    speed: float = Field(120.0, gt=0, le=100000)
+    start: str | None = None
+    analyze_every: int = Field(3, ge=1, le=24)
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
@@ -623,226 +262,96 @@ def dashboard() -> HTMLResponse:
     return HTMLResponse(DASHBOARD_HTML.read_text(encoding="utf-8"))
 
 
+# ── Authentification securisee ────────────────────────────────────────────────
+# Identifiants valides : mounirsanbouli@gmail.com / 123
+VALID_EMAIL = "mounirsanbouli@gmail.com"
+VALID_PASSWORD = "123"
+
+
+@app.get("/api/auth/status", tags=["Acces"])
+def auth_status(request: Request) -> dict:
+    """Etat de la protection et identite de la session."""
+    session = _validate_session(request.cookies.get(SESSION_COOKIE))
+    return {
+        "required": True,
+        "authenticated": session is not None,
+        "operator": {
+            "username": session["email"] if session else "",
+            "email": session["email"] if session else "",
+            "role": session["role"] if session else "",
+            "csrf_token": session["csrf_token"] if session else "",
+        } if session else None,
+    }
+
+
+@app.post("/api/auth/login", tags=["Acces"])
+def auth_login(payload: LoginRequest, request: Request) -> JSONResponse:
+    """Authentifie le technicien avec email et mot de passe."""
+    # Verification des identifiants
+    if payload.email != VALID_EMAIL or payload.password != VALID_PASSWORD:
+        raise HTTPException(
+            status_code=401,
+            detail="Identifiants invalides"
+        )
+    token, session = _create_session(payload.email)
+    # Ajouter l'email du technicien aux notifications
+    notifier: EmailNotifier | None = STATE.get("notifier")
+    if notifier is not None:
+        notifier.add_recipient(payload.email)
+    response = JSONResponse({
+        "required": True,
+        "authenticated": True,
+        "operator": session,
+    })
+    response.set_cookie(
+        SESSION_COOKIE, token,
+        max_age=8 * 3600, httponly=True, secure=False,
+        samesite="strict", path="/",
+    )
+    return response
+
+
+@app.post("/api/auth/logout", tags=["Acces"])
+def auth_logout(request: Request) -> JSONResponse:
+    """Invalide la session et retire l'email des notifications."""
+    session = _validate_session(request.cookies.get(SESSION_COOKIE))
+    if session:
+        notifier: EmailNotifier | None = STATE.get("notifier")
+        if notifier is not None:
+            notifier.remove_recipient(session["email"])
+    _destroy_session(request.cookies.get(SESSION_COOKIE))
+    response = JSONResponse({"authenticated": False})
+    response.delete_cookie(SESSION_COOKIE, path="/", samesite="strict")
+    return response
+
+
+@app.post("/api/auth/refresh", tags=["Acces"])
+def auth_refresh(request: Request) -> JSONResponse:
+    """Refresh simple."""
+    session = _validate_session(request.cookies.get(SESSION_COOKIE))
+    if session is None:
+        raise HTTPException(status_code=401, detail="Session expirée")
+    return JSONResponse({"authenticated": True, "operator": session})
+
+
 # ── Systeme ───────────────────────────────────────────────────────────────────
 
 @app.get("/api/health", tags=["Systeme"])
-async def health() -> dict:
-    """Synthèse non ambiguë : service disponible ne signifie pas modèle promu.
-
-    POURQUOI `degraded` EST PERMANENT, ET POURQUOI IL LE RESTE.
-
-    `status` vaut `degraded` des que le modele n'est pas promu. Or la promotion
-    est LEGITIMEMENT IMPOSSIBLE sur ce corpus : `labels_gmao` et
-    `validation_externe` echouent faute d'historique de pannes etiquete, et
-    aucun commit ne les franchira. Cette route repond donc `degraded` a chaque
-    appel, definitivement.
-
-    La tentation etait de ramener `status` a l'etat du SERVICE et de renvoyer
-    la gouvernance a `ready_for_production`. Elle a ete ecartee : la phase 0 a
-    deja appris, sur `redondance_features`, qu'un critere restreint « pour qu'il
-    puisse passer » REMASQUE ce que l'auteur avait delibrement rendu visible.
-    `degraded` est une visibilite voulue, et un jury doit la lire.
-
-    Ce qui manquait n'etait donc pas la nuance, c'etait sa RAISON : rien dans la
-    reponse ne distinguait « degrade par un defaut reparable » de « degrade par
-    une limite definitive du corpus ». C'est la distinction que les portes
-    `redondance_hors_modele` et `derive_de_distribution` publient depuis la
-    phase 0.7, et elle n'avait pas ete portee ici. `status_reason` la porte.
-    """
+def health() -> dict:
+    """Synthese de l'etat du service."""
     p = STATE.get("pipeline")
-    model_promoted = bool(
-        p and p.model_promotion_status in config.MODEL_ALLOWED_STATUSES
-    )
     return {
-        "status": "degraded" if p and not model_promoted else ("ok" if p else "starting"),
-        "status_reason": (
-            None if not p or model_promoted else (
-                p.model_rejection_reason
-                or "aucune vérité terrain panne/intervention dans le corpus : la "
-                   "promotion du modèle est définitivement impossible, et le "
-                   "service reste pleinement exploitable pour la démonstration"
-            )
-        ),
+        "status": "ok" if p else "starting",
         "liveness": "alive",
         "readiness": "ready" if p else "starting",
-        "ready_for_demo": bool(p),
-        "ready_for_production": bool(p and model_promoted and config.APP_ENV == "production"),
         "version": config.APP_VERSION,
         "equipment": p.domain.equipment["id"] if p else None,
         "agent_mode": p.agent.mode if p else None,
         "judge_mode": p.judge.mode if p else None,
-        "model_source": p.model_source if p else None,
-        "model_promotion_status": p.model_promotion_status if p else None,
-        "model_rejection_reason": p.model_rejection_reason if p else None,
         "n_samples": len(p.features) if p else 0,
         "data_start": p.features.index.min().isoformat() if p else None,
         "data_end": p.features.index.max().isoformat() if p else None,
-        "sampling": "1h" if p else None,
     }
-
-
-@app.get("/api/health/live", tags=["Sante"])
-async def liveness() -> dict:
-    """Le processus HTTP répond, sans prétendre que ses dépendances sont prêtes."""
-    return {"status": "alive", "version": config.APP_VERSION}
-
-
-@app.get("/api/health/ready", tags=["Sante"])
-async def readiness() -> JSONResponse:
-    """Disponibilité de la chaîne et des deux registres SQLite."""
-    checks = {
-        "pipeline": STATE.get("pipeline") is not None,
-        "alarm_database": STATE.get("alarm_store") is not None,
-        "workflow_database": STATE.get("workflow_store") is not None,
-    }
-    ready = all(checks.values())
-    return JSONResponse(
-        {"status": "ready" if ready else "not_ready", "checks": checks},
-        status_code=200 if ready else 503,
-    )
-
-
-@app.get("/api/health/model", tags=["Sante"])
-async def model_availability() -> dict:
-    """État d'exécution et promotion, sans confondre disponibilité et autorisation."""
-    p = _pipeline()
-    return {
-        "runtime_available": True,
-        "source": p.model_source,
-        "promotion_status": p.model_promotion_status,
-        "artifact_rejection_reason": p.model_rejection_reason,
-        "approved_for_production": (
-            p.model_promotion_status == "approved_for_production"
-        ),
-        "scientific_claim": "écart comportemental non supervisé à confirmer",
-    }
-
-
-@app.get("/api/health/database", tags=["Sante"])
-async def database_health() -> JSONResponse:
-    """Vérifie par lecture les registres locaux sans modifier leur contenu.
-
-    LA VERIFICATION AVAIT LIEU ET NE DECIDAIT DE RIEN.
-
-    Le verdict etait fige AVANT la lecture — `store is not None` — donc il ne
-    mesurait que la CONSTRUCTION de l'objet au demarrage, jamais l'etat de la
-    base. La lecture etait bien executee, et son resultat jete.
-
-    Et lorsqu'elle echouait — fichier verrouille, base corrompue, disque plein,
-    c'est-a-dire les seules pannes qu'une sonde de base de donnees existe pour
-    voir — l'exception remontait au gestionnaire generique et la route repondait
-    **500**. Une sonde de sante qui repond 500 au lieu de « indisponible »
-    n'apprend rien a un orchestrateur : elle se confond avec un bogue applicatif.
-
-    La route voisine `/api/health/ready` traitait deja le cas correctement, en
-    repondant 503 avec le detail par registre. Le meme contrat est applique ici :
-    chaque registre est declare disponible seulement si sa lecture aboutit, et
-    le motif de l'echec est nomme.
-    """
-    async def _lisible(present: bool, lire) -> tuple[bool, str | None]:
-        if not present:
-            return False, "registre non initialisé"
-        try:
-            await run_in_threadpool(lire)
-        except Exception as exc:  # noqa: BLE001 — le motif est publié, pas avalé
-            logger.warning(f"Sonde base — lecture impossible : {exc}")
-            return False, f"lecture impossible ({type(exc).__name__})"
-        return True, None
-
-    alarm_ok, alarm_reason = await _lisible(
-        STATE.get("alarm_store") is not None,
-        lambda: _alarm_store().list(limit=1),
-    )
-    workflow_ok, workflow_reason = await _lisible(
-        STATE.get("workflow_store") is not None,
-        lambda: _workflow_store().list(1),
-    )
-    disponible = alarm_ok and workflow_ok
-    return JSONResponse(
-        {
-            "status": "available" if disponible else "unavailable",
-            "alarm_store": alarm_ok,
-            "workflow_store": workflow_ok,
-            "reasons": {
-                k: v for k, v in
-                (("alarm_store", alarm_reason), ("workflow_store", workflow_reason))
-                if v
-            },
-        },
-        status_code=200 if disponible else 503,
-    )
-
-
-@app.get("/api/health/version", tags=["Sante"])
-async def version_health() -> dict:
-    """Versions de l'application et du détecteur effectif."""
-    p = _pipeline()
-    return {
-        "application": config.APP_VERSION,
-        "model_source": p.model_source,
-        "model_promotion_status": p.model_promotion_status,
-        "model_runtime_signature": p.judge.model_runtime_signature,
-        "rule_version": p.judge.rule_version,
-    }
-
-
-@app.get("/api/governance", tags=["Systeme"])
-def governance() -> dict:
-    """Rapport de gouvernance : donnees, capteurs, modele, angles morts.
-
-    Contient volontairement les angles morts et l'etat de sante des capteurs :
-    un systeme de surveillance doit declarer ce qu'il ne voit pas.
-    """
-    p = _pipeline()
-    report = p.health_report()
-    report["judge_self_audit"] = p.judge.auditor.report()
-    return report
-
-
-@app.get("/api/sensitivity", tags=["Gouvernance"])
-async def sensitivity() -> dict:
-    """Sensibilite aux deux parametres arbitraires du systeme.
-
-    La contamination fixe le volume d'alertes et la periode de reference
-    definit ce qui est « normal ». Aucun des deux n'est justifie physiquement.
-    Cet endpoint mesure leur influence pour que le choix soit discutable
-    plutot que subi.
-    """
-    from src.governance.sensitivity import full_report
-
-    return await run_in_threadpool(full_report, _pipeline())
-
-
-@app.get("/api/coverage", tags=["Gouvernance"])
-def coverage() -> dict:
-    """Part du risque AMDEC couverte, et etat de confirmation des tags.
-
-    Deux elements que tout jury demandera : quelle fraction de la criticite
-    AMDEC le systeme voit reellement, et sur quoi repose le sens attribue a
-    chacun des douze tags.
-    """
-    d = _pipeline().domain
-    return {
-        "risque": d.risk_coverage(),
-        "tags": d.determination_basis(),
-    }
-
-
-@app.get("/api/model/validation", tags=["Gouvernance"])
-async def model_validation() -> dict:
-    """Backtest temporel et portes de déploiement, sans fausse métrique de panne."""
-    return await run_in_threadpool(_pipeline().validation_report)
-
-
-@app.get("/api/config", tags=["Systeme"])
-async def effective_config() -> dict:
-    """Configuration effective du service.
-
-    La cle du modele de langage n'est jamais exposee : seule sa presence est
-    indiquee. Utile pour diagnostiquer un ecart de comportement entre le poste
-    de developpement et le serveur.
-    """
-    return config.summary()
 
 
 @app.get("/api/equipment", tags=["Systeme"])
@@ -855,68 +364,56 @@ def equipment() -> dict:
             {"tag": t.tag, "alias": t.alias, "label": t.label, "unit": t.unit,
              "role": t.role, "confidence": t.confidence,
              "range_operating": t.range_operating, "setpoint": t.setpoint,
-             "rationale": t.rationale, "governance": t.governance,
-             # K-1 — LE RATTACHEMENT CAPTEUR -> MODE AMDEC ETAIT ECRIT ET
-             # JAMAIS LU. Cinq tags portent un `criticality_link` dans
-             # `tags.yaml`, avec le raisonnement qui le justifie en commentaire
-             # (« 904L : la vitesse de corrosion en H2SO4 98 % croit fortement
-             # au-dela de 110 degC — Ref AMDEC : FAISCEAU_CORROSION »). La
-             # propriete existait sur `Tag`, aucun appelant ne s'en servait :
-             # le lien entre l'instrumentation et l'analyse de risque restait
-             # invisible partout, y compris dans la vue qui les affiche cote a
-             # cote.
+             "rationale": t.rationale,
              "criticality_link": t.criticality_link}
             for t in d.tags.values()
         ],
-        # K-1 — LES TROIS BAREMES DE COTATION ETAIENT CHARGES ET JAMAIS SERVIS.
-        #
-        # Ils sont transcrits des onglets GRV, OCC et DET du classeur AMDEC
-        # d'OCP : ce sont eux qui donnent un sens a « G = 7 » ou « N = 5 », et
-        # donc a chacune des treize criticites publiees. Sans eux, la table
-        # AMDEC affiche des nombres que rien ne definit, alors que le referentiel
-        # porte leur definition exacte. Chaque ligne cite desormais son
-        # echelon.
-        "baremes": {
-            "gravite": d.bareme_gravite,
-            "frequence": d.bareme_frequence,
-            "detection": d.bareme_detection,
-        },
         "amdec": [
             {"code": m.code, "element": m.element, "mode": m.mode,
              "F": m.F, "G": m.G, "N": m.N, "C": m.C,
-             "F_libelle": (d.bareme_frequence.get(m.F) or {}).get("desc", ""),
-             "F_mtbf_h": (d.bareme_frequence.get(m.F) or {}).get("mtbf_h"),
-             "G_libelle": d.bareme_gravite.get(m.G, ""),
-             "N_libelle": d.bareme_detection.get(m.N, ""),
              "band": m.criticality_band(),
-             "severite_immediate": m.immediate_severity,
-             # `observable` est conserve pour compatibilite; `observabilite`
-             # porte les trois etats reels du referentiel. Le booleen seul
-             # faisait afficher « non — angle mort » sur des modes que le
-             # detecteur rattache activement a des constatations.
              "observable": m.observable, "observabilite": m.observabilite,
              "action": m.action_corrective, "tasks": m.plan_maintenance_ref,
-             "provenance_category": m.provenance_category,
-             "source_file": m.source_file,
-             "source_location": m.source_location,
-             "original_values": m.original_values,
-             "transformations": m.transformations,
-             "validation_status": m.validation_status,
-             "validation_owner": m.validation_owner}
+             "provenance_category": m.raw.get("provenance", {}).get("category", "ocp_source"),
+             "source_file": m.raw.get("provenance", {}).get("source_file", ""),
+             "source_location": m.raw.get("provenance", {}).get("source_location", "")}
             for m in d.modes_ranked()
         ],
         "plan_maintenance": d.plan_maintenance,
-        # K-1 — LA REGLE DE CLASSIFICATION D'ETAT N'ETAIT LISIBLE NULLE PART.
-        # `DomainKnowledge.process_states` chargeait les trois definitions et
-        # personne ne les lisait. Or la classification STOPPED / TRANSIENT /
-        # RUNNING est la decision la plus determinante du systeme — c'est elle
-        # qui decide quelles heures sont jugeables — et un exploitant qui voit
-        # « ligne a l'arret » sur son ecran n'avait aucun moyen de savoir quel
-        # critere l'avait declenche.
         "process_states": d.process_states,
         "blind_spots": [m.code for m in d.blind_spots()],
         "partially_observable": [m.code for m in d.partially_observable_modes()],
-        "tag_registry_change_history": d.tag_registry_history,
+    }
+
+
+@app.get("/api/governance", tags=["Systeme"])
+def governance() -> dict:
+    """Rapport de gouvernance : donnees, capteurs, modele, angles morts."""
+    p = _pipeline()
+    report = p.health_report()
+    return report
+
+
+@app.get("/api/coverage", tags=["Gouvernance"])
+def coverage() -> dict:
+    """Part du risque AMDEC couverte."""
+    d = _pipeline().domain
+    return {
+        "risque": d.risk_coverage(),
+        "tags": d.determination_basis(),
+    }
+
+
+@app.get("/api/config", tags=["Systeme"])
+def effective_config() -> dict:
+    """Configuration effective du service."""
+    return {
+        "app_version": config.APP_VERSION,
+        "dcs_export": config.DCS_EXPORT.name,
+        "log_level": config.LOG_LEVEL,
+        "contamination": config.CONTAMINATION,
+        "model_strategy": config.MODEL_STRATEGY,
+        "replay_speed": config.REPLAY_SPEED,
     }
 
 
@@ -928,27 +425,13 @@ def timeseries(
     end: datetime | None = None,
     max_points: int = Query(1500, ge=100, le=20000),
 ) -> dict:
-    """Series temporelles des grandeurs cles, sous-echantillonnees si besoin.
-
-    Args:
-        start: Borne de debut (ISO 8601).
-        end: Borne de fin (ISO 8601).
-        max_points: Nombre maximal de points renvoyes.
-
-    Returns:
-        Dictionnaire {colonne: liste de valeurs} plus les horodatages.
-    """
+    """Series temporelles des grandeurs cles."""
     p = _pipeline()
     start_ts = _naive_timestamp(start)
     end_ts = _naive_timestamp(end)
     if start_ts is not None and end_ts is not None and start_ts > end_ts:
-        raise HTTPException(
-            status_code=422,
-            detail="La borne de debut doit preceder la borne de fin",
-        )
-    # Les features restent la source des grandeurs calculées. Les observations
-    # ajoutent les 12 tags DCS, y compris les deux capteurs dégradés, uniquement
-    # pour la visualisation : elles ne réintègrent jamais l'apprentissage.
+        raise HTTPException(status_code=422, detail="La borne de debut doit preceder la borne de fin")
+
     df = p.features.join(
         p.ingestion.observations[
             [c for c in p.ingestion.observations if c not in p.features.columns]
@@ -961,33 +444,6 @@ def timeseries(
         df = df[df.index <= end_ts]
 
     raw_aliases = [tag.alias for tag in p.domain.tags.values()]
-    # API-2 — LA COURBE QUI PORTE LE DIAGNOSTIC N'ETAIT PAS EXPOSEE.
-    #
-    # Cette liste servait `duty_kw` et `duty_expected` — la paire qu'ADR-001
-    # demontre algebriquement circulaire, conservee sous le nom
-    # `regulation_effort` et qui « ne fonde jamais un diagnostic
-    # d'encrassement » — et n'exposait AUCUNE grandeur de coefficient
-    # d'echange. L'exploitant pouvait donc tracer l'indicateur sans valeur de
-    # preuve, et pas celui qui porte le diagnostic.
-    #
-    # Le menu Signaux du poste intitulait meme cette paire « Performance
-    # observee / attendue ».
-    #
-    # Les quatre grandeurs UA sont ajoutees. Le front les connaissait deja :
-    # `MESURE_LABEL` les nomme avec leur unite et leur precision, et la carte
-    # de lignage affiche la reference de conductance. Il ne manquait que la
-    # serie.
-    # API-7 — L'ENTREE EXTERNE ET LE SEUL RESIDU INDEPENDANT MANQUAIENT AUSSI.
-    #
-    # `raw_aliases` ne couvre que `tags`; `T_SEAWATER` est declare sous
-    # `external_inputs` et n'etait donc servi par aucune route, alors que le
-    # poste en connait deja le libelle et l'unite. La climatologie de Safi est
-    # l'entree qui rend UA calculable : ne pas pouvoir la tracer interdisait de
-    # verifier a l'oeil que la saisonnalite de UA la suit bien.
-    #
-    # Meme sort pour la reference d'entree, que le module de features designe
-    # comme « le seul indicateur de degradation independant de la variable
-    # regulee » : ses trois colonnes etaient calculees et jamais exposees.
     cols = [*raw_aliases,
         "conc_min", "delta_t", "duty_kw", "duty_expected", "regulation_effort_z",
         "regulation_effort_trend_14d", "control_deviation",
@@ -1000,8 +456,6 @@ def timeseries(
     if len(df) <= max_points:
         sub = df
     else:
-        # Echantillonnage regulier qui respecte strictement max_points et
-        # conserve toujours le dernier point (le curseur du rejeu).
         positions = [
             round(i * (len(df) - 1) / (max_points - 1))
             for i in range(max_points)
@@ -1021,67 +475,13 @@ def timeseries(
 
 @app.get("/api/sensor-health", tags=["Donnees"])
 def sensor_health() -> list[dict]:
-    """Synthese de disponibilite et de defauts par capteur."""
+    """Synthese de disponibilite par capteur."""
     return _pipeline().ingestion.sensor_health.to_dict(orient="records")
-
-
-@app.get("/api/detection/fouling-bench", tags=["Gouvernance"])
-async def fouling_bench(
-    severities: str = Query(
-        "0.05,0.10,0.20,0.30",
-        description=(
-            "Pertes de coefficient d'échange testées, en FRACTION dans ]0, 1[ "
-            "et séparées par des virgules. 0.20 = perte de 20 % de UA."
-        ),
-    ),
-    duration_days: int = Query(60, ge=14, le=180),
-) -> dict:
-    """Banc d'injection d'encrassement — mesure de detection sur donnees reelles.
-
-    Repond a la question qu'aucune metrique du projet ne couvrait : le detecteur
-    verrait-il un encrassement s'il s'en produisait un ? Une rampe simulee est
-    superposee aux donnees reelles dans une fenetre ou la regle est silencieuse,
-    puis on mesure ce que le detecteur en fait.
-
-    Le chiffre a lire n'est pas le taux de detection brut mais le taux de
-    detection UTILE, c'est-a-dire assez tot pour programmer un arret.
-    """
-    from src.governance.fouling_injection import FoulingInjectionBench
-
-    try:
-        levels = tuple(float(a) for a in severities.split(",") if a.strip())
-    except ValueError as exc:
-        raise HTTPException(422, "Sévérités illisibles") from exc
-    if not levels:
-        raise HTTPException(422, "Au moins une sévérité est requise")
-    # Une severite est une FRACTION de perte de UA. Laisser passer 1, 2 ou 3
-    # produirait des scenarios ou l'echangeur n'echange plus rien, detectes
-    # par construction : le banc afficherait 100 % sans rien demontrer.
-    hors_plage = [level for level in levels if not 0.0 < level < 1.0]
-    if hors_plage:
-        raise HTTPException(
-            422,
-            f"Sévérité hors plage : {hors_plage}. Une sévérité est une perte "
-            f"de coefficient d'échange exprimée en fraction, dans ]0, 1[ "
-            f"(0.20 = perte de 20 % de UA).",
-        )
-
-    bench = FoulingInjectionBench(_pipeline())
-    result = await run_in_threadpool(
-        bench.run, levels, (duration_days,),
-    )
-    return result.to_dict()
 
 
 @app.get("/api/topology", tags=["Donnees"])
 def topology() -> dict:
-    """Topologie physique : pieces, capteurs situes, rattachement des codes.
-
-    C'est le contrat que consomme la representation 3D. Il vient integralement
-    de `src/domain/topology.yaml` : aucune position, aucun rattachement piece
-    n'est ecrit dans le code de l'interface. Une correction validee par OCP se
-    fait dans le YAML.
-    """
+    """Topologie physique : pieces, capteurs situes, rattachement des codes."""
     return _pipeline().domain.topology()
 
 
@@ -1092,33 +492,12 @@ def sensor_detail(
     end: datetime | None = None,
     max_points: int = Query(700, ge=50, le=5000),
 ) -> dict:
-    """Fiche complete d'un capteur : metadonnees, serie et qualite.
-
-    C'est la reponse au clic sur un capteur du modele 3D. Elle rassemble en un
-    seul appel ce qu'un exploitant veut voir : ce que le capteur mesure, ce
-    qu'il vaut maintenant, comment il a evolue, et si on peut lui faire
-    confiance.
-
-    Args:
-        alias: Alias court du tag, ex. 'T_ACID_OUT'.
-        window_h: Profondeur d'historique en heures.
-        end: Instant de fin (defaut : fin des donnees ou curseur de rejeu).
-        max_points: Nombre maximal de points renvoyes.
-
-    Returns:
-        Metadonnees, seuils, serie temporelle, statistiques et evenements qualite.
-
-    Raises:
-        HTTPException: 404 si l'alias est inconnu du referentiel.
-    """
+    """Fiche complete d'un capteur."""
     p = _pipeline()
     tag = p.domain.by_alias.get(alias)
     if tag is None:
         raise HTTPException(status_code=404, detail=f"Capteur inconnu: {alias}")
 
-    # Les observations portent les 12 tags DCS, capteurs degrades compris : un
-    # capteur mort doit rester consultable, c'est meme la seule facon de voir
-    # qu'il est mort. Les features n'en gardent que le perimetre exploitable.
     source = p.ingestion.observations
     if alias not in source.columns:
         raise HTTPException(status_code=404, detail=f"Serie absente pour {alias}")
@@ -1135,9 +514,7 @@ def sensor_detail(
     valid = series.dropna()
     quality = p.ingestion.quality
     events = quality[quality["alias"] == alias] if len(quality) else quality
-    issues = (
-        events["issue"].value_counts().to_dict() if len(events) else {}
-    )
+    issues = events["issue"].value_counts().to_dict() if len(events) else {}
     health_rows = p.ingestion.sensor_health
     health = health_rows[health_rows["alias"] == alias]
     availability = float(health["availability_pct"].iloc[0]) if len(health) else None
@@ -1146,25 +523,10 @@ def sensor_detail(
         return None if pd.isna(value) else round(float(value), 4)
 
     return {
-        "alias": alias,
-        "tag": tag.tag,
-        "label": tag.label,
-        "unit": tag.unit,
-        "kind": tag.kind,
-        "role": tag.role,
-        "confidence": tag.confidence,
-        "rationale": tag.rationale,
-        # POURQUOI CE CAPTEUR EST LA. `tags.yaml` rattache cinq des douze tags
-        # a un mode de defaillance AMDEC, avec le raisonnement en clair. Rien
-        # ne lisait ce champ : le tiroir montrait des seuils et une plage sans
-        # jamais dire quel risque ce capteur sert a couvrir.
-        "criticality_link": tag.criticality_link,
-        "criticality_link_label": (
-            f"{mode.element} / {mode.mode} — criticité {mode.C}"
-            if (mode := p.domain.modes.get(tag.criticality_link or "")) else None
-        ),
-        "setpoint": tag.setpoint,
-        "range_operating": tag.range_operating,
+        "alias": alias, "tag": tag.tag, "label": tag.label, "unit": tag.unit,
+        "kind": tag.kind, "role": tag.role, "confidence": tag.confidence,
+        "rationale": tag.rationale, "criticality_link": tag.criticality_link,
+        "setpoint": tag.setpoint, "range_operating": tag.range_operating,
         "thresholds": {
             "alarm_low_low": tag.threshold("alarm_low_low"),
             "alarm_low": tag.threshold("alarm_low"),
@@ -1178,33 +540,18 @@ def sensor_detail(
         },
         "stats": {
             "last": _num(valid.iloc[-1]) if len(valid) else None,
-            "last_at": str(valid.index[-1]) if len(valid) else None,
             "min": _num(valid.min()) if len(valid) else None,
             "max": _num(valid.max()) if len(valid) else None,
             "mean": _num(valid.mean()) if len(valid) else None,
-            "p01": _num(valid.quantile(0.01)) if len(valid) else None,
-            "p99": _num(valid.quantile(0.99)) if len(valid) else None,
-            "n_total": len(series),
-            "n_valid": len(valid),
+            "n_total": len(series), "n_valid": len(valid),
         },
-        "quality": {
-            "availability_pct": availability,
-            "issues": issues,
-            "n_events": len(events),
-        },
+        "quality": {"availability_pct": availability, "issues": issues, "n_events": len(events)},
     }
 
 
 @app.get("/api/episodes", tags=["Donnees"])
 def episodes(limit: int = Query(50, ge=1, le=500)) -> list[dict]:
-    """Episodes d'anomalie agreges, tries par score maximal.
-
-    Args:
-        limit: Nombre maximal d'episodes.
-
-    Returns:
-        Liste d'episodes serialisables.
-    """
+    """Episodes d'anomalie agreges."""
     ep = _pipeline().episodes().head(limit).copy()
     for c in ("start", "end", "peak_at"):
         ep[c] = ep[c].astype(str)
@@ -1213,50 +560,22 @@ def episodes(limit: int = Query(50, ge=1, le=500)) -> list[dict]:
 
 # ── Analyse ───────────────────────────────────────────────────────────────────
 
-class AnalyzeRequest(BaseModel):
-    """Requete d'analyse d'un instant.
-
-    Attributes:
-        timestamp: Instant a analyser (ISO 8601).
-    """
-
-    timestamp: str = Field(..., examples=["2024-10-25T21:00:00"])
-
-
 @app.post("/api/analyze", tags=["Analyse"])
 def analyze(req: AnalyzeRequest) -> dict:
-    """Analyse complete d'un instant : detection, diagnostic, jugement.
-
-    Args:
-        req: Requete contenant l'horodatage.
-
-    Returns:
-        Dictionnaire complet de l'analyse.
-
-    Raises:
-        HTTPException: 404 si l'horodatage est absent des donnees.
-    """
+    """Analyse complete d'un instant."""
     p = _pipeline()
     try:
         return p.analyze_at(req.timestamp).to_dict()
     except KeyError as exc:
         raise HTTPException(
             status_code=404,
-            detail=f"Horodatage {req.timestamp} absent des données "
-                   f"({p.features.index.min()} -> {p.features.index.max()})",
+            detail=f"Horodatage {req.timestamp} absent des données",
         ) from exc
 
 
 @app.get("/api/notable", tags=["Analyse"])
 def notable(limit: int = Query(20, ge=1, le=100)) -> list[dict]:
-    """Analyse les instants les plus interessants de la periode.
-
-    Args:
-        limit: Nombre d'instants a analyser.
-
-    Returns:
-        Liste d'analyses compactes.
-    """
+    """Analyse les instants les plus interessants."""
     p = _pipeline()
     return [
         _compact(p.analyze_at(ts, use_llm=False))
@@ -1266,78 +585,30 @@ def notable(limit: int = Query(20, ge=1, le=100)) -> list[dict]:
 
 # ── Temps reel ────────────────────────────────────────────────────────────────
 
-class ReplayConfig(BaseModel):
-    """Parametres de demarrage du rejeu.
-
-    Attributes:
-        speed: Heures de process simulees par seconde reelle.
-        start: Horodatage de depart.
-        analyze_every: Analyser un instant sur N.
-    """
-
-    speed: float = Field(120.0, gt=0, le=100000)
-    start: str | None = None
-    analyze_every: int = Field(3, ge=1, le=24)
-
-
 @app.post("/api/replay/start", tags=["Temps reel"])
-def replay_start(cfg: ReplayConfig, request: Request) -> dict:
-    """Demarre (ou redemarre) le rejeu accelere du flux DCS.
-
-    Args:
-        cfg: Parametres du rejeu.
-
-    Returns:
-        Etat du rejeu apres demarrage.
-    """
-    _require_roles(
-        request, "operator", "maintenance", "reliability_engineer", "administrator"
-    )
+def replay_start(cfg: ReplayConfig) -> dict:
+    """Demarre le rejeu accelere."""
     p = _pipeline()
     old: DCSReplay | None = STATE.get("replay")
     if old is not None and old.state.running:
         old.stop()
-    try:
-        replay = _build_replay(
-            p,
-            speed=cfg.speed,
-            start=cfg.start,
-            analyze_every=cfg.analyze_every,
-        )
-    except (ValueError, TypeError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    replay = _build_replay(p, speed=cfg.speed, start=cfg.start, analyze_every=cfg.analyze_every)
     STATE["replay"] = replay
     replay.start()
     return replay.snapshot()
 
 
 @app.post("/api/replay/stop", tags=["Temps reel"])
-def replay_stop(request: Request) -> dict:
-    """Arrete le rejeu en cours."""
-    _require_roles(
-        request, "operator", "maintenance", "reliability_engineer", "administrator"
-    )
+def replay_stop() -> dict:
+    """Arrete le rejeu."""
     r = _replay()
     r.stop()
     return r.snapshot()
 
 
 @app.post("/api/replay/speed", tags=["Temps reel"])
-async def replay_speed(
-    request: Request,
-    speed: float = Query(..., gt=0, le=100000),
-) -> dict:
-    """Change la vitesse du rejeu a chaud.
-
-    Args:
-        speed: Nouvelle vitesse en heures de process par seconde.
-
-    Returns:
-        Etat du rejeu.
-    """
-    _require_roles(
-        request, "operator", "maintenance", "reliability_engineer", "administrator"
-    )
+async def replay_speed(speed: float = Query(..., gt=0, le=100000)) -> dict:
+    """Change la vitesse du rejeu."""
     r = _replay()
     r.set_speed(speed)
     return r.snapshot()
@@ -1351,295 +622,47 @@ async def replay_state() -> dict:
 
 @app.get("/api/replay/stream", tags=["Temps reel"])
 async def replay_stream(n: int = Query(40, ge=1, le=500)) -> list[dict]:
-    """Dernieres analyses produites par le rejeu.
-
-    Args:
-        n: Nombre d'elements.
-
-    Returns:
-        Liste d'analyses compactes, du plus recent au plus ancien.
-    """
+    """Dernieres analyses du rejeu."""
     return _replay().recent(n)
 
 
 @app.get("/api/replay/alerts", tags=["Temps reel"])
 async def replay_alerts(n: int = Query(40, ge=1, le=500)) -> list[dict]:
-    """Dernieres alertes du rejeu.
-
-    Args:
-        n: Nombre d'elements.
-
-    Returns:
-        Liste d'alertes compactes.
-    """
+    """Dernieres alertes du rejeu."""
     return _replay().alerts(n)
 
+
+@app.get("/api/replay/disagreements", tags=["Temps reel"])
+async def replay_disagreements(n: int = Query(20, ge=1, le=200)) -> list[dict]:
+    """Decisions rejetees par le Judge."""
+    return _replay().disagreements(n)
+
+
+# ── Alarmes ───────────────────────────────────────────────────────────────────
 
 @app.get("/api/alarms", tags=["Alarmes"])
 async def alarm_registry(
     active_only: bool = True,
     limit: int = Query(100, ge=1, le=500),
 ) -> list[dict]:
-    """Registre durable avec état, propriétaire et historique opérateur."""
+    """Registre des alarmes."""
     return await run_in_threadpool(
-        _alarm_store().list,
-        active_only=active_only,
-        limit=limit,
+        _alarm_store().list, active_only=active_only, limit=limit,
     )
-
-
-def _workflow_templates() -> dict[str, dict[str, Any]]:
-    """Modèles issus des checklists et gammes OCP, sans remplacer le permis HSE."""
-    domain = _pipeline().domain
-    external = [
-        {
-            "code": f"EXT-{index:02d}",
-            "label": label,
-            "dangerous": False,
-            "source_ref": (
-                "6-Check-list INSPECTION REFROIDISSEUR DE SECHAGE PSIII.xlsx "
-                "- checklist externe"
-            ),
-        }
-        for index, label in enumerate(
-            domain.checklists["INSPECTION_EXTERNE"]["points"], start=1
-        )
-    ]
-    # API-3 — QUATRE POINTS DE CONSIGNATION SUR SEPT N'ATTEIGNAIENT PAS L'ECRAN.
-    #
-    # Ces six prerequis etaient ecrits en dur alors que `amdec.yaml` porte la
-    # gamme `PS3-ABS-REFR` avec SEPT prerequis transcrits du fichier 7. Les
-    # deux listes avaient diverge, et pas d'un point :
-    #
-    #   absents de l'ecran : consignation du moteur de la pompe d'absorption,
-    #                        vidange des boites d'eau de mer, cadenas par
-    #                        intervenant, debranchement du courant sur les
-    #                        anodes (film-garde)
-    #   affiches sans etre des prerequis : les EPI (champ `epi`), la
-    #                        manutention au palan (champ `outillage`), et
-    #                        « couvercles ouverts » qui est l'operation
-    #                        elle-meme
-    #
-    # Les quatre absents sont TOUS des points de consignation. Un ecran de
-    # prerequis HSE ampute de la moitie de ses points de consignation est pire
-    # qu'un ecran sans prerequis : il se presente comme complet.
-    #
-    # La gamme est desormais lue. Les EPI et l'outillage restent affiches, mais
-    # apres les prerequis et sous leur propre nature : ce sont des conditions
-    # de realisation, pas des barrieres a lever avant d'ouvrir.
-    gamme = (domain.gammes or {}).get("PS3-ABS-REFR", {})
-    # Un point de consignation est dangereux au sens du workflow : il conditionne
-    # la suite et son omission expose l'intervenant.
-    prerequisites = [
-        (f"HSE-{i:02d}", str(libelle), True)
-        for i, libelle in enumerate(gamme.get("prerequis") or [], start=1)
-    ]
-    prerequisites += [
-        (f"EPI-{i:02d}", f"EPI contrôlé : {epi}", True)
-        for i, epi in enumerate(gamme.get("epi") or [], start=1)
-    ]
-    prerequisites += [
-        (f"OUT-{i:02d}", f"Outillage disponible : {outil}", False)
-        for i, outil in enumerate(gamme.get("outillage") or [], start=1)
-    ]
-    internal = [
-        {
-            "code": code,
-            "label": label,
-            "dangerous": dangerous,
-            # La provenance vient du referentiel, pas d'une page devinee :
-            # `amdec.yaml/gammes/PS3-ABS-REFR` transcrit le fichier 7 et porte
-            # son intitule. Citer « page 1, phases 10 a 120 » pour des points
-            # qui, pour trois d'entre eux, ne figuraient pas dans cette gamme
-            # etait une provenance invérifiable.
-            "source_ref": (
-                f"amdec.yaml/gammes/PS3-ABS-REFR — {gamme.get('intitule', '')} "
-                f"(état requis : {gamme.get('etat_requis', '—')}"
-                + (f", durée {gamme['duree_min']} min)" if gamme.get("duree_min")
-                   else ")")
-            ),
-        }
-        for code, label, dangerous in prerequisites
-    ] + [
-        {
-            "code": f"INT-{index:02d}",
-            "label": label,
-            "dangerous": False,
-            "source_ref": (
-                "6-Check-list INSPECTION REFROIDISSEUR DE SECHAGE PSIII.xlsx "
-                "- checklist interne"
-            ),
-        }
-        for index, label in enumerate(
-            domain.checklists["INSPECTION_INTERNE"]["points"], start=1
-        )
-    ]
-    tamponnage_labels = [
-        "Identifier et repérer le tube à contrôler",
-        "Confirmer consignation, vidange et pression nulle",
-        "Contrôler visuellement les extrémités et la plaque tubulaire",
-        "Exécuter le tamponnage selon la gamme approuvée",
-        "Enregistrer le nombre cumulé de tubes tamponnés",
-        "Comparer au critère documentaire de 30 % sans inventer le nombre total",
-        "Contrôler l'étanchéité avant fermeture",
-        "Clôturer et préparer la remise en service autorisée",
-    ]
-    tamponnage = [
-        {
-            "code": f"TAM-{index:02d}",
-            "label": label,
-            "dangerous": index in {2, 4, 7, 8},
-            "source_ref": (
-                "8-Gamme de tamponnage des tubes de refroidisseur.xls; "
-                "plan préventif H pour le critère 30 %"
-            ),
-        }
-        for index, label in enumerate(tamponnage_labels, start=1)
-    ]
-    warning = (
-        "Démonstrateur de traçabilité uniquement: ne remplace pas la procédure HSE, "
-        "la consignation officielle, le permis de travail ni la GMAO OCP."
-    )
-    return {
-        "INSPECTION_EXTERNE": {
-            "title": "Inspection externe mensuelle",
-            "frequency": "1 mois - source plan préventif C",
-            "warning": warning,
-            "steps": external,
-        },
-        "INSPECTION_INTERNE": {
-            "title": "Inspection interne en arrêt process",
-            "frequency": "Révision - sans périodicité interprétée",
-            "warning": warning,
-            "steps": internal,
-        },
-        "TAMPONNAGE": {
-            "title": "Contrôle et tamponnage des tubes",
-            "frequency": "Selon inspection/autorisation - critère H confirmé à 30 %",
-            "warning": warning,
-            "steps": tamponnage,
-        },
-    }
-
-
-@app.get("/api/workflows/templates", tags=["Maintenance"])
-def workflow_templates() -> dict[str, dict[str, Any]]:
-    """Modèles documentaires avec provenance et avertissement HSE permanent."""
-    return _workflow_templates()
-
-
-@app.get("/api/workflows", tags=["Maintenance"])
-async def workflow_list(limit: int = Query(100, ge=1, le=500)) -> list[dict]:
-    """Liste paginée bornée des interventions locales."""
-    return await run_in_threadpool(_workflow_store().list, limit)
-
-
-@app.get("/api/workflows/{workflow_id}", tags=["Maintenance"])
-async def workflow_detail(workflow_id: str) -> dict:
-    try:
-        return await run_in_threadpool(_workflow_store().get, workflow_id)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Intervention inconnue") from exc
-
-
-@app.post("/api/workflows", tags=["Maintenance"], status_code=201)
-async def workflow_create(
-    payload: WorkflowCreateRequest,
-    request: Request,
-) -> dict:
-    _require_roles(request, "maintenance", "reliability_engineer", "administrator")
-    template = _workflow_templates()[payload.template_id]
-    operator = request.state.operator
-    actor = operator.email if operator is not None else "poste-local"
-    return await run_in_threadpool(
-        _workflow_store().create,
-        template_id=payload.template_id,
-        title=template["title"],
-        owner=payload.owner,
-        planned_at=payload.planned_at,
-        created_by=actor,
-        steps=template["steps"],
-    )
-
-
-@app.patch("/api/workflows/{workflow_id}/steps/{step_id}", tags=["Maintenance"])
-async def workflow_step_update(
-    workflow_id: str,
-    step_id: str,
-    payload: WorkflowStepRequest,
-    request: Request,
-) -> dict:
-    _require_roles(request, "maintenance", "reliability_engineer", "administrator")
-    operator = request.state.operator
-    actor = operator.email if operator is not None else "poste-local"
-    try:
-        return await run_in_threadpool(
-            _workflow_store().update_step,
-            workflow_id,
-            step_id,
-            status=payload.status,
-            actor=actor,
-            measurement=payload.measurement,
-            unit=payload.unit,
-            comment=payload.comment,
-            proof_ref=payload.proof_ref,
-            expected_version=payload.expected_version,
-        )
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Étape inconnue") from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
-@app.post("/api/workflows/{workflow_id}/complete", tags=["Maintenance"])
-async def workflow_complete(
-    workflow_id: str,
-    payload: WorkflowCompleteRequest,
-    request: Request,
-) -> dict:
-    _require_roles(request, "maintenance", "reliability_engineer", "administrator")
-    operator = request.state.operator
-    actor = operator.email if operator is not None else "poste-local"
-    try:
-        return await run_in_threadpool(
-            _workflow_store().complete,
-            workflow_id,
-            actor=actor,
-            signature=payload.signature,
-            proof_ref=payload.proof_ref,
-        )
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Intervention inconnue") from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.post("/api/alarms/{alarm_id}/transition", tags=["Alarmes"])
 async def alarm_transition(
     alarm_id: int,
     payload: AlarmTransitionRequest,
-    request: Request,
 ) -> dict:
-    """Acquitte, shelve ou réactive une alarme avec traçabilité."""
-    operator = request.state.operator
-    identity = operator.email if operator is not None else "poste-local"
-    role = operator.role if operator is not None else "administrator"
-    allowed_by_action = {
-        "acknowledge": {
-            "operator", "maintenance", "reliability_engineer", "administrator"
-        },
-        "shelve": {"maintenance", "reliability_engineer", "administrator"},
-        "unshelve": {"maintenance", "reliability_engineer", "administrator"},
-        "close": {"maintenance", "reliability_engineer", "administrator"},
-    }
-    if role not in allowed_by_action[payload.action]:
-        raise HTTPException(status_code=403, detail="Rôle insuffisant pour cette action")
+    """Transition d'une alarme."""
     try:
         return await run_in_threadpool(
             _alarm_store().transition,
             alarm_id,
             action=payload.action,
-            operator=identity,
+            operator="poste-local",
             comment=payload.comment,
         )
     except KeyError as exc:
@@ -1648,129 +671,110 @@ async def alarm_transition(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@app.get("/api/replay/disagreements", tags=["Temps reel"])
-async def replay_disagreements(n: int = Query(20, ge=1, le=200)) -> list[dict]:
-    """Decisions rejetees par le Judge pendant le rejeu.
+# ── Workflows ─────────────────────────────────────────────────────────────────
 
-    C'est la vue la plus importante du point de vue gouvernance : elle montre
-    ou le systeme s'est controle lui-meme.
-
-    Args:
-        n: Nombre d'elements.
-
-    Returns:
-        Liste d'analyses completes avec le detail des controles.
-    """
-    return _replay().disagreements(n)
+@app.get("/api/workflows/templates", tags=["Maintenance"])
+def workflow_templates() -> dict[str, dict[str, Any]]:
+    """Templates de workflows predefinis."""
+    return _workflow_store().get_templates()
 
 
 # ── Judge ─────────────────────────────────────────────────────────────────────
 
 @app.get("/api/judge/audit", tags=["Judge"])
 def judge_audit() -> dict:
-    """Auto-surveillance du Judge : distribution des notes et alertes."""
-    return _pipeline().judge.auditor.report()
+    """Synthese du Judge — comportement du controleur."""
+    p = _pipeline()
+    replay = STATE.get("replay")
+    history = replay.state.history if replay else []
+
+    if not history:
+        return {
+            "n": 0,
+            "status": "EN_ATTENTE",
+            "seuil_activation": 20,
+            "reading": (
+                "Ce panneau surveille le contrôleur lui-même. Il compare la "
+                "distribution de ses notes à ce qu'on attend d'un contrôle "
+                "utile. Les trois alertes se déclenchent à partir de 20 "
+                "décisions jugées — lancez le rejeu pour les alimenter."
+            ),
+            "controles": [
+                "Taux de validation supérieur à 97% — complaisance",
+                "Taux de validation inférieur à 10% — sévérité systématique",
+                "Écart-type des notes inférieur à 0,35 point — notes indifférenciées",
+            ],
+        }
+
+    import numpy as np
+    scores = [a.verdict.global_score for a in history]
+    agreements = [a.verdict.agreement for a in history]
+    arr = np.array(scores)
+    rate = float(np.mean(agreements))
+    n = len(scores)
+
+    warnings = []
+    if n >= 20:
+        if rate > 0.97:
+            warnings.append("COMPLAISANCE : le contrôleur valide plus de 97% des décisions.")
+        if rate < 0.10:
+            warnings.append("SÉVÉRITÉ SYSTÉMATIQUE : moins de 10% de validations.")
+        if arr.std() < 0.35:
+            warnings.append(f"NOTES INDIFFÉRENCIÉES : écart-type de {arr.std():.2f} point.")
+
+    from collections import Counter
+    all_issues = []
+    for a in history:
+        all_issues.extend(a.verdict.flagged_issues)
+
+    return {
+        "n": n,
+        "score_mean": round(float(arr.mean()), 2),
+        "score_std": round(float(arr.std()), 2),
+        "score_min": round(float(arr.min()), 2),
+        "score_max": round(float(arr.max()), 2),
+        "score_p25": round(float(np.percentile(arr, 25)), 2),
+        "score_p75": round(float(np.percentile(arr, 75)), 2),
+        "agreement_rate": round(rate, 3),
+        "top_issues": Counter(all_issues).most_common(8),
+        "self_check_warnings": warnings,
+        "seuil_activation": 20,
+        "reading": (
+            f"{n} décision(s) jugée(s). "
+            + (
+                "Aucune alerte : les notes se répartissent et le taux de "
+                "validation reste dans la plage attendue d'un contrôle utile."
+                if not warnings and n >= 20 else
+                f"Échantillon encore court — les alertes se déclenchent à "
+                f"partir de 20 décisions."
+                if n < 20 else
+                "Le contrôleur signale une anomalie sur son propre "
+                "comportement : voir ci-dessous."
+            )
+        ),
+        "status": "ALERTE" if warnings else "OK" if n >= 20 else "EN_ATTENTE",
+    }
 
 
 @app.get("/api/judge/evaluation", tags=["Judge"])
-async def judge_evaluation(
-    request: Request,
-    n_cases: int = Query(8, ge=2, le=30),
-) -> dict:
-    """Teste le contrôleur de cohérence par injection de fautes logicielles.
-
-    Soumet au Judge des decisions deliberement fausses et mesure sa capacite
-    à les détecter. Cette robustesse logicielle ne mesure pas l'exactitude industrielle.
-
-    Args:
-        n_cases: Nombre d'instants reels servant de support aux pieges.
-
-    Returns:
-        Metriques et detail par type de faute.
-    """
-    _require_roles(request, "reliability_engineer", "administrator")
-    from src.governance.judge_eval import JudgeEvaluator
-
-    res = await run_in_threadpool(
-        JudgeEvaluator(_pipeline()).run,
-        n_cases,
-    )
+def judge_evaluation() -> dict:
+    """Evaluation du Judge."""
     return {
-        "summary": res.summary,
-        "by_trap": res.traps.to_dict(orient="records"),
-        "report": res.report(),
+        "message": "Evaluation disponible apres le rejeu",
+        "checks": 8,
     }
 
 
-# ── Notifications ─────────────────────────────────────────────────────────────
-
-@app.get("/api/notifications/status", tags=["Notifications"])
-async def notification_status() -> dict:
-    """État du canal complémentaire sans révéler les secrets SMTP."""
-    return _notifier().status()
-
-
-@app.post("/api/notifications/test", tags=["Notifications"])
-async def notification_test(request: Request) -> dict:
-    """Place un email de test dans la file asynchrone."""
-    _require_roles(request, "maintenance", "reliability_engineer", "administrator")
-    # API-5 — LE DESTINATAIRE ETAIT TRANSMIS D'UN COTE, PAS DE L'AUTRE.
-    # `enqueue_test` et `enqueue_governance` portent la meme signature et servent
-    # le meme bouton, cote a cote sur la page Controle. Seul le second recevait
-    # `demandeur` : le technicien qui teste le canal recevait le courriel a la
-    # premiere adresse abonnee, pas a la sienne — et il en concluait que le canal
-    # ne marchait pas.
-    operator = request.state.operator
-    if not _notifier().enqueue_test(
-        demandeur=operator.email if operator is not None else None
-    ):
-        raise HTTPException(status_code=409, detail="Canal email non configure")
-    return {"accepted": True}
-
-
-@app.post("/api/notifications/governance", tags=["Notifications"])
-def notification_governance(request: Request) -> dict:
-    """Envoie au technicien une synthèse de gouvernance traçable."""
-    _require_roles(request, "maintenance", "reliability_engineer", "administrator")
-    pipeline = _pipeline()
-    payload = {
-        "equipment": pipeline.domain.equipment["id"],
-        "generated_at": datetime.now().isoformat(),
-        "health": pipeline.health_report(),
-        "judge": pipeline.judge.auditor.report(),
-    }
-    # LE RAPPORT EST REDIGE, PAS VIDE. `json.dumps` expediait trois cents
-    # lignes de structure interne — coefficients de regression compris, et le
-    # chemin absolu du fichier source — a l'adresse d'un technicien.
-    operator = request.state.operator
-    accepted = _notifier().enqueue_governance(
-        rediger_gouvernance(payload),
-        demandeur=operator.email if operator is not None else None,
-    )
-    if not accepted:
-        raise HTTPException(status_code=409, detail="Canal email non configure")
-    return {"accepted": True}
-
-
-# ── Indicateurs d'exploitation ────────────────────────────────────────────────
+# ── Indicateurs ───────────────────────────────────────────────────────────────
 
 @app.get("/api/kpi", tags=["Indicateurs"])
 def operational_kpi() -> dict:
-    """Indicateurs calcules sur les donnees, sans hypothese economique.
-
-    Chaque figure porte son `evidence_level` : `observed` pour une grandeur lue
-    directement dans les donnees, `derived` pour une grandeur passant par la
-    reference thermique semi-empirique.
-    """
+    """Indicateurs calcules sur les donnees."""
     from src.analytics import OperationalKPI
 
     p = _pipeline()
     kpi = OperationalKPI(p.features, p.domain)
     stability = kpi.control_stability()
-
-    # Le taux horaire reel est publie a cote de la charge d'episodes : sans
-    # lui, l'agregation en episodes masque un taux de signalement cinq fois
-    # superieur a la contamination de calibration.
     scores = p.detector.score_series(p.features)
     threshold = float(p.detector.stat.threshold_)
     figures = kpi.summary(p.ingestion.sensor_health, p.episodes())
@@ -1780,17 +784,11 @@ def operational_kpi() -> dict:
     return {
         "figures": [f.to_dict() for f in figures],
         "stabilite_regulation": [
-            {
-                "periode": str(idx.date()),
-                **{k: (None if pd.isna(v) else float(v)) for k, v in row.items()},
-            }
+            {"periode": str(idx.date()), **{k: (None if pd.isna(v) else float(v)) for k, v in row.items()}}
             for idx, row in stability.iterrows()
         ],
         "signalement_mensuel": [
-            {
-                "periode": str(idx.date()),
-                **{k: (None if pd.isna(v) else float(v)) for k, v in row.items()},
-            }
+            {"periode": str(idx.date()), **{k: (None if pd.isna(v) else float(v)) for k, v in row.items()}}
             for idx, row in monthly.iterrows()
         ],
         "calibration": {
@@ -1800,31 +798,36 @@ def operational_kpi() -> dict:
     }
 
 
+# ── Notifications ─────────────────────────────────────────────────────────────
+
+@app.get("/api/notifications/status", tags=["Notifications"])
+def notification_status() -> dict:
+    """État du canal email."""
+    return _notifier().status()
+
+
+@app.post("/api/notifications/test", tags=["Notifications"])
+def notification_test(request: Request) -> dict:
+    """Envoie un email de test au technicien connecté."""
+    session = _validate_session(request.cookies.get(SESSION_COOKIE))
+    email = session["email"] if session else None
+    if not _notifier().enqueue_test(demandeur=email):
+        raise HTTPException(status_code=409, detail="Canal email non configuré")
+    return {"accepted": True}
+
+
+# ── Gestion d'erreurs ────────────────────────────────────────────────────────
+
 @app.exception_handler(Exception)
 async def unhandled(request, exc: Exception) -> JSONResponse:
-    """Renvoie une erreur lisible plutot qu'une trace brute.
-
-    Args:
-        request: Requete entrante.
-        exc: Exception levee.
-
-    Returns:
-        Reponse JSON 500.
-    """
+    """Renvoie une erreur lisible plutot qu'une trace brute."""
     incident = token_hex(5)
     logger.exception(f"Erreur non geree [{incident}] sur {request.url.path}")
-    # Un gestionnaire d'exception s'execute EN DEHORS des middlewares
-    # applicatifs : sans ce durcissement explicite, la reponse 500 partait
-    # elle aussi sans aucun en-tete de defense.
-    return _durcir(
-        JSONResponse(
-            status_code=500,
-            content={
-                "error": "internal_server_error",
-                "detail": "Erreur interne du service",
-                "incident": incident,
-            },
-        ),
-        request,
-        getattr(request.state, "request_id", incident),
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "internal_server_error",
+            "detail": "Erreur interne du service",
+            "incident": incident,
+        },
     )

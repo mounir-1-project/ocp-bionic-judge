@@ -1,28 +1,14 @@
 """
 Agent de detection — transforme des constatations brutes en diagnostic actionnable.
 
-Deux modes de production, un seul contrat de sortie
-----------------------------------------------------------------------------
-  mode 'rules' : l'agent compose le diagnostic a partir des constatations et
-                 de la connaissance AMDEC, sans aucun appel externe. Toujours
-                 disponible, deterministe, reproductible.
-  mode 'llm'   : Gemini redige le diagnostic a partir du MEME dossier de faits.
-
-Le mode 'rules' n'est pas un pis-aller. C'est la reference : il fournit au
-Judge un point de comparaison pour mesurer ce que le LLM apporte reellement,
-et il garantit que le systeme reste demontrable sans connexion ni quota API.
-Les deux modes produisent un `AgentDecision` identique en structure.
-
-Point de vigilance assume : le LLM ne voit QUE le dossier de faits construit
-par le code. Il n'a pas acces aux donnees brutes et ne peut donc pas inventer
-une mesure sans que le Judge le detecte par confrontation aux valeurs reelles.
+L'agent compose le diagnostic a partir des constatations et de la connaissance
+AMDEC, sans aucun appel externe. Deterministe, reproductible.
 
 Author: Mounir Sanbouli — Stage OCP, Programme Bionic
 """
 
 from __future__ import annotations
 
-import json
 import re
 from typing import Any, ClassVar
 
@@ -40,59 +26,19 @@ from src.agents.schemas import (
 from src.domain.knowledge import DomainKnowledge, load_domain
 from src.models.detector import SEVERITY_ORDER, DetectionResult
 
-# Correspondance severite -> urgence. Une seule table existe : celle du
-# contrat, que le controleur utilise pour juger le sous-dimensionnement. Elle
-# etait recopiee ici a l'identique, avec un commentaire annoncant l'alignement
-# — deux tables qui doivent coincider et que rien ne comparait.
+# Correspondance severite -> urgence
 _DEFAULT_URGENCY = MIN_URGENCY_FOR_SEVERITY
 
-# Les etats process viennent du DCS et sont des identifiants techniques. Les
-# afficher bruts dans une interface francaise — « Ligne en etat STOPPED » —
-# obligeait l'exploitant a traduire mentalement. Le code reste la reference
-# machine; seul l'affichage est traduit.
+# Les etats process sont des identifiants techniques, traduits pour l'affichage
 _ETAT_LISIBLE: dict[str, str] = {
     "RUNNING": "en marche établie",
     "TRANSIENT": "en régime transitoire",
     "STOPPED": "à l'arrêt",
 }
 
-# Echecs imputables a la REPONSE du modele, non au service. Ils justifient un
-# repli sur cet instant, jamais l'ouverture du coupe-circuit : voir `analyze`.
-#   ValueError          — `_extract_json` n'a trouve aucun objet JSON
-#   json.JSONDecodeError— objet trouve mais syntaxiquement invalide (sous-classe
-#                         de ValueError, citee pour la lisibilite)
-#   KeyError / TypeError— champ attendu absent ou d'un type impossible
-#   ValidationError     — `RecommendedAction` refuse le contenu propose
-_REPONSE_INEXPLOITABLE: tuple[type[Exception], ...] = (
-    ValueError, json.JSONDecodeError, KeyError, TypeError,
-)
-try:  # pydantic est une dependance de `schemas`, mais l'import reste defensif
-    from pydantic import ValidationError as _ValidationError
-
-    _REPONSE_INEXPLOITABLE = (*_REPONSE_INEXPLOITABLE, _ValidationError)
-except ImportError:  # pragma: no cover
-    pass
 
 def _nominal_confidence(result: DetectionResult) -> float:
     """Confiance d'une decision nominale, alignee sur le bareme du controleur.
-
-    LE DEFAUT QUE CETTE FONCTION CORRIGE.
-    L'agent annoncait 0,50 des que le modele statistique etait inapplicable,
-    sans distinguer POURQUOI il l'etait. Le controleur, lui, retranche 0,15
-    lorsque la ligne n'est pas en marche etablie, et jugeait donc 0,35
-    justifiable. L'ecart de 0,15 depasse la tolerance de 0,12 : le controleur
-    accusait l'agent de sur-confiance sur CHACUNE des 1 385 heures d'arret du
-    corpus, soit 13,6 % des horodatages.
-
-    L'anomalie ne se voyait nulle part dans la note globale — elle restait a
-    8,74/10 et l'accord etait maintenu. Elle ne se lisait que dans l'encart
-    « Reserves du controleur », c'est-a-dire au seul endroit destine a
-    l'exploitant.
-
-    Les deux bordereaux sont desormais alignes explicitement.
-    `test_aucune_decision_native_ne_declenche_la_sur_confiance` soumet les
-    decisions reelles de la chaine, sans mutation, et echoue si le controleur
-    releve OVERCONFIDENCE ou UNDERCONFIDENCE sur l'une d'elles.
 
     Args:
         result: Sortie de la detection.
@@ -108,7 +54,7 @@ def _nominal_confidence(result: DetectionResult) -> float:
     )
 
 
-# Formulation du delai de qualification, pour l'inserer dans une phrase.
+# Formulation du delai de qualification
 _URGENCY_TEXT: dict[str, str] = {
     "AUCUNE": "aucun délai particulier",
     "SOUS_SURVEILLANCE": "une semaine",
@@ -123,8 +69,8 @@ _URGENCY_TEXT: dict[str, str] = {
 def build_case_file(result: DetectionResult, domain: DomainKnowledge) -> dict[str, Any]:
     """Assemble le dossier de faits soumis a l'agent.
 
-    C'est la seule information dont dispose l'agent — LLM comme regles. Tout
-    ce qui n'y figure pas ne peut pas etre affirme legitimement.
+    C'est la seule information dont dispose l'agent. Tout ce qui n'y figure
+    pas ne peut pas etre affirme legitimement.
 
     Args:
         result: Sortie de la detection pour un horodatage.
@@ -142,9 +88,6 @@ def build_case_file(result: DetectionResult, domain: DomainKnowledge) -> dict[st
             "code": m.code, "element": m.element, "mode": m.mode,
             "causes": m.causes, "effet": m.effet,
             "criticite": m.C, "bande": m.criticality_band(),
-            # Les trois degres, pas un booleen : reduire `partial` a `false`
-            # faisait lire au modele qu'un mode que les regles rattachent
-            # activement est un angle mort.
             "observabilite": m.observabilite,
             "action_corrective_amdec": m.action_corrective,
             "taches_preventives": [
@@ -179,29 +122,10 @@ class RuleBasedComposer:
     """Compose un diagnostic a partir des constatations, sans LLM."""
 
     def __init__(self, domain: DomainKnowledge) -> None:
-        """Initialise le compositeur.
-
-        Args:
-            domain: Connaissance domaine.
-        """
         self.domain = domain
 
     def compose(self, result: DetectionResult) -> AgentDecision:
         """Produit une decision structuree.
-
-        A-3 — LE DOSSIER DE FAITS ETAIT CONSTRUIT PUIS IGNORE.
-
-        Cette methode recevait `case`, le dossier de faits, et ne le lisait
-        jamais : le corps entier travaille sur `result`. Le parametre disait
-        donc le contraire de ce que la classe fait, et laissait croire que le
-        compositeur deterministe et le LLM partagent la meme entree — alors
-        que seul le second lit le dossier.
-
-        Le cout n'etait pas nul : `analyze()` appelait `build_case_file` AVANT
-        de savoir si le LLM allait servir, donc a chaque instant du rejeu, y
-        compris en mode regles seules ou le dossier n'est lu par personne. Sa
-        construction parcourt les modes AMDEC et le plan preventif. Le dossier
-        n'est desormais assemble que si la redaction va effectivement l'utiliser.
 
         Args:
             result: Sortie de la detection.
@@ -209,32 +133,8 @@ class RuleBasedComposer:
         Returns:
             AgentDecision generee par regles.
         """
-        # LA CONSTATATION DOMINANTE SE CHOISIT PAR CRITICITE, PAS PAR L'ORDRE
-        # OU LES REGLES SE TROUVENT ECRITES.
-        # `max()` renvoie le premier element a egalite : entre un SENSOR_FAULT
-        # et un CONC_DROP_SEVERE tous deux CRITICAL, le diagnostic retenait le
-        # defaut capteur — parce que `_rule_sensor_health` s'execute en premier
-        # dans `RuleEngine.evaluate`. Le fait le plus grave se trouvait relegue
-        # en constatation concomitante, et c'est le defaut capteur qui pilotait
-        # l'action recommandee et le mode AMDEC affiche.
-        #
-        # UN DEFAUT DE MESURE N'EST PAS UN DIAGNOSTIC D'EQUIPEMENT.
-        # Trier sur la seule criticite AMDEC ne suffit pas : CAPTEUR_DEFAILLANT
-        # porte 108 — cotation PROPOSEE par ce travail, `application_rule`,
-        # `validation_status: hypothesis` — contre 105 pour FAISCEAU_FUITE,
-        # ligne transcrite du document OCP. Un analyseur degrade aurait donc
-        # domine une suspicion de percement de tube, l'evenement le plus grave
-        # que le systeme puisse voir, et l'aurait relegue en constatation
-        # concomitante. L'etat de la chaine de mesure est une RESERVE sur la
-        # lecture, pas une conclusion sur l'appareil : il figure deja comme tel
-        # dans le raisonnement.
-        #
-        # L'ordre est donc : severite, puis equipement avant instrumentation,
-        # puis criticite AMDEC, puis preuve deterministe avant ecart
-        # statistique, le code departageant en dernier recours pour que la
-        # selection reste reproductible. La distinction equipement /
-        # instrumentation est lue dans le referentiel (`sous_equipement`), pas
-        # ecrite ici.
+        # La constatation dominante se choisit par severite, puis equipement
+        # avant instrumentation, puis criticite AMDEC
         def _priorite(constatation) -> tuple[int, int, int, int, str]:
             mode_associe = self.domain.modes.get(constatation.amdec_mode or "")
             sous_ensemble = (
@@ -283,9 +183,6 @@ class RuleBasedComposer:
                 f"{_pretty(top['feature'], top['value'])} contre "
                 f"{_pretty(top['feature'], top['reference'])} en référence."
             )
-        # Reserves explicites. Taire une limite de la base de mesure revient a
-        # laisser croire a l'ingenieur que le diagnostic repose sur des donnees
-        # completes — c'est precisement ce que le Judge sanctionne (controle V8).
         if result.data_quality.get("n_invalid_tags"):
             reasoning_parts.append(
                 f"Réserve : {result.data_quality['n_invalid_tags']} point(s) de mesure "
@@ -319,18 +216,7 @@ class RuleBasedComposer:
         )
 
     def _nominal_decision(self, result: DetectionResult) -> AgentDecision:
-        """Decision pour un point sans constatation actionnable.
-
-        Args:
-            result: Sortie de la detection.
-
-        Returns:
-            AgentDecision de severite NORMAL ou INFO.
-        """
-        # La severite reste celle du detecteur : une constatation INFO (point
-        # isole atypique, ligne a l'arret) ne doit pas etre effacee en NORMAL.
-        # L'ecraser reviendrait a masquer une information au Judge, qui la
-        # recalcule de toute facon et sanctionnerait l'ecart.
+        """Decision pour un point sans constatation actionnable."""
         sev: Severity = result.severity if result.findings else "NORMAL"
 
         info = [f for f in result.findings if f.severity == "INFO"]
@@ -346,8 +232,6 @@ class RuleBasedComposer:
                     "performance du refroidisseur sont dans leur domaine de "
                     "référence : " + _quote_measurements(result.measurements))
 
-        # Un diagnostic sans valeur mesuree n'est pas verifiable. Meme en
-        # situation nominale, on ancre la conclusion sur des chiffres reels.
         cited = {k: v for k, v in result.measurements.items()
                  if k in ("T_ACID_IN", "T_ACID_OUT", "F_ACID", "conc_min",
                           "delta_t", "duty_kw", "control_deviation")}
@@ -378,23 +262,13 @@ class RuleBasedComposer:
             generated_by="rules",
         )
 
-    # Periodicites du plan preventif, converties en heures pour etre ordonnees.
-    # Le referentiel les exprime en langage naturel ('1 mois', '4 ans').
+    # Periodicites du plan preventif, converties en heures
     _UNITES_PERIODICITE: ClassVar[dict[str, float]] = {
         "heure": 1.0, "jour": 24.0, "mois": 730.0, "an": 8766.0,
     }
 
     def _periodicite_heures(self, ref: str) -> float:
-        """Convertit la periodicite d'une tache preventive en heures.
-
-        Args:
-            ref: Reference de tache ('A'..'H').
-
-        Returns:
-            Periodicite en heures, ou l'infini si elle n'est pas interpretable —
-            une tache dont on ne sait pas lire la cadence ne doit jamais etre
-            retenue comme la plus frequente.
-        """
+        """Convertit la periodicite d'une tache preventive en heures."""
         tache = self.domain.maintenance_task(ref) or {}
         texte = str(tache.get("periodicite", "")).strip().lower()
         nombre = re.match(r"(\d+(?:[.,]\d+)?)", texte)
@@ -406,28 +280,13 @@ class RuleBasedComposer:
         return float("inf")
 
     def _tache_la_plus_frequente(self, refs: list[str]) -> str | None:
-        """Tache du plan preventif dont la cadence est la plus courte.
-
-        Args:
-            refs: References de taches rattachees au mode.
-
-        Returns:
-            La reference retenue, ou None si le mode n'en cite aucune.
-        """
+        """Tache du plan preventif dont la cadence est la plus courte."""
         if not refs:
             return None
         return min(refs, key=self._periodicite_heures)
 
     def _build_action(self, severity: str, mode) -> RecommendedAction:
-        """Construit l'action recommandee a partir de l'AMDEC.
-
-        Args:
-            severity: Severite de la constatation dominante.
-            mode: FailureMode associe, ou None.
-
-        Returns:
-            RecommendedAction conforme au plan de maintenance.
-        """
+        """Construit l'action recommandee a partir de l'AMDEC."""
         urgency = _DEFAULT_URGENCY.get(severity, "SOUS_SURVEILLANCE")
         if mode is None:
             return RecommendedAction(
@@ -438,22 +297,10 @@ class RuleBasedComposer:
                 responsible=SERVICE_INSTRUMENTATION,
             )
 
-        # LA TACHE RETENUE EST LA PLUS FREQUENTE DU MODE, PAS LA PREMIERE ECRITE.
-        # `plan_maintenance_ref[0]` dependait de l'ordre de saisie du YAML :
-        # pour FAISCEAU_BOUCHAGE, refs ["B", "H"], la recommandation citait le
-        # controle d'epaisseurs bisannuel plutot que le changement octennal —
-        # correct par chance. Inverser les deux lettres dans le referentiel
-        # aurait fait recommander un remplacement de faisceau sur une derive
-        # naissante. On retient explicitement la tache de cadence la plus
-        # courte : c'est la premiere action que le plan preventif prevoit.
         task_ref = self._tache_la_plus_frequente(mode.plan_maintenance_ref)
         task = self.domain.maintenance_task(task_ref) if task_ref else None
         needs_stop = self.domain.task_requires_shutdown(task_ref)
 
-        # La fenetre d'execution vient de l'etat exige par la tache du plan
-        # preventif, jamais de la severite. Une severite eleve accelere la
-        # QUALIFICATION, elle ne rend pas realisable en marche une operation
-        # qui exige la consignation des circuits.
         if not needs_stop:
             window = "EN_MARCHE"
         elif severity == "CRITICAL":
@@ -466,8 +313,6 @@ class RuleBasedComposer:
             desc += (f" — tâche {task_ref} du plan préventif : {task['tache']} "
                      f"(cadence {task['periodicite']}).")
 
-        # Le texte enonce les deux horizons cote a cote : c'est ce qui empeche
-        # de lire « sous 24 h » comme un ordre d'intervention immediate.
         if window == "ARRET_PROGRAMME":
             desc += (" Deux horizons distincts : la constatation doit être qualifiée "
                      f"par le service fiabilité sous {_URGENCY_TEXT[urgency]}, tandis "
@@ -480,18 +325,6 @@ class RuleBasedComposer:
                      "atteinte ne permet pas d'attendre un arrêt programmé : la mise "
                      "à l'arrêt de la ligne relève de la décision d'exploitation.")
 
-        # A-5 — LA MEME DISTINCTION, LUE D'UN COTE ET ECRITE EN DUR DE L'AUTRE.
-        #
-        # Ce test valait `mode.code == "CAPTEUR_DEFAILLANT"`. Or `_priorite`,
-        # cent-cinquante lignes plus haut, tranche exactement la meme question
-        # — instrumentation ou equipement — en lisant `sous_equipement` dans le
-        # referentiel, avec un commentaire disant que la distinction « est lue
-        # dans le referentiel, pas ecrite ici ».
-        #
-        # Deux facons de repondre a une question dans le meme fichier, dont une
-        # seule suit le referentiel. Ajouter un second mode d'instrumentation
-        # dans `amdec.yaml` l'aurait fait trier comme un defaut de mesure par
-        # `_priorite`, et adresser au service mecanique par celle-ci.
         instrumentation = mode.raw.get("sous_equipement", "") == "INSTRUMENTATION"
         responsible = SERVICE_INSTRUMENTATION if instrumentation else SERVICE_MECANIQUE
 
@@ -506,43 +339,7 @@ class RuleBasedComposer:
         )
 
     def _calibrate_confidence(self, result: DetectionResult) -> float:
-        """Calibre la confiance sur la force reelle des preuves.
-
-        LE BAREME EST CELUI DU CONTROLEUR, PAS UNE SECONDE IMPLEMENTATION.
-        `schemas.confiance_justifiable` affirme que « deux baremes qui doivent
-        coincider ne se recopient pas, ils se partagent » et que « toute
-        divergence future devient impossible par construction ». C'etait faux :
-        cette methode reimplementait une formule differente — base 0,55 contre
-        0,50, penalite binaire de 0,30 sur l'observabilite au lieu d'une
-        graduation, corroboration creditee ici et ignoree la. Ecart mesure
-        jusqu'a 0,25 point sur un mode partiellement observe, a 0,05 point de
-        declencher une reserve de sous-confiance a l'ecran.
-
-        Une seule fonction calcule desormais la valeur; l'agent l'ANNONCE, le
-        controleur la VERIFIE, et la divergence est reellement impossible.
-
-        A-3, SUITE — DEUX PARAMETRES DE PLUS, DOCUMENTES ET JAMAIS LUS.
-        La signature portait `lead` et `mode`. Le corps n'en utilise aucun :
-        l'observabilite est calculee sur `result.amdec_modes`, precisement
-        parce que la restreindre au mode dominant rouvrirait la divergence
-        avec le controleur (voir le commentaire ci-dessous). `lead` etait
-        d'ailleurs annote « conservee pour la signature » — l'aveu qu'il ne
-        servait a rien; `mode` n'avait meme pas cet aveu. Une signature qui
-        annonce des entrees inertes fait croire que le calcul en depend, et
-        conduit le relecteur suivant a chercher un couplage qui n'existe pas.
-
-        Args:
-            result: Sortie de la detection.
-
-        Returns:
-            Confiance dans [0.15, 0.95].
-        """
-        # L'OBSERVABILITE PORTE SUR TOUS LES MODES INVOQUES, PAS SUR LE SEUL
-        # MODE DOMINANT. Le controleur prend le minimum sur `amdec_modes`; ne
-        # retenir ici que celui de la constatation dominante rouvrait la
-        # divergence par une autre porte : une decision citant a la fois un mode
-        # pleinement observe et un mode partiel aurait ete annoncee a 0,80 et
-        # jugee a 0,70.
+        """Calibre la confiance sur la force reelle des preuves."""
         modes = [
             self.domain.modes[code]
             for code in result.amdec_modes
@@ -563,20 +360,7 @@ class RuleBasedComposer:
 
     @staticmethod
     def _collect_cited(result: DetectionResult, lead) -> dict[str, float]:
-        """Rassemble les valeurs numeriques citees, pour verification par le Judge.
-
-        On y met les preuves de la constatation dominante ET les grandeurs de
-        conduite principales : plus la decision expose de valeurs verifiables,
-        plus le controle du Judge a de prise. Une decision qui ne cite rien
-        n'est pas refutable, donc pas fiable.
-
-        Args:
-            result: Sortie de la detection.
-            lead: Constatation dominante.
-
-        Returns:
-            Dictionnaire {grandeur: valeur}.
-        """
+        """Rassemble les valeurs numeriques citees, pour verification par le Judge."""
         cited: dict[str, float] = {}
         for k, v in (lead.evidence or {}).items():
             if isinstance(v, (int, float)) and not isinstance(v, bool):
@@ -589,37 +373,7 @@ class RuleBasedComposer:
 
 
 def _quote_measurements(m: dict[str, float]) -> str:
-    """Formate les grandeurs cles pour les citer dans un diagnostic nominal.
-
-    A-1 — LA PHRASE LA PLUS SOUVENT PRODUITE PAR LE SYSTEME ETAIT LA SEULE
-    ECRITE EN CARACTERES DE MACHINE.
-
-    Cette fonction rendait « entree acide 94.23 degC, sortie acide 65.91 degC,
-    debit acide 56.40 m3/h ». Trois fautes cumulees dans une interface
-    entierement francaise :
-
-      - libelles sans accents — « entree », « debit » ;
-      - unites en ASCII — « degC », « m3/h » — la ou le referentiel, le poste
-        et `src.formatting` ecrivent « °C » et « m³/h » ;
-      - point decimal anglais, que `src.formatting` existe pour supprimer.
-
-    ET ELLE A ECHAPPE AU CONTROLE POUR UNE RAISON PRECISE.
-    `test_les_messages_de_detection_sont_accentues` soumet les diagnostics de
-    `pipeline.notable_timestamps(12)`. Or cette fonction n'est appelee que par
-    la branche NOMINALE de `_nominal_decision`, c'est-a-dire quand il n'y a
-    AUCUNE constatation actionnable — exactement ce qu'un instant « notable »
-    n'est jamais. Le controle echantillonnait la seule population qui ne peut
-    pas declencher le defaut.
-
-    C'est pourtant la formulation la plus frequente du systeme : sur ce
-    corpus, l'immense majorite des heures de marche etablie sont nominales.
-
-    Args:
-        m: Dictionnaire de mesures.
-
-    Returns:
-        Chaine du type « entrée acide 94,23 °C, sortie acide 65,91 °C ».
-    """
+    """Formate les grandeurs cles pour les citer dans un diagnostic nominal."""
     from src.formatting import unite
 
     parts = []
@@ -634,63 +388,67 @@ def _quote_measurements(m: dict[str, float]) -> str:
     return ", ".join(parts) + "." if parts else "valeurs indisponibles."
 
 
-# ── Mode LLM ──────────────────────────────────────────────────────────────────
+# ── Agent ──────────────────────────────────────────────────────────────────────
 
 AGENT_SYSTEM = """Tu es l'agent de diagnostic du refroidisseur d'acide de sechage E7301
 (atelier sulfurique PS III, Maroc Chimie, OCP). Tu rediges pour un ingenieur
 fiabilite qui va decider d'une intervention.
 
-## EQUIPEMENT
-{equipment}
-
-## POINTS DE MESURE ET SEUILS
-{tags}
-
-## AMDEC DE REFERENCE (analyse OCP du 23/09/2019)
-{amdec}
-
-## CE QUE LE SYSTEME NE PEUT PAS VOIR
-{blind_spots}
-
 ## REGLES ABSOLUES
-
-1. Tu ne cites QUE des valeurs presentes dans le dossier de faits. Inventer une
-   mesure est la faute la plus grave possible — elle sera detectee et sanctionnee.
-2. Tu ne diagnostiques JAMAIS un mode declare non observable. Si les faits
-   evoquent un tel mode, tu dis explicitement qu'une inspection physique est requise.
-3. Si l'etat process n'est pas RUNNING, aucun diagnostic de performance de
-   l'echangeur n'est recevable : dis-le.
-4. Ta confiance doit refleter la force des preuves. Preuves faibles ou base de
-   mesure degradee => confiance basse. Une confiance elevee sans preuve solide
-   sera sanctionnee.
-5. L'action recommandee doit etre executable a PS III : si elle exige un arret
-   process, tu le dis et tu mentionnes la consignation. Tu ne prescris jamais
-   une intervention en marche sur un circuit acide.
-6. L'encrassement se lit sur le COEFFICIENT D'ECHANGE GLOBAL, et sur rien
-   d'autre. Un deficit persistant de ce coefficient a debit, temperature et eau
-   de mer donnes en est la signature. L'effort de regulation n'est PAS une
-   preuve : il vaut, a l'algebre pres, l'ecart de consigne change de signe, et
-   un exces d'effort designe un regime de conduite, jamais une degradation.
+1. Tu ne cites QUE des valeurs presentes dans le dossier de faits.
+2. Tu ne diagnostiques JAMAIS un mode declare non observable.
+3. Si l'etat process n'est pas RUNNING, aucun diagnostic n'est recevable.
+4. Ta confiance doit refleter la force des preuves.
 
 ## SORTIE
-Reponds UNIQUEMENT par un objet JSON valide, sans texte autour :
+Reponds UNIQUEMENT par un objet JSON valide :
 {{
   "severity": "NORMAL" | "INFO" | "WARNING" | "CRITICAL",
   "amdec_modes": ["CODE", ...],
-  "diagnosis": "diagnostic en 2 a 4 phrases, avec les valeurs mesurees et leurs unites",
-  "reasoning": "chaine de raisonnement en 2 a 4 phrases",
+  "diagnosis": "diagnostic en 2 a 4 phrases",
+  "reasoning": "chaine de raisonnement",
   "recommended_action": {{
-    "description": "action concrete et executable",
+    "description": "action concrete",
     "urgency": "AUCUNE" | "SOUS_SURVEILLANCE" | "SOUS_24H" | "SOUS_8H" | "IMMEDIATE",
     "requires_shutdown": true | false,
     "maintenance_task_ref": "A".."H" ou null,
-    "checklist_ref": "INSPECTION_EXTERNE" | "INSPECTION_INTERNE" | null,
     "responsible": "service concerne"
   }},
   "confidence": 0.0 a 1.0,
   "cited_values": {{"nom_grandeur": valeur_numerique, ...}}
 }}
 """
+
+
+def _try_build_llm():
+    """Instancie le client Gemini si disponible."""
+    try:
+        from src.config import GEMINI_API_KEY, GEMINI_MODEL, GEMINI_TIMEOUT_S
+        if not GEMINI_API_KEY:
+            return None
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        return ChatGoogleGenerativeAI(
+            model=GEMINI_MODEL,
+            google_api_key=GEMINI_API_KEY,
+            temperature=0.1,
+            max_retries=0,
+            timeout=GEMINI_TIMEOUT_S,
+        )
+    except ImportError:
+        return None
+
+
+def _extract_json(raw: str) -> dict:
+    """Extrait le premier objet JSON d'une reponse LLM."""
+    import re
+    text = raw.strip()
+    fence = re.search(r"```(?:json)?\s*(.+?)\s*```", text, re.DOTALL)
+    if fence:
+        text = fence.group(1)
+    start, end = text.find("{"), text.rfind("}") + 1
+    if start < 0 or end <= start:
+        raise ValueError(f"Aucun JSON dans la reponse: {raw[:200]}")
+    return json.loads(text[start:end])
 
 
 class DetectionAgent:
@@ -703,97 +461,32 @@ class DetectionAgent:
     """
 
     def __init__(self, domain: DomainKnowledge | None = None, use_llm: bool = True) -> None:
-        """Initialise l'agent.
-
-        Args:
-            domain: Connaissance domaine (chargee par defaut).
-            use_llm: Tenter d'utiliser le LLM. Bascule silencieusement sur les
-                     regles si la cle API ou la librairie manquent.
-        """
         self.domain = domain or load_domain()
         self.composer = RuleBasedComposer(self.domain)
         self.llm = _try_build_llm() if use_llm else None
-        logger.info(f"Agent de detection initialise — mode "
-                    f"{'LLM + regles' if self.llm else 'regles seules'}")
+        logger.info(f"Agent initialise — mode {'LLM + regles' if self.llm else 'regles seules'}")
 
     @property
     def mode(self) -> str:
-        """Mode de production effectif ('llm' ou 'rules')."""
         return "llm" if self.llm else "rules"
 
     def analyze(self, result: DetectionResult, use_llm: bool = True) -> AgentDecision:
-        """Produit un diagnostic a partir d'une detection.
-
-        Args:
-            result: Sortie du detecteur pour un horodatage.
-            use_llm: Autoriser la redaction LLM pour cet appel. Le rejeu temps
-                     reel le desactive afin de garantir une latence bornee.
-
-        Returns:
-            AgentDecision. Toujours valide : en cas d'echec du LLM, la decision
-            par regles est retournee.
-        """
+        """Produit un diagnostic a partir d'une detection."""
         baseline = self.composer.compose(result)
         if self.llm is None or not use_llm:
             return baseline
-        case = build_case_file(result, self.domain)
         try:
-            return self._analyze_llm(result, case, baseline)
-        except _REPONSE_INEXPLOITABLE as e:
-            # A-2 — UNE REPONSE MAL FORMEE N'EST PAS UNE PANNE DE SERVICE.
-            #
-            # Le coupe-circuit s'ouvrait sur `Exception` et coupait la couche
-            # de redaction JUSQU'A LA FIN DU PROCESSUS. Un unique JSON tronque
-            # — le mode d'echec le plus banal d'un modele de langage, et celui
-            # que `_extract_json` est ecrit pour rencontrer — desactivait donc
-            # le LLM pour toutes les heures suivantes, en journalisant
-            # « Agent LLM indisponible », ce qui etait faux : le service
-            # repondait.
-            #
-            # Consequence sur la demonstration : le premier point mal rendu
-            # faisait basculer toute la session en mode regles, et l'apport du
-            # LLM devenait inobservable sans qu'on sache pourquoi.
-            #
-            # Le repli reste immediat — la decision deterministe est deja
-            # calculee — mais le circuit reste FERME : l'heure suivante
-            # retentera.
-            logger.warning(
-                f"Réponse LLM inexploitable ({type(e).__name__}: {e}) — "
-                f"repli sur les règles pour cet instant, circuit maintenu"
-            )
-            return baseline
+            return self._analyze_llm(result, baseline)
         except Exception as e:
-            # Panne franche : clé invalide, service injoignable, quota épuisé.
-            # Là, réessayer à chaque point produirait une rafale de requêtes
-            # vouées à l'échec. Le circuit s'ouvre jusqu'au prochain démarrage.
-            self.llm = None
-            logger.warning(
-                f"Agent LLM indisponible ({type(e).__name__}: {e}) — "
-                "coupe-circuit ouvert, repli sur les regles"
-            )
+            logger.warning(f"LLM indisponible ({type(e).__name__}) — repli sur les regles")
             return baseline
 
-    def _analyze_llm(
-        self, result: DetectionResult, case: dict[str, Any], baseline: AgentDecision
-    ) -> AgentDecision:
-        """Fait rediger le diagnostic par le LLM a partir du dossier de faits.
-
-        Args:
-            result: Sortie de la detection.
-            case: Dossier de faits.
-            baseline: Decision par regles, servant de valeur de repli.
-
-        Returns:
-            AgentDecision produite par le LLM.
-        """
+    def _analyze_llm(self, result: DetectionResult, baseline: AgentDecision) -> AgentDecision:
+        """Fait rediger le diagnostic par le LLM."""
         from langchain_core.messages import HumanMessage, SystemMessage
 
-        system = AGENT_SYSTEM.format(
-            equipment=self.domain.briefing_equipment(),
-            tags=self.domain.briefing_tags(),
-            amdec=self.domain.briefing_amdec(),
-            blind_spots=self.domain.briefing_blind_spots(),
-        )
+        case = build_case_file(result, self.domain)
+        system = AGENT_SYSTEM
         user = ("Dossier de faits :\n"
                 + json.dumps(case, indent=2, ensure_ascii=False, default=str)
                 + "\n\nRedige le diagnostic.")
@@ -815,64 +508,8 @@ class DetectionAgent:
             recommended_action=action,
             confidence=float(data.get("confidence", baseline.confidence)),
             evidence_refs=[f.code for f in result.findings],
-            # La couche de redaction ne reclasse pas les constatations : elle
-            # herite du choix deterministe des regles. Le laisser a `None` ici
-            # aurait prive le registre d'alarmes de son identite des que le LLM
-            # est actif — c'est-a-dire exactement quand on l'observe le moins.
             lead_finding=baseline.lead_finding,
             cited_values={k: float(v) for k, v in (data.get("cited_values") or {}).items()
                           if isinstance(v, (int, float)) and not isinstance(v, bool)},
             generated_by="llm",
         )
-
-
-# ── Utilitaires ───────────────────────────────────────────────────────────────
-
-def _try_build_llm():
-    """Instancie le client Gemini si tout est disponible.
-
-    Returns:
-        Le client LangChain, ou None si la librairie ou la cle manquent.
-    """
-    try:
-        from src.config import GEMINI_API_KEY, GEMINI_MODEL, GEMINI_TIMEOUT_S
-        if not GEMINI_API_KEY:
-            logger.info("GEMINI_API_KEY absente — les agents fonctionnent en mode regles")
-            return None
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        # `timeout` EST OBLIGATOIRE. Sans lui, un appel sortant qui ne repond
-        # pas bloque le thread appelant sans limite. La redaction est une
-        # couche facultative : expirer et retomber sur la formulation
-        # deterministe vaut mieux que de figer la supervision.
-        return ChatGoogleGenerativeAI(
-            model=GEMINI_MODEL,
-            google_api_key=GEMINI_API_KEY,
-            temperature=0.1,
-            max_retries=0,
-            timeout=GEMINI_TIMEOUT_S,
-        )
-    except ImportError as e:
-        logger.info(f"LangChain/Gemini non installe ({e}) — mode regles")
-        return None
-
-
-def _extract_json(raw: str) -> dict:
-    """Extrait le premier objet JSON d'une reponse LLM.
-
-    Args:
-        raw: Texte brut renvoye par le modele.
-
-    Returns:
-        Le dictionnaire decode.
-
-    Raises:
-        ValueError: Si aucun JSON exploitable n'est trouve.
-    """
-    text = raw.strip()
-    fence = re.search(r"```(?:json)?\s*(.+?)\s*```", text, re.DOTALL)
-    if fence:
-        text = fence.group(1)
-    start, end = text.find("{"), text.rfind("}") + 1
-    if start < 0 or end <= start:
-        raise ValueError(f"Aucun JSON dans la reponse: {raw[:200]}")
-    return json.loads(text[start:end])

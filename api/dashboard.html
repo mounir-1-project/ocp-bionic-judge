@@ -443,75 +443,24 @@
     <section class="view" data-panel="controle" hidden id="panel-controle"
              role="tabpanel" aria-labelledby="tab-controle" tabindex="0">
       <div class="split split-hero">
-        <!-- LE CHIFFRE MIS EN AVANT EST CELUI QUI SE DÉFEND.
-             Un « 100,0 % » en corps 72 sur un banc dont les pièges ont été
-             écrits contre les contrôles qui les attrapent est la cible la plus
-             facile d'une soutenance : un contrôle qui ne rate jamais rien ne
-             contrôle rien. La grandeur qui vaut quelque chose est l'ÉCART
-             entre la note des cas piégés et celle des cas sains — c'est elle
-             qui dit si le contrôleur discrimine, et elle n'est pas bornée par
-             construction. Le taux de détection reste publié, en second rang. -->
-        <article class="panel panel-score">
-          <span class="micro">Banc d'injection de fautes</span>
-          <div class="score">
-            <strong id="benchScore">—</strong><span>pts d'écart</span>
-          </div>
-          <p id="benchReading">Écart entre la note des cas piégés et celle des cas
-             sains, sur dix. C'est la mesure de discrimination du contrôleur. Ce
-             n'est ni une précision terrain, ni une validation externe.
-             <b>Le chiffre à lire en premier est celui des fautes d'un genre non
-             anticipé</b> : les pièges conçus mesurent la non-régression, lui
-             seul mesure ce que le contrôleur attrape sans l'avoir prévu.</p>
-          <div class="score-meta" id="benchMeta"></div>
-          <button class="btn btn-key" id="runBench">Relancer un échantillon</button>
-        </article>
-
-        <article class="panel">
-          <header class="panel-head"><div><span class="micro">Détail du banc</span><h2>Comportement par type de faute</h2></div></header>
-          <div id="bench"><p class="void">Exécution du banc…</p></div>
-        </article>
-      </div>
-
-      <article class="panel">
-        <header class="panel-head">
-          <div><span class="micro">Le détecteur verrait-il un encrassement ?</span>
-               <h2>Banc d'injection sur données réelles</h2></div>
-          <button class="btn" id="runFouling">Rejouer le banc</button>
-        </header>
-        <!-- La formulation précédente — « la règle ne s'est jamais déclenchée
-             sur les quatorze mois » — était vraie pour la fenêtre de référence
-             retenue, et fausse pour celle de 25 %, que l'analyse de
-             sensibilité teste pourtant juste à côté. Un constat qui dépend
-             d'un paramètre se publie avec ce paramètre. -->
-        <p class="panel-note">Avec la période de référence retenue (40 % initiaux),
-           la règle d'encrassement ne se déclenche sur aucun des quatorze mois
-           disponibles — voir l'analyse de sensibilité ci-dessous pour ce que
-           donnent les autres fenêtres. Ce banc superpose une dérive simulée aux
-           données réelles, dans une fenêtre où la règle est silencieuse, et
-           mesure ce que le détecteur en fait.</p>
-        <div id="foulingBench"><p class="void">Calcul en cours…</p></div>
-      </article>
-
-      <div class="split">
-
         <article class="panel">
           <header class="panel-head"><div><span class="micro">Corridor de vérification</span><h2>Les huit contrôles</h2></div></header>
           <div class="checks" id="checks"></div>
         </article>
-      </div>
 
-      <div class="split">
         <article class="panel panel-flag">
           <header class="panel-head">
             <div><span class="micro">Ce que l'opérateur reçoit réellement</span>
                  <h2>Taux horaire de signalement</h2></div>
             <span class="chip" id="flagChip">—</span>
           </header>
-          <p class="panel-note">La charge d'épisodes agrège. Ce taux-ci ne l'est pas :
+          <p class="panel-note">La charge d'épisodes agrégée. Ce taux-ci ne l'est pas :
              c'est la part des heures de marche que le système signale.</p>
           <div class="bars" id="flagBars"></div>
         </article>
+      </div>
 
+      <div class="split">
         <article class="panel">
           <header class="panel-head">
             <div><span class="micro">Part du risque AMDEC couverte</span>
@@ -520,31 +469,16 @@
           </header>
           <div class="cover" id="coverBox"></div>
         </article>
+
+        <article class="panel">
+          <header class="panel-head">
+            <div><span class="micro">Canal e-mail</span>
+                 <h2>Notifications</h2></div>
+            <span class="chip" id="mailChip">—</span>
+          </header>
+          <div id="mailBox"><p class="void">Vérification…</p></div>
+        </article>
       </div>
-
-      <article class="panel">
-        <header class="panel-head">
-          <div><span class="micro">Escalade vers l'astreinte</span>
-               <h2>Canal e-mail du technicien</h2></div>
-          <span class="chip" id="mailChip">—</span>
-        </header>
-        <div class="mail-box" id="mailBox"><p class="void">Vérification…</p></div>
-        <footer class="panel-foot">
-          <div class="mail-actions">
-            <button class="btn" id="mailTest">Envoyer un e-mail de test</button>
-            <button class="btn" id="mailGov">Envoyer la synthèse de gouvernance</button>
-          </div>
-        </footer>
-      </article>
-
-      <article class="panel">
-        <header class="panel-head">
-          <div><span class="micro">Paramètres arbitraires</span><h2>Analyse de sensibilité</h2></div>
-        </header>
-        <p class="panel-note">Deux choix décident du comportement du système sans
-           justification physique. Leur influence est mesurée ici plutôt que subie.</p>
-        <div class="sens" id="sensBox"><p class="void">Calcul en cours…</p></div>
-      </article>
 
       <article class="panel">
         <header class="panel-head">
@@ -564,21 +498,6 @@
           <div class="blind" id="blind"></div>
         </article>
       </div>
-
-      <article class="panel">
-        <header class="panel-head">
-          <div><span class="micro">Validation</span><h2>Backtest temporel</h2></div>
-          <span class="chip" id="validationChip">Calcul…</span>
-        </header>
-        <p class="panel-note">Chaque modèle est appris sur le passé, séparé du test par un gap.
-           Les métriques décrivent une stabilité — jamais une précision de panne, faute
-           d'historique GMAO étiqueté.</p>
-        <div class="valid" id="valid"></div>
-        <footer class="panel-foot">
-          <span class="micro">Ce que le corpus ne permet pas d'affirmer</span>
-          <ul class="limits" id="controlLimits"></ul>
-        </footer>
-      </article>
     </section>
   </main>
 </div>

@@ -271,39 +271,36 @@ class DCSReplay:
 
     def _loop(self) -> None:
         """Boucle de rejeu executee dans un thread dedie."""
+        import time
         logger.info(f"Rejeu demarre — {len(self._index)} instants, "
                     f"vitesse {self.state.speed} h/s")
+
+        t0 = time.monotonic()
+        target_h = 0.0
 
         for i, ts in enumerate(self._index):
             if self._stop.is_set():
                 break
+
+            # Avancer l'horloge virtuelle d'une heure
+            target_h += 1.0
+
             if i % self._analyze_every == 0 or ts in self._obligatoires:
                 try:
-                    # Le rejeu doit conserver une latence bornee, meme si un
-                    # service de redaction externe est lent ou indisponible.
                     self._emit(self.pipeline.analyze_at(ts, use_llm=False))
                 except Exception as e:
                     logger.warning(f"Analyse impossible a {ts} ({type(e).__name__}: {e})")
-            # LE PAS D'ALLEGEMENT NE DOIT PAS ENTRER DANS LA TEMPORISATION.
-            #
-            # Le delai etait `analyze_every / speed`, applique a CHAQUE entree
-            # d'index, c'est-a-dire a chaque heure de process. La vitesse
-            # effective valait donc `speed / analyze_every`. Avec les valeurs
-            # par defaut du depot — REPLAY_SPEED=120, REPLAY_STEP=3 — le rejeu
-            # defilait a 40 h/s pendant que l'API publiait
-            # `speed_hours_per_second: 120`. Un facteur trois sur le seul
-            # reglage que l'exploitant manipule.
-            #
-            # Une entree d'index vaut une heure de process : le delai est donc
-            # `1 / speed`, quel que soit le nombre d'instants analyses.
-            #
-            # Attente interruptible : stop() doit rester immediat meme a basse
-            # vitesse. La vitesse est relue a chaque tour pour que set_speed()
-            # prenne effet sans redemarrer le rejeu.
+
+            # Calculer le delai pour maintenir la vitesse cible
+            # La vitesse est en heures de process par seconde reelle
             with self._lock:
-                delay = 1.0 / self.state.speed
-            if self._stop.wait(delay):
-                break
+                speed = self.state.speed
+            elapsed = time.monotonic() - t0
+            expected = target_h / speed  # secondes qu'on devrait avoir utilisees
+            deficit = expected - elapsed
+            if deficit > 0:
+                if self._stop.wait(deficit):
+                    break
 
         with self._lock:
             self.state.running = False

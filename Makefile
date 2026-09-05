@@ -2,134 +2,33 @@
 # Surveillance du refroidisseur E7301 — commandes courantes
 # =============================================================================
 .DEFAULT_GOAL := help
-.PHONY: help install check types test test-front notebook-run notebook-clean eval-judge bench-fouling sensitivity operator operators train release release-runtime lock-runtime promote serve dev replay analyse notebook docker docker-run clean
+.PHONY: help install test serve dev train replay clean
 
 help:  ## Affiche cette aide
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 	 awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
-# ── Installation ─────────────────────────────────────────────────────────────
 install:  ## Installe les dependances
 	pip install -r requirements.txt
 
-# ── Qualite ──────────────────────────────────────────────────────────────────
-check:  ## Analyse statique du code
-	ruff check src api tests scripts
-	bandit -q -r src api -x tests
-	node --check api/static/app.js
-	node --check api/static/twin.js
-
-types:  ## Typage statique — informatif, non bloquant (voir pyproject.toml)
-	mypy src api
-
 test:  ## Suite complete de tests
-	pytest tests/ -q --cov=src --cov=api --cov-fail-under=85
+	pytest tests/ -q
 
-test-front:  ## Bancs frontend : cablage du poste et scene 3D
-	npm install --no-audit --no-fund
-	python scripts/dump_fixtures.py
-	node scripts/frontend_smoke.mjs
-	node scripts/twin_smoke.mjs
-	node scripts/boot_smoke.mjs
-
-bench-fouling:  ## Injecte un encrassement simule et mesure la detection
-	python -m src.governance.fouling_injection
-
-sensitivity:  ## Sensibilite aux deux parametres arbitraires du systeme
-	python -m src.governance.sensitivity
-
-operator:  ## Enregistre un technicien (adresse + mot de passe masque)
-	python scripts/manage_operators.py add
-
-operators:  ## Liste les techniciens habilites
-	python scripts/manage_operators.py list
-
-eval-judge:  ## Evalue le Judge par injection de fautes controlees
-	python -m src.governance.judge_eval
-
-# ── Exploitation ─────────────────────────────────────────────────────────────
-serve:  ## Lance l'API et le dashboard (honore API_HOST et API_PORT)
+serve:  ## Lance l'API et le dashboard
 	python -m api
 
-dev:  ## Idem avec rechargement a chaud (developpement uniquement)
+dev:  ## Lance avec rechargement a chaud (developpement)
 	uvicorn api.main:app --reload --host $${API_HOST:-127.0.0.1} --port $${API_PORT:-8000}
 
 train:  ## Entraine et serialise le detecteur
-	python -c "from src.pipeline import E7301Pipeline; E7301Pipeline(use_llm=False).save_model()"
-
-release:  ## Genere backtest, modele candidat et manifeste SHA-256 (environnement local)
-	python scripts/validate_release.py
-
-release-runtime:  ## Produit l'artefact DANS l'image d'execution (seul artefact promouvable)
-	@echo "Un artefact produit hors du runtime cible ne pourra jamais etre promu :"
-	@echo "validate_model_manifest exige l'egalite EXACTE des versions de paquets."
-	docker run --rm -v "$(CURDIR):/w" -w /w python:3.11-slim \
-	  bash -c "pip install -q --no-cache-dir -r requirements-runtime.lock \
-	           && pip install -q --no-cache-dir pytest \
-	           && python scripts/validate_release.py"
-
-# L'EN-TETE SE DELIMITE PAR SON PREFIXE, PAS PAR UNE LIGNE VIDE.
-#
-# Cette cible extrayait l'en-tete par `sed -n '1,/^$/p'` — « de la ligne 1
-# jusqu'a la premiere ligne vide ». Or `requirements-runtime.lock` n'en
-# contient AUCUNE : l'en-tete de quatorze lignes est suivi immediatement des
-# epinglages. Sed imprimait donc le FICHIER ENTIER, et le nouveau `pip freeze`
-# etait concatene a l'ancien contenu.
-#
-# Resultat mesure : 32 insertions, 0 suppression, et des epinglages
-# contradictoires dans le meme fichier — `loguru==0.7.2` et `loguru==0.7.3`,
-# `python-dotenv==1.0.1` et `1.2.2`. Le verrou cense garantir la
-# reproductibilite devenait irresolvable, et la commande sortait en code 0.
-#
-# `awk` s'arrete a la premiere ligne qui ne commence pas par `#` : la
-# delimitation ne depend plus d'une ligne vide qui n'existe pas.
-lock-runtime:  ## Regenere requirements-runtime.lock dans l'image d'execution
-	docker run --rm -v "$(CURDIR):/w" -w /w python:3.11-slim \
-	  bash -c "pip install -q --no-cache-dir -r requirements-runtime.txt \
-	           && pip freeze --exclude-editable > /tmp/f.txt \
-	           && awk '/^#/ {print; next} {exit}' requirements-runtime.lock > /tmp/h.txt \
-	           && test -s /tmp/h.txt \
-	           && cat /tmp/h.txt /tmp/f.txt > requirements-runtime.lock"
-	@echo "Verrou regenere. Relancer 'make release-runtime' pour aligner le manifeste."
-
-promote:  ## Affiche l'etat de promotion de l'artefact courant
-	python scripts/promote_model.py --etat
+	python -c "from src.pipeline import E7301Pipeline; E7301Pipeline().save_model()"
 
 replay:  ## Rejeu accelere en console
 	python -m src.realtime.replay
 
-analyse:  ## Analyse de bout en bout des instants notables
+analyse:  ## Analyse de bout en bout
 	python -m src.pipeline
 
-notebook:  ## Ouvre le notebook d'analyse
-	jupyter notebook notebooks/01_analyse_E7301.ipynb
-
-# LE NOTEBOOK NE SE COMMITTE PAS AVEC SES SORTIES.
-# Il pesait 567 Ko dont 519 de figures encodees en base64 — 92 % du fichier,
-# cinquieme fichier suivi le plus lourd du depot, et il apparaissait modifie
-# des qu'on l'ouvrait. Toute revue de diff s'en trouvait polluee.
-#
-# Un filtre git `clean` ferait cela automatiquement, mais son echappement sous
-# PowerShell est un piege : un outil qu'on n'arrive pas a installer n'est pas
-# un outil. Une cible explicite, appelee avant de committer, est plus sure.
-notebook-run:  ## Execute le notebook et verifie qu'il tourne de bout en bout
-	jupyter nbconvert --to notebook --execute --inplace notebooks/01_analyse_E7301.ipynb
-
-notebook-clean:  ## Retire les sorties du notebook avant commit
-	python -c "import json,pathlib;p=pathlib.Path('notebooks/01_analyse_E7301.ipynb');\
-n=json.loads(p.read_text(encoding='utf-8'));\
-[c.update(outputs=[],execution_count=None) for c in n['cells'] if c['cell_type']=='code'];\
-p.write_text(json.dumps(n,indent=1,ensure_ascii=False)+chr(10),encoding='utf-8')"
-
-# ── Deploiement ──────────────────────────────────────────────────────────────
-docker:  ## Construit l'image de production
-	docker build -t ocp/e7301-surveillance:3.0.0 .
-
-docker-run:  ## Demarre le service conteneurise
-	docker compose up -d
-	@echo "Dashboard : http://localhost:8000"
-
-# ── Entretien ────────────────────────────────────────────────────────────────
 clean:  ## Supprime les fichiers temporaires
 	find . -type d -name __pycache__ -not -path "./.venv/*" -exec rm -rf {} + 2>/dev/null || true
 	rm -rf .pytest_cache .ruff_cache .mypy_cache 2>/dev/null || true

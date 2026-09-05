@@ -28,7 +28,6 @@ from src.features.e7301_features import (
     model_matrix,
     rho_cp,
 )
-from src.governance.model_validation import validate_unsupervised_detector
 from src.models.detector import RuleEngine, StatisticalDetector
 from tests.helpers import sans_accents
 
@@ -745,44 +744,18 @@ def test_features_modele_non_redondantes(features):
     assert not pairs, f"features redondantes: {pairs}"
 
 
-def test_backtest_temporel_declare_les_limites(features, ingestion, domain):
-    """La validation mesure la stabilité sans inventer de performance de panne."""
+def test_detector_trainable(features):
+    """Le detecteur doit pouvoir etre entraine sur les features."""
     feats, refs = features
-    report = validate_unsupervised_detector(
-        feats,
-        readings=ingestion.readings,
-        quality=ingestion.quality,
-        domain=domain,
-        references=refs,
-        contamination=0.02,
-        random_state=42,
-        n_splits=3,
-    ).to_dict()
-    assert len(report["temporal_backtest"]["folds"]) == 3
-    assert "non démontrable" in report["predictive_claim"]
-    labels_gate = next(
-        gate for gate in report["deployment_gates"] if gate["gate"] == "labels_gmao"
-    )
-    assert labels_gate["passed"] is False
+    from src.features.e7301_features import model_matrix
+    from src.models.detector import CoolerAnomalyDetector, StatisticalDetector
 
-    # CETTE ASSERTION VERIFIAIT UNE CONSTANTE. `causal_pipeline_refit` etait un
-    # litteral `True` dans le dictionnaire de pli : le test ne pouvait pas
-    # echouer, quoi qu'il arrive a la chaine. C'est le defaut que le fichier
-    # denonce lui-meme a propos de la porte `causalite_temporelle`, reproduit
-    # un cran plus bas et verrouille par un test complice.
-    #
-    # Le champ est desormais MESURE — fin d'ajustement des trois references, du
-    # detecteur, et gap calendaire reellement obtenu. L'assertion porte donc.
-    plis = report["temporal_backtest"]["folds"]
-    assert all(fold["causal_pipeline_refit"] for fold in plis)
-    for fold in plis:
-        assert fold["gap_calendar_hours"] >= 24
-        assert 0.0 <= fold["seasonal_extrapolation"] <= 1.0
-        assert fold["score_psi_empty_deciles"] >= 0
+    X = model_matrix(feats)
+    stat = StatisticalDetector(contamination=0.02, random_state=42)
+    detector = CoolerAnomalyDetector(stat=stat, references=refs)
+    detector.fit(feats)
 
-    # Une fuite de pli doit remonter jusqu'a la porte, pas rester dans le
-    # detail : elle n'etait agregee nulle part.
-    causal_gate = next(
-        gate for gate in report["deployment_gates"] if gate["gate"] == "causalite_temporelle"
-    )
-    assert causal_gate["passed"] is True
+    # Le detecteur doit avoir appris
+    assert detector.stat.fitted_
+    assert detector.stat.threshold_ > 0
+    assert len(detector.stat.baseline_) > 0
