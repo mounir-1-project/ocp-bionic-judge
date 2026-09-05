@@ -1,0 +1,264 @@
+# =============================================================================
+# TOPOLOGIE PHYSIQUE DU REFROIDISSEUR E7301
+# Contrat entre les donnees DCS, les pieces reelles de l'equipement et l'AMDEC.
+#
+# POURQUOI CE FICHIER EXISTE
+# Avant lui, le rattachement d'une anomalie a une piece etait improvise cote
+# interface, par recherche de sous-chaine dans le libelle de l'anomalie. Un
+# code comme CONC_DROP_SEVERE — signature d'une fuite de tube, l'evenement le
+# plus grave que ce systeme puisse voir — ne colorait donc aucune piece.
+#
+# Le rattachement est une CONNAISSANCE METIER, pas un detail d'affichage. Il
+# est donc gouverne ici, au meme titre que les seuils et l'AMDEC, et le tuteur
+# OCP peut le corriger sans qu'une ligne de code change.
+#
+# SOURCES
+#   - 3-Liste des composants REFROIDISSEUR DE SECHAGE PSIII.xls
+#     (faisceau tubulaire 3/4" 904L, calandre 904L avec deux plaques
+#      tubulaires, piquage bride entree acide et un autre sortie acide,
+#      une boite d'entree eau a une extremite et une autre de sortie eau)
+#   - 4-AMDEC - REFROIDISSEUR DE SECHAGE PSIII.xlsx du 23/09/2019
+#   - Photo terrain e7301-field.jpg (chassis acier, platelage, garde-corps,
+#     echelle d'acces, socles beton)
+#
+# REPERE ET NIVEAU DE CONFIANCE DES POSITIONS
+# Les coordonnees `at` sont en METRES dans le repere de l'appareil :
+#   X  axe de la calandre, 0 au milieu, positif cote sortie acide
+#   Y  vertical, 0 a l'axe de la calandre
+#   Z  transverse
+# L'echelle vient de la fiche equipement (SIZE 1118-9754) : rayon de calandre
+# 0.559 m, plaques tubulaires a X = +/- 4.6 m, boites a eau au-dela.
+#
+# Ces positions sont COHERENTES avec l'architecture decrite dans la liste des
+# composants, mais NON COTEES : les plans constructeur 711-104, 711-105 et
+# 711-106 ne sont pas au dossier. Aucune dimension affichee ne doit etre
+# presentee comme une cote de fabrication.
+# =============================================================================
+
+meta:
+  validation_status: derived_from_equipment_sheet
+  validation_owner: "Ingenieur fiabilite / Service Instrumentation PS III"
+  dimensional_status: "representation a l'echelle, non cotee : ce modele sert a
+    situer les capteurs et les pieces, jamais a fabriquer"
+  frame: "metres; X = axe calandre, Y = vertical, Z = transverse"
+  scale_source: "Fiche equipement, SIZE 1118-9754 (calandre 1118 mm, tubes 9754 mm)"
+
+# -----------------------------------------------------------------------------
+# PIECES — decoupage physique de l'equipement
+# `amdec_modes` liste les modes de defaillance qui affectent CETTE piece.
+# -----------------------------------------------------------------------------
+components:
+
+  SHELL:
+    label: "Calandre 904L"
+    fluide: "acide sulfurique de sechage"
+    description: >
+      Enveloppe cylindrique en 904L equipee de deux plaques tubulaires. L'acide
+      circule cote calandre, autour des tubes.
+    amdec_modes: [CALANDRE_FUITE]
+    inspection: "Tache A — mesure des epaisseurs de la calandre (4 ans)"
+
+  BUNDLE:
+    label: "Faisceau tubulaire 904L"
+    fluide: "eau de mer"
+    description: >
+      Ensemble de tubes 3/4" en 904L intercales et soudes entre deux plaques
+      tubulaires, dans lesquels circule l'eau de mer. C'est la surface
+      d'echange, et la piece la plus critique de l'appareil.
+    amdec_modes: [FAISCEAU_BOUCHAGE, FAISCEAU_FUITE, FAISCEAU_CORROSION]
+    inspection: "Tache B — courant de Foucault (2 ans) · Tache H (8 ans)"
+
+  TUBESHEET:
+    label: "Plaques tubulaires"
+    fluide: "interface acide / eau de mer"
+    description: >
+      Plaques percees dans lesquelles les tubes sont soudes. Le tamponnage
+      mecanique d'un tube perce s'y effectue.
+    amdec_modes: [FAISCEAU_FUITE]
+    inspection: "Check-list inspection interne — soudure tubes/plaque, ressuage"
+
+  WATERBOX_IN:
+    label: "Boite a eau — entree eau de mer"
+    fluide: "eau de mer"
+    description: "Boite d'entree eau a une extremite de la calandre."
+    amdec_modes: [PORTE_VISITE_FUITE, VANNE_EM_FUITE, VANNE_EM_BOUCHAGE]
+    inspection: "Check-list inspection interne — etat interne boite a eau"
+
+  WATERBOX_OUT:
+    label: "Boite a eau — sortie eau de mer"
+    fluide: "eau de mer"
+    description: "Boite de sortie eau a l'autre extremite de la calandre."
+    amdec_modes: [PORTE_VISITE_FUITE, VANNE_EM_DYSFONCTION]
+    inspection: "Check-list inspection interne — etat interne boite a eau"
+
+  NOZZLE_ACID_IN:
+    label: "Piquage bride — entree acide"
+    fluide: "acide sulfurique de sechage"
+    description: "Piquage bride d'entree de l'acide en calandre."
+    amdec_modes: [CALANDRE_FUITE]
+    inspection: "Tache C — inspection externe mensuelle, fuite sur conduite"
+
+  NOZZLE_ACID_OUT:
+    label: "Piquage bride — sortie acide"
+    fluide: "acide sulfurique de sechage"
+    description: "Piquage bride de sortie de l'acide refroidi."
+    amdec_modes: [CALANDRE_FUITE]
+    inspection: "Tache C — inspection externe mensuelle, fuite sur conduite"
+
+  ANODE:
+    label: "Plaques sacrificielles"
+    fluide: "eau de mer"
+    description: >
+      Anodes sacrificielles zinc / acier au carbone protegeant le metal de base.
+      Criticite AMDEC 112 — la plus elevee de l'equipement, et NON INSTRUMENTEE :
+      aucun capteur du jeu de donnees ne permet de voir son etat.
+    amdec_modes: [PLAQUE_SACRIFICIELLE_DYSFONCTION]
+    inspection: "Tache D — controle (6 mois) · Tache E — changement (3 ans)"
+    instrumented: false
+
+  VALVE_ACID:
+    label: "Vanne de vidange acide"
+    fluide: "acide sulfurique de sechage"
+    description: "Vanne TUFLIN 3'' 150# d'isolement et vidange d'acide de la calandre."
+    amdec_modes: [VANNE_ACIDE_FUITE, VANNE_ACIDE_BOUCHAGE, VANNE_ACIDE_DYSFONCTION]
+    inspection: "Tache F — changement systematique (4 ans)"
+    instrumented: false
+
+  VALVE_SEA:
+    label: "Vannes de vidange eau de mer"
+    fluide: "eau de mer"
+    description: "Vannes TUFLIN 3'' 150# de vidange des deux boites a eau."
+    amdec_modes: [VANNE_EM_FUITE, VANNE_EM_BOUCHAGE, VANNE_EM_DYSFONCTION]
+    inspection: "Tache G — changement systematique (6 ans)"
+    instrumented: false
+
+# -----------------------------------------------------------------------------
+# CAPTEURS — position physique et piece surveillee
+#
+# `at` : position du capteur dans le repere du modele 3D.
+# `attaches_to` : piece dont ce capteur porte l'information.
+# `anchor` : orientation de l'etiquette pour eviter les recouvrements.
+#
+# Les capteurs `role: context` appartiennent a la section absorption et ne sont
+# pas physiquement sur le refroidisseur : ils sont places sur la tuyauterie
+# amont pour rester consultables sans laisser croire qu'ils mesurent l'appareil.
+# -----------------------------------------------------------------------------
+sensors:
+
+  # ── Circuit acide, cote entree (piquage haut, X = -2.5) ──────────────────
+  T_ACID_IN:
+    at: [-2.50, 1.34, -0.44]
+    attaches_to: NOZZLE_ACID_IN
+    anchor: up
+    placement: "doigt de gant sur le piquage d'entree acide, amont immediat de la calandre"
+
+  C_ACID_1100:
+    at: [-2.50, 1.02, 0.46]
+    attaches_to: NOZZLE_ACID_IN
+    anchor: up
+    placement: "analyseur de titre circuit 1100, sur le piquage d'entree"
+
+  F_ACID:
+    at: [-1.55, 2.52, 0.00]
+    attaches_to: NOZZLE_ACID_IN
+    anchor: up
+    placement: "debitmetre sur la conduite horizontale d'entree acide"
+
+  # ── Circuit acide, cote sortie (piquage bas, X = +2.5) ───────────────────
+  T_ACID_OUT:
+    at: [2.50, -1.34, 0.44]
+    attaches_to: NOZZLE_ACID_OUT
+    anchor: down
+    placement: "doigt de gant sur le piquage de sortie acide — variable regulee a 66 degC"
+
+  C_ACID_1200:
+    at: [2.50, -1.02, -0.46]
+    attaches_to: NOZZLE_ACID_OUT
+    anchor: down
+    placement: "analyseur de titre circuit 1200 — circuit distinct du 1100"
+
+  # ── Contexte thermique sur la calandre ───────────────────────────────────
+  T_CIRC_1300:
+    at: [0.55, -0.62, 0.62]
+    attaches_to: SHELL
+    anchor: down
+    placement: "circuit thermique 1300, sur la generatrice basse de la calandre"
+
+  # ── Hors appareil : allure de ligne et section absorption ────────────────
+  # Ces quatre points ne sont pas sur le refroidisseur. Ils sont regroupes sur
+  # un support en amont pour rester consultables sans laisser croire qu'ils
+  # mesurent l'echangeur.
+  LOAD_SULFUR:
+    at: [-5.30, 1.70, -1.30]
+    attaches_to: NOZZLE_ACID_IN
+    anchor: left
+    placement: "allure de marche de la ligne — hors appareil, variable de normalisation"
+
+  F_3412:
+    at: [-5.30, 0.95, -1.30]
+    attaches_to: NOZZLE_ACID_IN
+    anchor: left
+    placement: "section absorption — hors perimetre refroidisseur"
+
+  A_3301:
+    at: [-5.30, 0.20, -1.30]
+    attaches_to: NOZZLE_ACID_IN
+    anchor: left
+    placement: "section absorption — hors perimetre refroidisseur"
+
+  A_3302:
+    at: [-5.30, -0.55, -1.30]
+    attaches_to: NOZZLE_ACID_IN
+    anchor: left
+    placement: "section absorption — hors perimetre refroidisseur"
+
+  # ── Capteurs declares defaillants, cote boite a eau de sortie ────────────
+  PHI_5306:
+    at: [5.10, 1.05, -1.15]
+    attaches_to: WATERBOX_OUT
+    anchor: right
+    placement: "indicateur 5306X-3 — fige a -14,407 pendant environ 1 900 h"
+
+  TI_5303:
+    at: [5.10, 0.30, -1.15]
+    attaches_to: WATERBOX_OUT
+    anchor: right
+    placement: "temperature 5303-4X — collee a la butee 327,67 depuis aout 2024"
+
+# -----------------------------------------------------------------------------
+# RATTACHEMENT DES CODES DE REGLE AUX PIECES
+#
+# Remplace la recherche de sous-chaine qui existait cote interface. Chaque code
+# emis par le detecteur designe explicitement la ou les pieces concernees.
+# Un code absent de cette table n'allume rien — c'est voulu : mieux vaut ne
+# rien montrer qu'accuser la mauvaise piece.
+# -----------------------------------------------------------------------------
+finding_map:
+
+  CONTROL_LOSS:          { components: [BUNDLE, NOZZLE_ACID_OUT], sensors: [T_ACID_OUT] }
+  CONTROL_LOSS_CRITICAL: { components: [BUNDLE, NOZZLE_ACID_OUT], sensors: [T_ACID_OUT] }
+
+  # L'encrassement est porte par la baisse du COEFFICIENT D'ECHANGE GLOBAL,
+  # calcule a partir de la temperature d'eau de mer — grandeur exterieure a
+  # l'atelier. Il designe le faisceau et les plaques tubulaires, et se lit sur
+  # les deux temperatures acide qui entrent dans le calcul de l'efficacite.
+  FOULING_DRIFT:         { components: [BUNDLE, TUBESHEET],       sensors: [T_ACID_IN, T_ACID_OUT] }
+
+  # Sur-refroidissement : un REGIME DE CONDUITE, pas une degradation. Il ne
+  # designe aucune piece — l'annoncer sur le faisceau reviendrait a accuser une
+  # piece sur la foi d'un signal qui ne la concerne pas.
+  OVERCOOLING_REGIME:    { components: [],                        sensors: [T_ACID_OUT] }
+  CONC_LOW:              { components: [BUNDLE],                  sensors: [C_ACID_1100, C_ACID_1200] }
+  CONC_LOW_LOW:          { components: [BUNDLE, TUBESHEET],       sensors: [C_ACID_1100, C_ACID_1200] }
+  CONC_DROP:             { components: [BUNDLE],                  sensors: [C_ACID_1100, C_ACID_1200] }
+  CONC_DROP_SEVERE:      { components: [BUNDLE, TUBESHEET],       sensors: [C_ACID_1100, C_ACID_1200] }
+  CONC_BIAS_DRIFT:       { components: [],                        sensors: [C_ACID_1100, C_ACID_1200] }
+  T_IN_HIGH:             { components: [NOZZLE_ACID_IN],          sensors: [T_ACID_IN] }
+  T_IN_HIGH_HIGH:        { components: [NOZZLE_ACID_IN, BUNDLE],  sensors: [T_ACID_IN] }
+  FLOW_LOW:              { components: [NOZZLE_ACID_IN],          sensors: [F_ACID] }
+  FLOW_LOW_LOW:          { components: [NOZZLE_ACID_IN, VALVE_ACID], sensors: [F_ACID] }
+  SENSOR_FAULT:          { components: [],                        sensors: [] }
+  MODEL_ANOMALY:         { components: [BUNDLE],                  sensors: [] }
+  MODEL_ANOMALY_ISOLATED: { components: [BUNDLE],                 sensors: [] }
+  MODEL_UNAVAILABLE:     { components: [],                        sensors: [] }
+  NOT_RUNNING:           { components: [],                        sensors: [] }

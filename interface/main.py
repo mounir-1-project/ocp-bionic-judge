@@ -31,10 +31,10 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from src import config
-from src.notifications import EmailNotifier
-from src.operations import AlarmStore, WorkflowStore
-from src.pipeline import E7301Pipeline
-from src.realtime.replay import DCSReplay, _compact
+from core.alerts import EmailNotifier
+from core.alerts import AlarmStore, WorkflowStore
+from core.pipeline import E7301Pipeline
+from replay.replay import DCSReplay, _compact
 
 DASHBOARD_HTML = Path(__file__).parent / "dashboard.html"
 ASSETS_DIR = Path(__file__).parent / "static"
@@ -770,7 +770,7 @@ def judge_evaluation() -> dict:
 @app.get("/api/kpi", tags=["Indicateurs"])
 def operational_kpi() -> dict:
     """Indicateurs calcules sur les donnees."""
-    from src.analytics import OperationalKPI
+    from core.analytics import OperationalKPI
 
     p = _pipeline()
     kpi = OperationalKPI(p.features, p.domain)

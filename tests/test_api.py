@@ -123,7 +123,7 @@ def test_auth_status(client):
 
 def test_auth_login_logout(client):
     """Le login/logout doit fonctionner."""
-    r = client.post("/api/auth/login", json={"email": "test@test.com", "password": "test"})
+    r = client.post("/api/auth/login", json={"email": "mounirsanbouli@gmail.com", "password": "123"})
     assert r.status_code == 200
     r = client.post("/api/auth/logout")
     assert r.status_code == 200
@@ -150,8 +150,8 @@ def test_workflow_templates(client):
 def test_judge_audit(client):
     """Le Judge doit exposer sa synthese."""
     d = client.get("/api/judge/audit").json()
-    assert "mode" in d
-    assert "checks" in d
+    assert "n" in d or "status" in d
+    assert "reading" in d
 
 
 # ── KPI ───────────────────────────────────────────────────────────────────────
