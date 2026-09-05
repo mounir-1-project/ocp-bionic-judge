@@ -69,8 +69,6 @@ tmp/
 
 # ── Outils ───────────────────────────────────────────────────────────────────
 .pytest_cache/
-# Repertoire temporaire des tests, fixe dans pyproject.toml pour ne pas dependre
-# du dossier Temp de l'utilisateur, souvent protege sur un poste d'entreprise.
 .pytest-tmp/
 .ruff_cache/
 .mypy_cache/
@@ -78,6 +76,15 @@ tmp/
 htmlcov/
 coverage.xml
 .zkr/
+
+# ── Fichiers temporaires ─────────────────────────────────────────────────────
+*.tmp
+*.bak
+*.swp
+*~
+
+# ── Scripts temporaires ──────────────────────────────────────────────────────
+scripts/cleanup_frontend.py
 
 # ── Editeurs ─────────────────────────────────────────────────────────────────
 .vscode/
