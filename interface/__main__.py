@@ -15,8 +15,8 @@ qu'une configuration qui ment sur ce qu'elle contrôle est pire qu'absente.
 Ce module rend les deux variables effectives.
 
 Usage :
-    python -m api                      # honore API_HOST et API_PORT
-    uvicorn api.main:app --port 8000   # reste possible, la ligne prime
+    python -m interface                # honore API_HOST et API_PORT
+    uvicorn interface.main:app --port 8000  # reste possible, la ligne prime
 
 Author: Mounir Sanbouli — Stage OCP, Programme Bionic
 """
@@ -27,7 +27,7 @@ import sys
 
 from loguru import logger
 
-from src import config
+from core import config
 
 
 def main() -> int:
@@ -54,7 +54,7 @@ def main() -> int:
         f"(profil {config.APP_ENV})"
     )
     uvicorn.run(
-        "api.main:app",
+        "interface.main:app",
         host=config.API_HOST,
         port=config.API_PORT,
         # UN SEUL WORKER, ET C'EST UNE DECISION.

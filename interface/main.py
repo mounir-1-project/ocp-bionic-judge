@@ -6,7 +6,7 @@ rejeu accelere des donnees DCS reelles. Le dashboard est servi par cette meme
 application.
 
 Lancement :
-    python -m api
+    python -m interface
     puis ouvrir http://localhost:8000
 
 Author: Mounir Sanbouli — Stage OCP, Programme Bionic
@@ -30,7 +30,7 @@ from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from src import config
+from core import config
 from core.alerts import EmailNotifier
 from core.alerts import AlarmStore, WorkflowStore
 from core.pipeline import E7301Pipeline
@@ -770,7 +770,7 @@ def judge_evaluation() -> dict:
 @app.get("/api/kpi", tags=["Indicateurs"])
 def operational_kpi() -> dict:
     """Indicateurs calcules sur les donnees."""
-    from core.analytics import OperationalKPI
+    from core.analytics.kpi import OperationalKPI
 
     p = _pipeline()
     kpi = OperationalKPI(p.features, p.domain)

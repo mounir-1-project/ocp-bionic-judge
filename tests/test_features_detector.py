@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.features.e7301_features import (
+from core.features.e7301_features import (
     MODEL_FEATURES,
     InletReference,
     RegulationEffortReference,
@@ -28,7 +28,7 @@ from src.features.e7301_features import (
     model_matrix,
     rho_cp,
 )
-from src.models.detector import RuleEngine, StatisticalDetector
+from core.detection.detector import RuleEngine, StatisticalDetector
 from tests.helpers import sans_accents
 
 # ── Features physiques ────────────────────────────────────────────────────────
@@ -90,7 +90,7 @@ def test_rho_cp_varie_peu_car_les_deux_effets_se_compensent():
     assert ecart < 0.01, f"variation inattendue de rho.cp: {ecart:.3%}"
 
     # Chaque terme varie bien, lui, de plusieurs pour cent.
-    from src.features.e7301_features import CP_A, CP_B, RHO_A, RHO_B
+    from core.features.e7301_features import CP_A, CP_B, RHO_A, RHO_B
 
     assert abs((RHO_A + RHO_B * 95) - (RHO_A + RHO_B * 66)) / (RHO_A + RHO_B * 66) > 0.01
     assert abs((CP_A + CP_B * 95) - (CP_A + CP_B * 66)) / (CP_A + CP_B * 66) > 0.01
@@ -209,9 +209,9 @@ def test_la_borne_de_reference_est_definie_a_un_seul_endroit():
     racine = Path(__file__).resolve().parents[1]
     fautifs = []
     for chemin in (
-        racine / "src/features/e7301_features.py",
-        racine / "src/features/thermal.py",
-        racine / "src/models/detector.py",
+        racine / "core/features/e7301_features.py",
+        racine / "core/features/thermal.py",
+        racine / "core/detection/detector.py",
     ):
         arbre = ast.parse(chemin.read_text(encoding="utf-8"))
         # La seule occurrence legitime est la definition de la constante.
@@ -244,7 +244,7 @@ def test_rho_cp_reste_proche_de_l_ancienne_constante_figee():
     rester dans le voisinage de l'ancienne constante, faute de quoi le passage
     de l'une a l'autre aurait deplace les kW affiches.
     """
-    from src.features.e7301_features import RHO_CP_ACID_REFERENCE
+    from core.features.e7301_features import RHO_CP_ACID_REFERENCE
 
     for temperature in (66.0, 80.0, 95.0):
         ecart = abs(rho_cp(temperature) - RHO_CP_ACID_REFERENCE) / RHO_CP_ACID_REFERENCE
@@ -390,7 +390,7 @@ def test_le_seuil_de_gradation_est_atteignable_par_les_donnees(features):
     l'alerte, et echoue si le seuil de gouvernance en sort. C'est le controle
     qui manquait : sans lui, un seuil peut redevenir inatteignable en silence.
     """
-    from src.domain.knowledge import load_domain
+    from core.knowledge.knowledge import load_domain
 
     feats, _ = features
     run = feats[feats["process_state"].eq("RUNNING")]
@@ -578,7 +578,7 @@ def test_le_rattachement_ne_cite_que_des_features_du_modele():
     jamais les retourner comme contribution dominante. Trois entrees sur cinq
     ne servaient a rien tout en suggerant une couverture plus large.
     """
-    from src.models.detector import CoolerAnomalyDetector
+    from core.detection.detector import CoolerAnomalyDetector
 
     hors_modele = (
         set(CoolerAnomalyDetector._MODE_BY_RESIDUAL)
@@ -610,7 +610,7 @@ def test_toute_entree_de_rattachement_peut_reellement_accuser(domain):
     un tag et un seuil non vides, ce seuil existe dans le référentiel, et les
     deux ensembles sont disjoints.
     """
-    from src.models.detector import CoolerAnomalyDetector
+    from core.detection.detector import CoolerAnomalyDetector
 
     inertes = {
         feature
@@ -671,7 +671,7 @@ def test_la_severite_imposee_par_l_amdec_correspond_a_ce_que_les_regles_emettent
     import ast
     import inspect
 
-    from src.models.detector import SEVERITY_ORDER, RuleEngine
+    from core.detection.detector import SEVERITY_ORDER, RuleEngine
 
     arbre = ast.parse(inspect.getsource(RuleEngine))
     par_mode: dict[str, set[str]] = {}
@@ -747,8 +747,8 @@ def test_features_modele_non_redondantes(features):
 def test_detector_trainable(features):
     """Le detecteur doit pouvoir etre entraine sur les features."""
     feats, refs = features
-    from src.features.e7301_features import model_matrix
-    from src.models.detector import CoolerAnomalyDetector, StatisticalDetector
+    from core.features.e7301_features import model_matrix
+    from core.detection.detector import CoolerAnomalyDetector, StatisticalDetector
 
     X = model_matrix(feats)
     stat = StatisticalDetector(contamination=0.02, random_state=42)

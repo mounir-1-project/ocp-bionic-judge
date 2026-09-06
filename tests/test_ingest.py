@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.ingest.dcs_loader import (
+from core.ingestion.dcs_loader import (
     FROZEN_MIN_HOURS,
     _detect_frozen,
     classify_process_state,
@@ -228,7 +228,7 @@ def test_etats_process_tous_presents(ingestion):
 
 def test_fichier_absent_leve_une_erreur():
     """Un chemin invalide doit echouer explicitement."""
-    from src.ingest.dcs_loader import ingest
+    from core.ingestion.dcs_loader import ingest
 
     with pytest.raises(FileNotFoundError):
         ingest("/chemin/inexistant/DATA.xlsx")

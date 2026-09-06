@@ -13,7 +13,7 @@ import copy
 
 import pytest
 
-from src.agents.schemas import AgentDecision, RecommendedAction
+from core.detection.schemas import AgentDecision, RecommendedAction
 from tests.helpers import sans_accents
 
 
@@ -103,7 +103,7 @@ def test_judge_releve_mode_invente(case, pipeline):
 def test_judge_releve_angle_mort(case, pipeline):
     """Le Judge doit detecter un diagnostic sur un mode non observable."""
     # Trouver un mode non observable (none)
-    from src.domain.knowledge import load_domain
+    from core.knowledge.knowledge import load_domain
     d = load_domain()
     blind = [m.code for m in d.modes.values() if m.observabilite == "none"]
     if blind:

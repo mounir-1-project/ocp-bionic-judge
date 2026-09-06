@@ -15,7 +15,7 @@ import pytest
 fastapi = pytest.importorskip("fastapi", reason="fastapi non installe")
 from fastapi.testclient import TestClient  # noqa: E402
 
-from api.main import app  # noqa: E402
+from interface.main import app  # noqa: E402
 
 
 @pytest.fixture(scope="module")

@@ -54,7 +54,7 @@ from typing import Any
 
 import pandas as pd
 
-from core.domain.knowledge import DomainKnowledge, load_domain, seuil
+from core.knowledge.knowledge import DomainKnowledge, load_domain, seuil
 from core.formatting import heures, nombre, pourcent, unite
 
 

@@ -12,9 +12,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.config import DCS_EXPORT
-from src.domain.knowledge import load_domain
-from src.ingest.dcs_loader import ingest
+from core.config import DCS_EXPORT
+from core.knowledge.knowledge import load_domain
+from core.ingestion.dcs_loader import ingest
 
 DATA_PATH = DCS_EXPORT
 
@@ -36,7 +36,7 @@ def ingestion(domain):
 @pytest.fixture(scope="session")
 def features(ingestion, domain):
     """Table de features et jumeau thermique ajuste."""
-    from src.features.e7301_features import build_features
+    from core.features.e7301_features import build_features
 
     feats, twin = build_features(ingestion.readings, ingestion.quality, domain)
     return feats, twin
@@ -47,7 +47,7 @@ def pipeline():
     """Chaine complete, mode deterministe."""
     if not DATA_PATH.exists():
         pytest.skip(f"Donnees DCS absentes: {DATA_PATH}")
-    from src.pipeline import E7301Pipeline
+    from core.pipeline import E7301Pipeline
 
     return E7301Pipeline(data_path=DATA_PATH)
 
@@ -70,7 +70,7 @@ def synthetic_readings(domain):
     df["A_3301"] = 7.9 + rng.normal(0, 0.05, len(idx))
     df["A_3302"] = 7.4 + rng.normal(0, 0.05, len(idx))
 
-    from src.ingest.dcs_loader import classify_process_state
+    from core.ingestion.dcs_loader import classify_process_state
 
     df["process_state"] = classify_process_state(df, domain)
     return df

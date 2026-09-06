@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.domain.knowledge import load_domain
+from core.knowledge.knowledge import load_domain
 
 
 @pytest.fixture(scope="module")
@@ -100,7 +100,7 @@ def test_tous_les_codes_du_detecteur_sont_couverts(domain):
     from pathlib import Path
 
     racine = Path(__file__).resolve().parents[1]
-    source = (racine / "src" / "models" / "detector.py").read_text(encoding="utf-8")
+    source = (racine / "core" / "detection" / "detector.py").read_text(encoding="utf-8")
     emitted: set[str] = set()
     for m in re.finditer(
         r'code=\s*\(?\s*"([A-Z_]+)"(?:\s*\n?\s*if[^,]*?else\s*"([A-Z_]+)")?',

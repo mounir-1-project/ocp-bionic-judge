@@ -10,8 +10,8 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from src.pipeline import Analysis
-from src.realtime.replay import DCSReplay, _compact
+from core.pipeline import Analysis
+from replay.replay import DCSReplay, _compact
 
 
 def _analyse(pipeline, table, ts) -> Analysis:

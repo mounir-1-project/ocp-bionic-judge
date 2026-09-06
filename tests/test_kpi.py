@@ -11,7 +11,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from src.analytics import Figure, OperationalKPI
+from core.analytics.kpi import Figure, OperationalKPI
 
 
 @pytest.fixture(scope="module")
@@ -147,7 +147,7 @@ def test_le_niveau_de_preuve_distingue_reellement_deux_natures(pipeline):
     import ast
     import inspect
 
-    from src.analytics import OperationalKPI
+    from core.analytics.kpi import OperationalKPI
 
     kpi = OperationalKPI(pipeline.features, pipeline.domain)
     figures = kpi.summary(pipeline.ingestion.sensor_health, pipeline.episodes())

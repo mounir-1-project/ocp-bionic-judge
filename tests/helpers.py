@@ -19,6 +19,6 @@ from __future__ import annotations
 #
 # On reexporte, on ne recopie pas. Les fichiers de tests continuent d'ecrire
 # `from tests.helpers import sans_accents` sans rien changer.
-from src.formatting import sans_accents
+from core.formatting import sans_accents
 
 __all__ = ["sans_accents"]
